@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"c:\\\\MyGameLauncher\\\\cache\\\\icons\")",
+      "Bash(findstr:*)",
+      "Bash(dir \"c:\\\\MyGameLauncher\\\\cache\\\\icons\" /b)",
+      "Bash(test:*)",
+      "Bash(if exist requirements.txt type requirements.txt)",
+      "Bash(pip show:*)",
+      "Bash(timeout /t 5)",
+      "Bash(ping:*)"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "theme": "forest",
+  "show_game_size": true,
+  "api_keys": {
+    "steamgriddb": "",
+    "rawg": ""
+  }
+}

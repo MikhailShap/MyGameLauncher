@@ -37,7 +37,7 @@ def build():
     # Скрытые импорты (модули которые PyInstaller может не найти)
     hidden_imports = [
         "win32gui",
-        "win32ui", 
+        "win32ui",
         "win32con",
         "win32api",
         "pefile",
@@ -46,6 +46,8 @@ def build():
         "flet",
         "flet_desktop",
         "icoextract",
+        "duckduckgo_search",  # Для поиска обложек
+        "duckduckgo_search.duckduckgo_search",
     ]
     
     # Формируем команду

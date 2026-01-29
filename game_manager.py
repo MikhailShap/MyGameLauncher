@@ -20,7 +20,7 @@ import time  # <--- Добавлено для пауз
 import random # <--- Для случайных пауз
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from enum import Enum
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -50,13 +50,26 @@ try:
 except ImportError:
     HAS_ICOEXTRACT = False
 
-# Настройка логирования
-log_file = "launcher.log"
+# Определяем базовую директорию (для работы в .exe и в обычном режиме)
+def get_base_path() -> Path:
+    """Возвращает базовый путь приложения (работает и в .exe и при разработке)"""
+    import sys
+    if getattr(sys, 'frozen', False):
+        # Запущено как .exe (PyInstaller)
+        return Path(sys.executable).parent
+    else:
+        # Запущено как скрипт Python
+        return Path(__file__).parent
+
+BASE_PATH = get_base_path()
+
+# Настройка логирования (лог файл в папке с приложением)
+log_file = BASE_PATH / "launcher.log"
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.FileHandler(str(log_file), encoding='utf-8'),
         logging.StreamHandler()
     ]
 )

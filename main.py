@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import Tk, filedialog
 
 # Импорт backend
-from game_manager import GameManager, GameModel, Platform, Category, logger as backend_logger
+from game_manager import GameManager, GameModel, Platform, Category, logger as backend_logger, BASE_PATH
 
 logger = logging.getLogger("MainUI")
 
@@ -452,8 +452,9 @@ class LoadingOverlay(ft.Container):
 
 class CyberLauncher:
     """Главный класс приложения"""
-    
-    SETTINGS_FILE = "data/settings.json"
+
+    # Используем BASE_PATH для корректной работы в .exe
+    SETTINGS_FILE = str(BASE_PATH / "data" / "settings.json")
     
     def __init__(self, page: ft.Page):
         self.page = page
@@ -472,8 +473,10 @@ class CyberLauncher:
         default_paths = [r"C:\Games", r"D:\Games", r"D:\Install Games"]
         game_paths = self.settings.get("game_paths", default_paths)
 
-        # Initialize GameManager with API keys and paths
+        # Initialize GameManager with API keys and paths (используем BASE_PATH для .exe совместимости)
         self.game_manager = GameManager(
+            data_dir=str(BASE_PATH / "data"),
+            cache_dir=str(BASE_PATH / "cache"),
             sgdb_key=sgdb_key,
             rawg_key=rawg_key,
             game_paths=game_paths
@@ -504,11 +507,13 @@ class CyberLauncher:
     def load_settings(self) -> dict:
         try:
             settings_path = Path(self.SETTINGS_FILE)
+            # Создаём папку data если её нет
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
             if settings_path.exists():
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            print(f"Ошибка загрузки настроек: {e}")
+            logger.error(f"Ошибка загрузки настроек: {e}")
         return {"theme": "dark", "show_game_size": False}
     
     def save_settings(self):
@@ -1444,28 +1449,48 @@ class CyberLauncher:
     async def on_api_search_click(self, e):
         """Обработчик кнопки авто-поиска в диалоге"""
         try:
-            # Low-level debug
-            with open("debug_api_click.txt", "a", encoding="utf-8") as f:
-                f.write(f"API Search clicked for {self.upload_target_game.title}\n")
-            
-            backend_logger.info(f"UI: API Search clicked for {self.upload_target_game.title}")
-            
+            game = self.upload_target_game
+            if not game:
+                return
+
+            backend_logger.info(f"UI: API Search clicked for {game.title}")
+
             # Close dialog first
             if self.upload_dialog:
                 self.upload_dialog.open = False
-            
-            self.page.snack_bar = ft.SnackBar(content=ft.Text("Запуск авто-поиска..."))
+
+            # Показываем что поиск начался
+            short_title = game.title[:25] + "..." if len(game.title) > 25 else game.title
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Row([
+                    ft.ProgressRing(width=16, height=16, stroke_width=2, color="#FFFFFF"),
+                    ft.Text(f"Поиск обложки для: {short_title}", color="#FFFFFF"),
+                ], spacing=10),
+                bgcolor="#2196F3",
+                duration=2000,
+            )
             self.page.snack_bar.open = True
             self.page.update()
-            
-            await self.refresh_cover(self.upload_target_game)
-            
+
+            await self.refresh_cover(game)
+
         except Exception as ex:
             import traceback
             err = traceback.format_exc()
             backend_logger.error(f"Error in on_api_search_click: {err}")
-            with open("debug_api_click.txt", "a", encoding="utf-8") as f:
-                f.write(f"Error: {err}\n")
+
+            # Показываем ошибку пользователю
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.ERROR, color="#FFFFFF", size=20),
+                    ft.Text(f"Ошибка поиска: {str(ex)[:50]}", color="#FFFFFF"),
+                ], spacing=10),
+                bgcolor="#F44336",
+                duration=4000,
+            )
+            self.page.snack_bar.open = True
+            self.loading_overlay.hide()
+            self.page.update()
 
     async def upload_cover_from_url(self, game: GameModel, url: str):
         """Upload cover from URL"""
@@ -1504,7 +1529,10 @@ class CyberLauncher:
 
     async def refresh_cover(self, game: GameModel):
         """Force re-download cover from APIs"""
-        self.loading_overlay.show("Обновление обложки...")
+        # Сокращаем название игры для отображения
+        short_title = game.title[:25] + "..." if len(game.title) > 25 else game.title
+
+        self.loading_overlay.show(f"Поиск обложки: {short_title}")
         self.page.update()
 
         # Delete existing cache
@@ -1526,12 +1554,30 @@ class CyberLauncher:
             self.game_manager._games[game.uid] = game
             await self.game_manager.save_library()
 
-            # Show source in success message
+            # Информативное сообщение с источником
+            source_messages = {
+                "SteamGridDB": "SteamGridDB API",
+                "Steam CDN": "Steam CDN (прямая ссылка)",
+                "RAWG.io": "RAWG.io API",
+                "Steam Store": "Steam Store (поиск по названию)",
+                "DuckDuckGo": "DuckDuckGo Images",
+                "EXE Icon": "Иконка из EXE файла",
+            }
+            source_display = source_messages.get(source, source)
+
             self.page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Обложка обновлена! (Источник: {source})"),
+                content=ft.Row([
+                    ft.Icon(ft.Icons.CHECK_CIRCLE, color="#FFFFFF", size=20),
+                    ft.Text(f"Обложка найдена! Источник: {source_display}", color="#FFFFFF"),
+                ], spacing=10),
                 bgcolor="#4CAF50",
+                duration=4000,  # 4 секунды чтобы успеть прочитать
             )
             self.page.snack_bar.open = True
+
+            # Логируем успешный результат
+            backend_logger.info(f"Cover found for '{game.title}' from {source}")
+
             # Инвалидируем кеш карточки
             if game.uid in self._card_cache:
                 del self._card_cache[game.uid]
@@ -1541,11 +1587,19 @@ class CyberLauncher:
             GameCard._icon_exists_cache[new_path] = True
             self.update_game_grid(reset_page=False)
         else:
+            # Информативное сообщение об ошибке
             self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("Не удалось найти обложку"),
+                content=ft.Row([
+                    ft.Icon(ft.Icons.ERROR_OUTLINE, color="#FFFFFF", size=20),
+                    ft.Text(f"Обложка не найдена для: {short_title}", color="#FFFFFF"),
+                ], spacing=10),
                 bgcolor="#F44336",
+                duration=4000,
             )
             self.page.snack_bar.open = True
+
+            # Логируем неудачу
+            backend_logger.warning(f"Cover NOT found for '{game.title}' - all sources failed")
 
         self.loading_overlay.hide()
         self.page.update()

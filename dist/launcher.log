@@ -1,0 +1,88 @@
+2026-01-30 00:42:19,741 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI169882\assets
+2026-01-30 00:42:19,742 - INFO - Starting up TCP server on localhost:51664
+2026-01-30 00:42:19,746 - INFO - Flet app has started...
+2026-01-30 00:42:19,747 - INFO - App URL: tcp://localhost:51664
+2026-01-30 00:42:19,747 - INFO - Starting Flet View app...
+2026-01-30 00:42:19,748 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI169882\flet_desktop\app\flet\flet.exe
+2026-01-30 00:42:19,748 - INFO - Flet View found in: C:\Users\ShapM\AppData\Local\Temp\_MEI169882\flet_desktop\app\flet\flet.exe
+2026-01-30 00:42:20,231 - INFO - App session started
+2026-01-30 00:42:20,232 - INFO - SteamGridDB API initialized
+2026-01-30 00:42:20,232 - INFO - RAWG.io API initialized
+2026-01-30 00:42:20,251 - INFO - UI: load_library started
+2026-01-30 00:42:25,521 - INFO - SteamGridDB API initialized
+2026-01-30 00:42:25,521 - INFO - RAWG.io API initialized
+2026-01-30 00:42:25,521 - INFO - API clients reinitialized
+2026-01-30 00:42:31,152 - INFO - UI: API Search clicked for Gamblers Table
+2026-01-30 00:42:31,284 - INFO - [Tier 2] SteamGridDB by Steam ID: 3618390
+2026-01-30 00:42:33,026 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 00:42:39,270 - INFO - UI: API Search clicked for Highguard
+2026-01-30 00:42:39,404 - INFO - [Tier 2] SteamGridDB by Steam ID: 4128260
+2026-01-30 00:42:40,129 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 00:42:43,525 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 00:42:43,657 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
+2026-01-30 00:42:44,289 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 00:42:56,086 - INFO - UI: API Search clicked for Cuphead
+2026-01-30 00:42:56,359 - INFO - [Tier 4] RAWG.io Search: 'Cuphead'
+2026-01-30 00:42:59,123 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 00:43:05,042 - INFO - UI: API Search clicked for Plan.B.Terraform.Build.19960463
+2026-01-30 00:43:05,329 - INFO - [Tier 4] RAWG.io Search: 'Plan B Terraform'
+2026-01-30 00:43:05,941 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 00:43:43,138 - INFO - UI: API Search clicked for Trine 4
+2026-01-30 00:43:43,439 - INFO - [Tier 4] RAWG.io Search: 'Trine 4'
+2026-01-30 00:43:44,070 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 00:43:44,581 - INFO - UI: API Search clicked for Trine 4
+2026-01-30 00:43:44,927 - INFO - [Tier 4] RAWG.io Search: 'Trine 4'
+2026-01-30 00:43:45,314 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 00:44:00,339 - INFO - UI: API Search clicked for Rayman Legends
+2026-01-30 00:44:00,657 - INFO - [Tier 2] SteamGridDB by Steam ID: 242550
+2026-01-30 00:44:01,395 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 00:44:17,477 - INFO - Uploaded cover for game 14cfad40c377: cache\icons\dea1033fcb95.jpg
+2026-01-30 00:44:21,840 - INFO - UI: API Search clicked for Drill Core
+2026-01-30 00:44:22,197 - INFO - [Tier 4] RAWG.io Search: 'Drill Core'
+2026-01-30 00:44:22,740 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 00:45:04,504 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-266' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1583, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 572, in <lambda>
+  File "main.py", line 965, in window_action
+SystemExit: 0
+2026-01-30 00:50:47,837 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI356522\assets
+2026-01-30 00:50:47,838 - INFO - Starting up TCP server on localhost:49797
+2026-01-30 00:50:47,842 - INFO - Flet app has started...
+2026-01-30 00:50:47,843 - INFO - App URL: tcp://localhost:49797
+2026-01-30 00:50:47,843 - INFO - Starting Flet View app...
+2026-01-30 00:50:47,843 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI356522\flet_desktop\app\flet\flet.exe
+2026-01-30 00:50:47,843 - INFO - Flet View found in: C:\Users\ShapM\AppData\Local\Temp\_MEI356522\flet_desktop\app\flet\flet.exe
+2026-01-30 00:50:48,337 - INFO - App session started
+2026-01-30 00:50:48,338 - INFO - SteamGridDB API initialized
+2026-01-30 00:50:48,338 - INFO - RAWG.io API initialized
+2026-01-30 00:50:48,356 - INFO - UI: load_library started
+2026-01-30 00:50:56,133 - INFO - UI: API Search clicked for Gamblers Table
+2026-01-30 00:50:56,295 - INFO - [Tier 2] SteamGridDB by Steam ID: 3618390
+2026-01-30 00:50:57,027 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 00:51:11,770 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-72' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1584, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 572, in <lambda>
+  File "main.py", line 965, in window_action
+SystemExit: 0

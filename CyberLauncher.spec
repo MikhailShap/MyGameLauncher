@@ -5,8 +5,8 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[('data', 'data')],
+    hiddenimports=['win32com.client', 'pythoncom', 'pywintypes', 'duckduckgo_search', 'icoextract', 'PIL', 'PIL.Image'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -35,6 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version='C:\\Users\\ShapM\\AppData\\Local\\Temp\\88be8dbe-9b99-4219-a22b-97a03d66bfa5',
     icon=['icon.ico'],
 )

@@ -11,8 +11,8 @@
       "install_path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\12 is Better Than 6",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T19:00:15.519572"
+      "is_favorite": true,
+      "added_date": "2026-01-29T23:33:38.938729"
     },
     {
       "uid": "9b0c5cbf7fff",
@@ -25,8 +25,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Apex Legends",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T19:00:16.467715"
+      "is_favorite": true,
+      "added_date": "2026-01-29T23:33:38.938911"
     },
     {
       "uid": "da82595bb057",
@@ -39,8 +39,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Battlefield 2042",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T19:00:17.424984"
+      "is_favorite": true,
+      "added_date": "2026-01-29T23:33:38.939024"
     },
     {
       "uid": "e241bd6f9fc0",
@@ -54,7 +54,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-19T19:00:18.658408"
+      "added_date": "2026-01-29T23:33:38.939113"
     },
     {
       "uid": "a1b37691da44",
@@ -67,50 +67,36 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Rayman Legends",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T19:00:21.215713"
-    },
-    {
-      "uid": "74cb2bd6ebfd",
-      "title": "Battlefield™ 6",
-      "exe_path": "steam://rungameid/2807960",
-      "icon_path": null,
-      "platform": "Steam",
-      "category": "All",
-      "app_id": "2807960",
-      "install_path": "D:\\SteamLibrary\\steamapps\\common\\Battlefield 6",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T19:00:28.020735"
+      "is_favorite": true,
+      "added_date": "2026-01-29T23:33:38.939269"
     },
     {
       "uid": "b99fe02da2d0",
       "title": "Gamblers Table",
       "exe_path": "steam://rungameid/3618390",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\9d52dcf91d1d.jpg",
       "platform": "Steam",
       "category": "All",
       "app_id": "3618390",
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Gamblers Table",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T19:00:35.117521"
+      "is_favorite": true,
+      "added_date": "2026-01-29T23:33:38.939340"
     },
     {
       "uid": "6c76ebb444ba",
       "title": "A Game About Feeding A Black Hole",
       "exe_path": "steam://rungameid/3694480",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\18be3e0b71b8.jpg",
       "platform": "Steam",
       "category": "All",
       "app_id": "3694480",
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\A Game About Feeeding A Black Hole",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T19:00:42.041044"
+      "is_favorite": true,
+      "added_date": "2026-01-29T23:33:38.939408"
     },
     {
       "uid": "d82e92cc65e8",
@@ -123,8 +109,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Serious Sam HD The First Encounter",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T19:00:42.987599"
+      "is_favorite": true,
+      "added_date": "2026-01-29T23:33:38.939543"
     },
     {
       "uid": "a90eadeae643",
@@ -138,7 +124,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-19T19:00:43.965723"
+      "added_date": "2026-01-29T23:33:38.939685"
     },
     {
       "uid": "e7aad50f0dc7",
@@ -152,7 +138,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-19T19:00:44.844852"
+      "added_date": "2026-01-29T23:33:38.939751"
     },
     {
       "uid": "c75554f524de",
@@ -172,7 +158,7 @@
       "uid": "18d7d1643c63",
       "title": "Ubisoft Connect",
       "exe_path": "C:\\Program Files (x86)\\Ubisoft\\Ubisoft Game Launcher\\UbisoftConnect.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\9bdb55a12669.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -186,7 +172,7 @@
       "uid": "33356b4043ec",
       "title": "LEGO Voyagers",
       "exe_path": "D:\\Install Games\\LEGO Voyagers\\LEGO Voyagers.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\06595d25368f.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -200,7 +186,7 @@
       "uid": "34dfb3d4ea41",
       "title": "Ratchet and Clank - Rift Apart",
       "exe_path": "D:\\Install Games\\Ratchet and Clank - Rift Apart\\RiftApart.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\e1615f3ef066.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -214,7 +200,7 @@
       "uid": "f8f3e1135fa2",
       "title": "Severed Steel DX11",
       "exe_path": "D:\\Install Games\\Severed Steel\\ThankYouVeryCool.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\61bd9cd06155.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -228,21 +214,21 @@
       "uid": "1e51bb6f22cd",
       "title": "Wolfenstein II - The New Colossus",
       "exe_path": "D:\\Install Games\\Wolfenstein II The New Colossus\\NewColossus_x64vk.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\9e6f8bbdbcbd.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
       "install_path": "D:\\Install Games\\Wolfenstein II The New Colossus",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
+      "is_favorite": true,
       "added_date": "2026-01-19T17:52:42.816911"
     },
     {
       "uid": "8d0fb5b7e142",
       "title": "Epic Online Services",
       "exe_path": "C:\\Program Files (x86)\\Epic Games\\Epic Online Services\\service\\EpicOnlineServicesHost.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\aa2e6c2ca6dc.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -256,7 +242,7 @@
       "uid": "13f5b61de778",
       "title": "Biped 2 (2025)",
       "exe_path": "D:\\Games\\Biped 2 (2025)\\Biped 2\\Biped2.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\95792243bd12.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -270,7 +256,7 @@
       "uid": "14cfad40c377",
       "title": "Drill Core",
       "exe_path": "D:\\Games\\Drill Core\\Drill Core.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\6c6b95c369ed.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -284,35 +270,35 @@
       "uid": "ccdba8b56064",
       "title": "FL Studio 25.1.6.4997 rev.1 WD",
       "exe_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\c9cbabffa31b.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
       "install_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
+      "is_favorite": true,
       "added_date": "2026-01-19T17:52:48.398839"
     },
     {
       "uid": "db287926945e",
       "title": "LEGO Voyagers",
       "exe_path": "D:\\Games\\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\\LEGO Voyagers.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\06595d25368f.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
       "install_path": "D:\\Games\\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
+      "is_favorite": true,
       "added_date": "2026-01-19T17:52:48.399394"
     },
     {
       "uid": "a578f1c5d7e1",
       "title": "Mario Party Superstars",
       "exe_path": "D:\\Games\\Mario Party Superstars [FitGirl Repack]\\MD5\\QuickSFV.EXE",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\1e0fad2c6e20.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -326,21 +312,21 @@
       "uid": "fffdc14fe7f9",
       "title": "Plan.B.Terraform",
       "exe_path": "D:\\Games\\Plan.B.Terraform.Build.19960463\\Plan B Terraform.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\18979219c649.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
       "install_path": "D:\\Games\\Plan.B.Terraform.Build.19960463",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
+      "is_favorite": true,
       "added_date": "2026-01-19T17:52:51.184907"
     },
     {
       "uid": "7dee36c41e72",
       "title": "Poly.Bridge.3 TENOKE",
       "exe_path": "D:\\Games\\Poly.Bridge.3-TENOKE\\Poly.Bridge.3.Update.v1.5.6-TENOKE\\Update\\PATCH.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\2402b0732d17.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -351,24 +337,10 @@
       "added_date": "2026-01-19T17:52:52.212792"
     },
     {
-      "uid": "9588456e2117",
-      "title": "Split Fiction (2025)",
-      "exe_path": "D:\\Games\\Split Fiction (2025)\\Split Fiction\\Split\\Binaries\\Win64\\SplitFiction.exe",
-      "icon_path": null,
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Games\\Split Fiction (2025)",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T17:52:54.124699"
-    },
-    {
       "uid": "2c67bc6ff007",
       "title": "SpongeBob SquarePants Titans of the Tide",
       "exe_path": "D:\\Games\\SpongeBob SquarePants Titans of the Tide\\Ghost\\Binaries\\Win64\\Ghost-Win64-Shipping.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\388e999d2cb2.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -382,21 +354,21 @@
       "uid": "be56c6e1ea86",
       "title": "Tower Dominion",
       "exe_path": "D:\\Games\\Tower Dominion\\Tower Dominion 1.47\\Tower Dominion\\tower-dominion.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\aa7f2e6932f6.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
       "install_path": "D:\\Games\\Tower Dominion",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
+      "is_favorite": true,
       "added_date": "2026-01-19T17:52:56.870746"
     },
     {
       "uid": "18650e8c42a2",
       "title": "Mario Party Superstars",
       "exe_path": "D:\\Install Games\\Mario Party Superstars\\emu\\Ryujinx.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\1e0fad2c6e20.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -410,7 +382,7 @@
       "uid": "03d71f233bd5",
       "title": "Poly Bridge 3",
       "exe_path": "D:\\Install Games\\Poly Bridge 3\\Poly Bridge 3.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\7fce86256e63.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -424,7 +396,7 @@
       "uid": "aa840a68aeee",
       "title": "Severed Steel",
       "exe_path": "D:\\Install Games\\Severed Steel\\ThankYouVeryCool\\Binaries\\Win64\\ThankYouVeryCool-Win64-Shipping.exe",
-      "icon_path": null,
+      "icon_path": "cache\\icons\\d51fb0a8a66b.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -433,6 +405,48 @@
       "play_time": 0,
       "is_favorite": false,
       "added_date": "2026-01-19T17:52:59.535879"
+    },
+    {
+      "uid": "7c9cf31d0bcb",
+      "title": "Glyphica: Typing Survival",
+      "exe_path": "steam://rungameid/2400160",
+      "icon_path": "cache\\icons\\f65e16d8eaf0.jpg",
+      "platform": "Steam",
+      "category": "All",
+      "app_id": "2400160",
+      "install_path": "D:\\SteamLibrary\\steamapps\\common\\Glyphica",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-01-29T23:33:38.939192"
+    },
+    {
+      "uid": "4f65e90b5085",
+      "title": "Typing Break",
+      "exe_path": "steam://rungameid/3959590",
+      "icon_path": "cache\\icons\\e7c589b35dbe.jpg",
+      "platform": "Steam",
+      "category": "All",
+      "app_id": "3959590",
+      "install_path": "D:\\SteamLibrary\\steamapps\\common\\Typing Break",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": true,
+      "added_date": "2026-01-29T23:33:38.939477"
+    },
+    {
+      "uid": "5d07cd7a6f51",
+      "title": "Highguard",
+      "exe_path": "steam://rungameid/4128260",
+      "icon_path": "cache\\icons\\af1fbac48262.jpg",
+      "platform": "Steam",
+      "category": "All",
+      "app_id": "4128260",
+      "install_path": "D:\\SteamLibrary\\steamapps\\common\\Highguard",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-01-29T23:33:38.939611"
     }
   ]
 }

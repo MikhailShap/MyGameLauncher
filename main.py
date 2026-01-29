@@ -3,10 +3,16 @@ import asyncio
 import sys
 import json
 import re
+import logging
+import threading
+import webbrowser
 from pathlib import Path
+from tkinter import Tk, filedialog
 
 # Импорт backend
-from game_manager import GameManager, GameModel, Platform, Category
+from game_manager import GameManager, GameModel, Platform, Category, logger as backend_logger
+
+logger = logging.getLogger("MainUI")
 
 # --- КОНФИГУРАЦИЯ ЦВЕТОВ И СТИЛЯ ---
 BG_COLOR = "#0F0F0F"
@@ -113,25 +119,33 @@ class SidebarButton(ft.Container):
         if self._on_click_handler:
             self._on_click_handler(self.button_data)
     
-    def set_active(self, active: bool):
+    def set_active(self, active: bool, skip_update: bool = True):
+        """Set active state - skip_update=True for batch updates"""
+        if self.is_active == active:
+            return  # No change needed
         self.is_active = active
         self.bgcolor = self.active_bg if active else self.default_bg
         self.content.controls[0].color = TEXT_WHITE if active else TEXT_GREY
         self.content.controls[1].color = TEXT_WHITE if active else TEXT_GREY
         text_control = self.content.controls[1]
         text_control.weight = ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL
-        self.update()
+        # Don't call self.update() - let caller do page.update() once
 
 
 class GameCard(ft.Container):
-    """Карточка игры с иконкой на весь фон"""
+    """Карточка игры с иконкой на весь фон - ОПТИМИЗИРОВАНО"""
     
-    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, show_size=False):
+    # Class-level cache for icon existence checks
+    _icon_exists_cache = {}
+    
+    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, show_size=False, enable_animations=False):
         super().__init__()
         self.game = game
         self._on_click = on_click
         self._on_favorite = on_favorite
         self._on_upload = on_upload
+        self._enable_animations = enable_animations
+        self._is_hovered = False  # Track hover state to avoid redundant updates
         
         self.border_radius = 15
         self.padding = 0
@@ -139,19 +153,27 @@ class GameCard(ft.Container):
         self.expand = True
         self.clip_behavior = ft.ClipBehavior.HARD_EDGE
         
-        self.animate_scale = ft.Animation(200, ft.AnimationCurve.EASE_OUT)
-        self.animate = ft.Animation(200, ft.AnimationCurve.EASE_OUT)
-        self.on_hover = self.on_card_hover
+        # Only set up animations if enabled
+        if enable_animations:
+            self.animate_scale = ft.Animation(150, ft.AnimationCurve.EASE_OUT)
+            self.animate = ft.Animation(150, ft.AnimationCurve.EASE_OUT)
+            self.on_hover = self.on_card_hover
+        
         self.shadow = None
         self.scale = 1.0
         self.border = ft.Border.all(1, "#333333")
         
-        # Проверяем иконку
+        # Cache icon existence check
         icon_src = None
         has_icon = False
-        if game.icon_path and Path(game.icon_path).exists():
-            icon_src = game.icon_path
-            has_icon = True
+        if game.icon_path:
+            if game.icon_path in GameCard._icon_exists_cache:
+                has_icon = GameCard._icon_exists_cache[game.icon_path]
+            else:
+                has_icon = Path(game.icon_path).exists()
+                GameCard._icon_exists_cache[game.icon_path] = has_icon
+            if has_icon:
+                icon_src = game.icon_path
 
         # Бейдж платформы
         platform_colors = {
@@ -230,7 +252,8 @@ class GameCard(ft.Container):
                     border_radius=8,
                 )
         
-        # Собираем Stack
+        # Собираем Stack - УПРОЩЁННАЯ СТРУКТУРА
+        # Кликабельные кнопки используют Container с on_click напрямую
         stack_controls = [
             # 1. Фон с изображением
             background,
@@ -246,7 +269,7 @@ class GameCard(ft.Container):
                 ),
             ),
             
-            # 3. Кликабельная область
+            # 3. Кликабельная область для запуска игры
             ft.Container(
                 expand=True,
                 on_click=self.on_card_click,
@@ -258,55 +281,49 @@ class GameCard(ft.Container):
                 left=10,
                 top=10,
             ),
-            
-            # 5. Кнопка избранного
-            ft.Container(
-                content=ft.GestureDetector(
-                    content=ft.Container(
-                        content=ft.Icon(
-                            ft.Icons.FAVORITE if game.is_favorite else ft.Icons.FAVORITE_BORDER,
-                            color="#FF4081" if game.is_favorite else "#FFFFFF",
-                            size=20,
-                        ),
-                        width=36,
-                        height=36,
-                        border_radius=18,
-                        bgcolor="#80000000",
-                        alignment=ft.Alignment(0, 0),
-                    ),
-                    on_tap=self.on_favorite_click,
-                ),
-                right=8,
-                top=8,
-            ),
 
-            # 5.5 Кнопка загрузки/обновления обложки
-            ft.Container(
-                content=ft.GestureDetector(
-                    content=ft.Container(
-                        content=ft.Icon(
-                            ft.Icons.IMAGE_SEARCH,
-                            color="#FFFFFF",
-                            size=18,
-                        ),
-                        width=36,
-                        height=36,
-                        border_radius=18,
-                        bgcolor="#8000E5FF",
-                        alignment=ft.Alignment(0, 0),
-                    ),
-                    on_tap=self.on_upload_click,
-                ),
-                right=8,
-                top=50,
-            ),
-
-            # 6. Название
+            # 5. Название
             ft.Container(
                 content=game_title,
                 left=12,
                 right=12,
                 bottom=12,
+            ),
+            
+            # 5. Кнопка избранного - ПРОСТОЙ Container с on_click
+            ft.Container(
+                content=ft.Icon(
+                    ft.Icons.FAVORITE if game.is_favorite else ft.Icons.FAVORITE_BORDER,
+                    color="#FF4081" if game.is_favorite else "#FFFFFF",
+                    size=20,
+                ),
+                width=36,
+                height=36,
+                border_radius=18,
+                bgcolor="#80000000",
+                alignment=ft.Alignment(0, 0),
+                right=8,
+                top=8,
+                on_click=self.on_favorite_click,
+                ink=True,
+            ),
+
+            # 6. Кнопка загрузки обложки - ПРОСТОЙ Container с on_click
+            ft.Container(
+                content=ft.Icon(
+                    ft.Icons.IMAGE_SEARCH,
+                    color="#FFFFFF",
+                    size=18,
+                ),
+                width=36,
+                height=36,
+                border_radius=18,
+                bgcolor="#8000E5FF",
+                alignment=ft.Alignment(0, 0),
+                right=8,
+                top=52,
+                on_click=self.on_upload_click,
+                ink=True,
             ),
         ]
         
@@ -335,36 +352,30 @@ class GameCard(ft.Container):
         return title.strip() or "Unknown Game"
     
     def get_folder_size(self, path: str) -> str:
-        """Получить размер папки"""
-        try:
-            total_size = 0
-            folder = Path(path)
-            if folder.exists():
-                for f in folder.rglob('*'):
-                    if f.is_file():
-                        total_size += f.stat().st_size
-            
-            if total_size < 1024:
-                return f"{total_size} B"
-            elif total_size < 1024 * 1024:
-                return f"{total_size / 1024:.1f} KB"
-            elif total_size < 1024 * 1024 * 1024:
-                return f"{total_size / (1024 * 1024):.1f} MB"
-            else:
-                return f"{total_size / (1024 * 1024 * 1024):.1f} GB"
-        except Exception:
-            return None
+        """Получить размер папки - ОПТИМИЗАЦИЯ: отключено для производительности"""
+        # Расчёт размера папки очень медленный для больших игр
+        # и блокирует UI. Возвращаем None для отключения.
+        return None
 
     def on_card_hover(self, e):
-        is_hovering = e.data == "true"
-        self.scale = 1.03 if is_hovering else 1.0
-        self.border = ft.Border.all(2, ACCENT_PURPLE) if is_hovering else ft.Border.all(1, "#333333")
+        # Skip if animations disabled
+        if not self._enable_animations:
+            return
         
-        self.shadow = ft.BoxShadow(
-            blur_radius=25,
-            spread_radius=2,
-            color="#40D500F9",
-        ) if is_hovering else None
+        is_hovering = e.data == True or e.data == "true"
+        
+        # Skip if state hasn't changed
+        if is_hovering == self._is_hovered:
+            return
+        
+        self._is_hovered = is_hovering
+        
+        if is_hovering:
+            self.scale = 1.03
+            self.border = ft.Border.all(2, ACCENT_BLUE)
+        else:
+            self.scale = 1.0
+            self.border = ft.Border.all(1, "#333333")
         
         self.update()
     
@@ -373,12 +384,17 @@ class GameCard(ft.Container):
             self._on_click(self.game)
     
     def on_favorite_click(self, e):
+        print(f"[DEBUG] Favorite button clicked for: {self.game.title}")
         if self._on_favorite:
             self._on_favorite(self.game)
 
     def on_upload_click(self, e):
+        print(f"[DEBUG] Upload button clicked for: {self.game.title}")
         if self._on_upload:
+            print(f"[DEBUG] Calling _on_upload callback...")
             self._on_upload(self.game)
+        else:
+            print(f"[DEBUG] ERROR: _on_upload is None!")
 
 
 class LoadingOverlay(ft.Container):
@@ -452,9 +468,15 @@ class CyberLauncher:
         rawg_key = api_keys.get("rawg") or None
 
         # Initialize GameManager with API keys
+        # Default game paths
+        default_paths = [r"C:\Games", r"D:\Games", r"D:\Install Games"]
+        game_paths = self.settings.get("game_paths", default_paths)
+
+        # Initialize GameManager with API keys and paths
         self.game_manager = GameManager(
             sgdb_key=sgdb_key,
-            rawg_key=rawg_key
+            rawg_key=rawg_key,
+            game_paths=game_paths
         )
 
         self.current_filter = "all"
@@ -464,6 +486,17 @@ class CyberLauncher:
         self.loading_overlay = None
         self.games_count_text = None
         self.content_area = None
+        
+        # Кеш карточек для оптимизации производительности
+        self._card_cache: dict[str, GameCard] = {}
+        
+        # Пагинация для оптимизации с большими библиотеками
+        self._page_size = 12  # Уменьшено для скорости
+        self._current_page = 0  # Текущая страница (начиная с 0)
+        self._all_games_list = []  # Полный список игр для пагинации
+        
+        # Для загрузки обложек (tkinter file dialog)
+        self.upload_target_game = None
 
         self.setup_page()
         self.build_ui()
@@ -580,13 +613,13 @@ class CyberLauncher:
                     ft.Divider(color="#1AFFFFFF"),
                     ft.Container(height=5),
                     self.sidebar_buttons["settings"],
-                    ft.Container(
+                        ft.Container(
                         content=ft.TextButton(
                             "Обновить библиотеку",
                             icon=ft.Icons.REFRESH,
                             icon_color=ACCENT_BLUE,
                             style=ft.ButtonStyle(color=ACCENT_BLUE),
-                            on_click=lambda _: self.page.run_task(self.refresh_library)
+                            on_click=self.on_refresh_click
                         ),
                         alignment=ft.Alignment(0, 0)
                     ),
@@ -779,6 +812,30 @@ class CyberLauncher:
                         border_radius=10,
                         bgcolor="#1E1E1E",
                     ),
+                    
+                    ft.Container(height=15),
+                    
+                    # Переключатель анимации
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[
+                                ft.Column(controls=[
+                                    ft.Text("Анимация плиток", size=14, color=TEXT_WHITE),
+                                    ft.Text("Эффект при наведении на карточки игр", size=12, color=TEXT_GREY),
+                                ], spacing=2),
+                                ft.Container(expand=True),
+                                ft.Switch(
+                                    value=self.settings.get("enable_animations", True),
+                                    active_color=ACCENT_BLUE,
+                                    on_change=lambda e: self.toggle_animations(e.control.value),
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        padding=15,
+                        border_radius=10,
+                        bgcolor="#1E1E1E",
+                    ),
                     ft.Container(height=40),
                     ft.Divider(color="#333333"),
                     ft.Container(height=30),
@@ -799,7 +856,7 @@ class CyberLauncher:
                                         ft.TextButton(
                                             "Получить ключ",
                                             icon=ft.Icons.OPEN_IN_NEW,
-                                            on_click=lambda _: self.page.launch_url("https://www.steamgriddb.com/profile/preferences/api"),
+                                            on_click=lambda _: webbrowser.open("https://www.steamgriddb.com/profile/preferences/api"),
                                         ),
                                     ],
                                 ),
@@ -838,7 +895,7 @@ class CyberLauncher:
                                         ft.TextButton(
                                             "Получить ключ",
                                             icon=ft.Icons.OPEN_IN_NEW,
-                                            on_click=lambda _: self.page.launch_url("https://rawg.io/apidocs"),
+                                            on_click=lambda _: webbrowser.open("https://rawg.io/apidocs"),
                                         ),
                                     ],
                                 ),
@@ -894,6 +951,15 @@ class CyberLauncher:
         if self.current_filter != "settings":
             self.update_game_grid()
     
+    def toggle_animations(self, value: bool):
+        """Включить/выключить анимацию плиток"""
+        self.settings["enable_animations"] = value
+        self.save_settings()
+        # Очищаем кеш чтобы карточки пересоздались с новой настройкой
+        self._card_cache.clear()
+        if self.current_filter != "settings":
+            self.update_game_grid()
+    
     def window_action(self, action: str):
         if action == "close":
             sys.exit(0)
@@ -905,12 +971,38 @@ class CyberLauncher:
             self.page.window.maximized = self.is_maximized
             self.page.update()
     
+    async def on_refresh_click(self, e):
+        """Обработчик нажатия кнопки обновления"""
+        try:
+            # Low-level debug write
+            with open("debug_click.txt", "a", encoding="utf-8") as f:
+                f.write("Button clicked!\n")
+                
+            backend_logger.info("UI: Update Library button clicked")
+            
+            self.page.snack_bar = ft.SnackBar(content=ft.Text("Запуск сканирования..."))
+            self.page.snack_bar.open = True
+            self.page.update()
+            
+            # Since we are async, we can call refresh_library directly (await it)
+            # or use run_task if we want it to be detached? 
+            # calling directly is safer here to keep context
+            await self.refresh_library()
+        except Exception as ex:
+            import traceback
+            err = traceback.format_exc()
+            backend_logger.error(f"Error in on_refresh_click: {err}")
+            with open("debug_click.txt", "a", encoding="utf-8") as f:
+                f.write(f"Error: {err}\n")
+
     async def load_library(self):
+        backend_logger.info("UI: load_library started")
         self.loading_overlay.show("Загрузка библиотеки...")
         
         await self.game_manager.load_library()
         
         if self.game_manager.games_count == 0:
+            backend_logger.info("UI: Library empty, starting initial scan")
             self.loading_overlay.show("Первый запуск. Сканирование игр...")
             self.game_manager.set_progress_callback(self.on_scan_progress)
             await self.game_manager.scan_all_games()
@@ -919,86 +1011,150 @@ class CyberLauncher:
         self.update_game_grid()
     
     async def refresh_library(self):
+        backend_logger.info("UI: refresh_library async task started")
         self.loading_overlay.show("Сканирование игр...")
+        self.page.update()  # ВАЖНО: показать оверлей СРАЗУ
+        await asyncio.sleep(0.1)  # Даём UI время отрендериться
         self.game_manager.set_progress_callback(self.on_scan_progress)
         await self.game_manager.scan_all_games()
         self.loading_overlay.hide()
+        self.page.update()  # Скрыть оверлей
         self.update_game_grid()
     
     def on_scan_progress(self, message: str, current: int, total: int):
         self.loading_overlay.update_progress(message, current, total)
+        self.page.update()  # Обновляем UI для отображения прогресса
     
-    def update_game_grid(self):
-        self.game_grid.controls.clear()
+    def update_game_grid(self, reset_page: bool = True):
+        """Оптимизированное обновление сетки игр с пагинацией"""
         
-        if self.current_filter == "all":
-            games = self.game_manager.get_all_games()
-        elif self.current_filter == "favorites":
-            games = self.game_manager.get_games_by_category(Category.FAVORITES.value)
-        elif self.current_filter == "steam":
-            games = self.game_manager.get_games_by_platform(Platform.STEAM.value)
-        elif self.current_filter == "epic":
-            games = self.game_manager.get_games_by_platform(Platform.EPIC.value)
-        elif self.current_filter == "system":
-            games = self.game_manager.get_games_by_platform(Platform.SYSTEM.value)
-        else:
-            games = self.game_manager.get_all_games()
+        if reset_page:
+            self._current_page = 0
+            
+            # Получаем и сортируем игры один раз
+            if self.current_filter == "all":
+                games = self.game_manager.get_all_games()
+            elif self.current_filter == "favorites":
+                games = self.game_manager.get_games_by_category(Category.FAVORITES.value)
+            elif self.current_filter == "steam":
+                games = self.game_manager.get_games_by_platform(Platform.STEAM.value)
+            elif self.current_filter == "epic":
+                games = self.game_manager.get_games_by_platform(Platform.EPIC.value)
+            elif self.current_filter == "system":
+                games = self.game_manager.get_games_by_platform(Platform.SYSTEM.value)
+            else:
+                games = self.game_manager.get_all_games()
+            
+            self._all_games_list = list(games)
+            
+            # Сортировка
+            if self.current_sort == "name_asc":
+                self._all_games_list.sort(key=lambda g: g.title.lower())
+            elif self.current_sort == "name_desc":
+                self._all_games_list.sort(key=lambda g: g.title.lower(), reverse=True)
+            elif self.current_sort == "date_desc":
+                self._all_games_list.sort(key=lambda g: g.added_date or "", reverse=True)
+            elif self.current_sort == "date_asc":
+                self._all_games_list.sort(key=lambda g: g.added_date or "")
         
-        games = list(games)
-        
-        # Сортировка
-        if self.current_sort == "name_asc":
-            games.sort(key=lambda g: g.title.lower())
-        elif self.current_sort == "name_desc":
-            games.sort(key=lambda g: g.title.lower(), reverse=True)
-        elif self.current_sort == "date_desc":
-            games.sort(key=lambda g: g.added_date or "", reverse=True)
-        elif self.current_sort == "date_asc":
-            games.sort(key=lambda g: g.added_date or "")
-        
+        self._render_visible_cards()
+    
+    def _render_visible_cards(self):
+        """Рендерит только видимые карточки с пагинацией - ОПТИМИЗИРОВАНО"""
         show_size = self.settings.get("show_game_size", False)
-        for game in games:
-            card = GameCard(
-                game=game,
-                on_click=self.on_game_click,
-                on_favorite=self.on_favorite_click,
-                on_upload=self.show_upload_dialog,
-                show_size=show_size
+        enable_animations = self.settings.get("enable_animations", False)  # Default OFF for speed
+        
+        # Количество карточек для отображения
+        cards_to_show = (self._current_page + 1) * self._page_size
+        visible_games = self._all_games_list[:cards_to_show]
+        
+        # Build new controls list (faster than modifying in-place)
+        new_controls = []
+        
+        for game in visible_games:
+            if game.uid in self._card_cache:
+                card = self._card_cache[game.uid]
+            else:
+                card = GameCard(
+                    game=game,
+                    on_click=self.on_game_click,
+                    on_favorite=self.on_favorite_click,
+                    on_upload=self.show_upload_dialog,
+                    show_size=show_size,
+                    enable_animations=enable_animations
+                )
+                self._card_cache[game.uid] = card
+            
+            new_controls.append(card)
+        
+        # Кнопка "Показать ещё" если есть ещё игры
+        if cards_to_show < len(self._all_games_list):
+            remaining = len(self._all_games_list) - cards_to_show
+            load_more_btn = ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.EXPAND_MORE, color=ACCENT_BLUE, size=24),
+                        ft.Text(f"Показать ещё ({remaining})", color=TEXT_WHITE, size=12),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=5,
+                ),
+                alignment=ft.Alignment(0, 0),
+                bgcolor="#1E1E1E",
+                border_radius=15,
+                border=ft.Border.all(1, "#333333"),
+                on_click=self._load_more_games,
+                ink=True,
             )
-            self.game_grid.controls.append(card)
+            new_controls.append(load_more_btn)
+        
+        # Single assignment instead of clear + append loop
+        self.game_grid.controls = new_controls
         
         total = self.game_manager.games_count
-        shown = len(games)
+        shown = len(visible_games)
         if self.current_filter == "all":
-            self.games_count_text.value = f"{total} игр"
+            self.games_count_text.value = f"{shown}/{total} игр"
         else:
-            self.games_count_text.value = f"{shown} из {total}"
+            self.games_count_text.value = f"{shown} из {len(self._all_games_list)}"
         
         self.page.update()
+
+    
+    def _load_more_games(self, e):
+        """Загружает следующую страницу игр"""
+        self._current_page += 1
+        self._render_visible_cards()
     
     def on_filter_click(self, filter_name: str):
+        """Оптимизированная обработка переключения вкладок"""
         if filter_name == self.current_filter:
             return
         
+        # Batch update all buttons without individual updates
         for name, button in self.sidebar_buttons.items():
             button.set_active(name == filter_name)
         
         self.current_filter = filter_name
         
         if filter_name == "settings":
-            self.show_settings_view()
+            # Switch content and update once
+            self.settings_view = self.build_settings_view()
+            self.bg_container.content = self.settings_view
+            self.page.update()  # Single update for everything
         else:
-            self.show_games_view()
-            self.update_game_grid()
+            self.bg_container.content = self.games_container
+            self.update_game_grid()  # This already calls page.update()
     
     def show_settings_view(self):
         self.settings_view = self.build_settings_view()
         self.bg_container.content = self.settings_view
-        self.bg_container.update()
+        self.page.update()  # Use page.update for full refresh
     
     def show_games_view(self):
         self.bg_container.content = self.games_container
-        self.bg_container.update()
+        self.page.update()  # Use page.update for full refresh
+
     
     def set_sort(self, sort_key: str):
         self.current_sort = sort_key
@@ -1032,80 +1188,223 @@ class CyberLauncher:
     
     async def toggle_favorite(self, game: GameModel):
         await self.game_manager.toggle_favorite(game.uid)
-        self.update_game_grid()
+        # Инвалидируем кеш карточки чтобы она пересоздалась с новым состоянием
+        if game.uid in self._card_cache:
+            del self._card_cache[game.uid]
+        # ИСПРАВЛЕНИЕ: Не сбрасываем страницу при изменении избранного
+        self.update_game_grid(reset_page=False)
+
 
     # ========== Cover Upload Methods ==========
 
     def show_upload_dialog(self, game: GameModel):
         """Show dialog for manual cover upload"""
+        
+        # Сохраняем игру для которой загружаем обложку
+        self.upload_target_game = game
+        self.upload_dialog = None  # Ссылка на диалог для закрытия
 
         def on_url_submit(e):
             url = url_input.value
             if url and url.strip():
                 self.page.run_task(self.upload_cover_from_url, game, url.strip())
-                upload_dialog.open = False
+                self.upload_dialog.open = False
                 self.page.update()
 
         def on_refresh(e):
             """Force re-download from APIs"""
             self.page.run_task(self.refresh_cover, game)
-            upload_dialog.open = False
+            self.upload_dialog.open = False
             self.page.update()
 
         def close_dialog(e):
-            upload_dialog.open = False
+            self.upload_dialog.open = False
             self.page.update()
+        
+        def on_pick_file_click(e):
+            """Открываем нативный диалог выбора файла через tkinter"""
+            print(f"[DEBUG] Opening file picker for: {game.title}")
+            self.upload_dialog.open = False  # Закрываем диалог
+            self.page.update()
+            
+            # Запускаем tkinter диалог в отдельном потоке чтобы не блокировать UI
+            def pick_file_thread():
+                try:
+                    # Создаём скрытое окно tkinter
+                    root = Tk()
+                    root.withdraw()  # Скрываем главное окно
+                    root.attributes('-topmost', True)  # Поверх всех окон
+                    
+                    file_path = filedialog.askopenfilename(
+                        title="Выберите изображение обложки",
+                        filetypes=[
+                            ("Изображения", "*.jpg *.jpeg *.png *.gif *.webp"),
+                            ("JPEG", "*.jpg *.jpeg"),
+                            ("PNG", "*.png"),
+                            ("GIF", "*.gif"),
+                            ("WebP", "*.webp"),
+                            ("Все файлы", "*.*"),
+                        ]
+                    )
+                    
+                    root.destroy()  # Закрываем tkinter
+                    
+                    if file_path:
+                        print(f"[DEBUG] Local file selected: {file_path}")
+                        # Вызываем загрузку обложки через async task
+                        self.page.run_task(self.upload_cover_from_file, game, file_path)
+                    else:
+                        print("[DEBUG] File picker cancelled")
+                        
+                except Exception as ex:
+                    print(f"[ERROR] File picker error: {ex}")
+            
+            # Запускаем в отдельном потоке
+            threading.Thread(target=pick_file_thread, daemon=True).start()
 
+    
         url_input = ft.TextField(
             label="URL изображения",
+            label_style=ft.TextStyle(color=TEXT_GREY),
             hint_text="https://example.com/cover.jpg",
+            hint_style=ft.TextStyle(color="#555555"),
+            text_style=ft.TextStyle(color=TEXT_WHITE),
+            border_color="#333333",
+            bgcolor="#252525",
+            border_radius=10,
             width=400,
             on_submit=on_url_submit,
         )
 
-        upload_dialog = ft.AlertDialog(
-            title=ft.Text(f"Обложка: {game.title[:40]}..."),
+        # Получаем цвета текущей темы для градиента
+        theme_data = GRADIENT_THEMES.get(self.current_theme, GRADIENT_THEMES["dark"])
+        gradient_colors = theme_data["colors"]
+
+        self.upload_dialog = ft.AlertDialog(
+            modal=True,
+            bgcolor="transparent",
+            content_padding=0,
+            title=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.IMAGE, color=ACCENT_BLUE),
+                    ft.Text(f"Обложка: {game.title[:30]}...", color=TEXT_WHITE, weight=ft.FontWeight.BOLD),
+                ],
+                alignment=ft.MainAxisAlignment.START,
+            ),
             content=ft.Container(
+                width=480,
+                padding=25,
+                border_radius=15,
+                gradient=ft.LinearGradient(
+                    begin=ft.Alignment(-1, -1),
+                    end=ft.Alignment(1, 1),
+                    colors=gradient_colors,
+                ),
                 content=ft.Column(
                     controls=[
-                        ft.Text("Загрузить обложку:", size=14),
-                        ft.Container(height=15),
-                        url_input,
+                        ft.Text("Выберите способ загрузки:", size=14, color=TEXT_GREY),
                         ft.Container(height=10),
-                        ft.Button(
-                            "Загрузить по URL",
-                            icon=ft.Icons.LINK,
-                            on_click=on_url_submit,
-                        ),
-                        ft.Container(height=20),
-                        ft.Divider(),
-                        ft.Container(height=15),
-                        ft.Button(
-                            "Обновить из API",
-                            icon=ft.Icons.REFRESH,
-                            on_click=on_refresh,
-                            bgcolor="#4CAF50",
-                            color="#FFFFFF",
+                        
+                        # Кнопка выбора файла с компьютера
+                        ft.Container(
+                            content=ft.Row(
+                                controls=[
+                                    ft.Icon(ft.Icons.FOLDER_OPEN, color="#FFFFFF"),
+                                    ft.Text("Выбрать файл с компьютера", color="#FFFFFF", weight=ft.FontWeight.W_600),
+                                ],
+                                alignment=ft.MainAxisAlignment.CENTER,
+                            ),
+                            bgcolor=ACCENT_BLUE,
+                            padding=15,
+                            border_radius=10,
+                            on_click=on_pick_file_click,
+                            ink=True,
                         ),
                         ft.Text(
-                            "Попробует загрузить обложку из SteamGridDB, RAWG и других источников",
+                            "Поддерживаемые форматы: JPG, PNG, GIF, WebP",
                             size=11,
-                            color="#888888",
+                            color="#555555",
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                        
+                        ft.Container(height=15),
+                        ft.Row(
+                            controls=[
+                                ft.Divider(color="#333333", expand=True),
+                                ft.Text(" ИЛИ ", size=12, color="#555555"),
+                                ft.Divider(color="#333333", expand=True),
+                            ],
+                            alignment=ft.MainAxisAlignment.CENTER,
+                        ),
+                        ft.Container(height=15),
+                        
+                        ft.Text("Загрузить по URL:", size=13, color=TEXT_GREY),
+                        url_input,
+                        ft.Container(
+                            content=ft.Text("Загрузить", color="#FFFFFF"),
+                            bgcolor="#333333",
+                            padding=10,
+                            border_radius=8,
+                            alignment=ft.Alignment(0, 0),
+                            on_click=on_url_submit,
+                            ink=True,
+                        ),
+                        
+                        ft.Container(height=20),
+                        ft.Divider(color="#333333"),
+                        ft.Container(height=10),
+                        
+                        # Кнопка API
+                        ft.Container(
+                            content=ft.Row(
+                                controls=[
+                                    ft.Icon(ft.Icons.AUTO_AWESOME, color=ACCENT_PURPLE, size=18),
+                                    ft.Text("Авто-поиск в API", color=TEXT_WHITE, size=13),
+                                ],
+                                alignment=ft.MainAxisAlignment.CENTER,
+                            ),
+                            border=ft.Border.all(1, "#333333"),
+                            padding=10,
+                            border_radius=10,
+                            on_click=self.on_api_search_click,
+                            ink=True,
+                            tooltip="Поиск в SteamGridDB и RAWG",
+                        ),
+                        
+                        ft.Container(height=20),
+                        
+                        # Кнопка Отмена внутри контейнера
+                        ft.Container(
+                            content=ft.Text("Отмена", color=TEXT_GREY, size=14),
+                            alignment=ft.Alignment(0, 0),
+                            on_click=close_dialog,
+                            ink=True,
                         ),
                     ],
                     tight=True,
-                    width=420,
+                    scroll=ft.ScrollMode.AUTO,
                 ),
-                padding=20,
             ),
-            actions=[
-                ft.TextButton("Отмена", on_click=close_dialog),
-            ],
+            shape=ft.RoundedRectangleBorder(radius=15),
         )
 
-        self.page.dialog = upload_dialog
-        upload_dialog.open = True
+        # ИСПРАВЛЕНИЕ: В новых версиях Flet диалоги добавляются через overlay
+        if self.upload_dialog not in self.page.overlay:
+            self.page.overlay.append(self.upload_dialog)
+        self.upload_dialog.open = True
+        print(f"[DEBUG] Opening upload dialog for: {game.title}")
         self.page.update()
+        print(f"[DEBUG] Dialog should be visible now")
+    
+    def on_file_picked(self, e: ft.FilePickerResultEvent):
+        """Handle local file selection from FilePicker"""
+        if e.files and len(e.files) > 0:
+            file_path = e.files[0].path
+            print(f"[DEBUG] Local file selected: {file_path}")
+            if self.upload_target_game:
+                self.page.run_task(self.upload_cover_from_file, self.upload_target_game, file_path)
+        else:
+            print("[DEBUG] File picker cancelled")
 
     async def upload_cover_from_file(self, game: GameModel, file_path: str):
         """Upload cover from local file"""
@@ -1124,7 +1423,14 @@ class CyberLauncher:
                 bgcolor="#4CAF50",
             )
             self.page.snack_bar.open = True
-            self.update_game_grid()
+            # Инвалидируем кеш карточки чтобы она пересоздалась с новой обложкой
+            if game.uid in self._card_cache:
+                del self._card_cache[game.uid]
+            # Инвалидируем кеш существования иконки
+            if new_path in GameCard._icon_exists_cache:
+                del GameCard._icon_exists_cache[new_path]
+            GameCard._icon_exists_cache[new_path] = True  # Знаем что файл есть
+            self.update_game_grid(reset_page=False)
         else:
             self.page.snack_bar = ft.SnackBar(
                 content=ft.Text("Ошибка загрузки обложки"),
@@ -1134,6 +1440,32 @@ class CyberLauncher:
 
         self.loading_overlay.hide()
         self.page.update()
+
+    async def on_api_search_click(self, e):
+        """Обработчик кнопки авто-поиска в диалоге"""
+        try:
+            # Low-level debug
+            with open("debug_api_click.txt", "a", encoding="utf-8") as f:
+                f.write(f"API Search clicked for {self.upload_target_game.title}\n")
+            
+            backend_logger.info(f"UI: API Search clicked for {self.upload_target_game.title}")
+            
+            # Close dialog first
+            if self.upload_dialog:
+                self.upload_dialog.open = False
+            
+            self.page.snack_bar = ft.SnackBar(content=ft.Text("Запуск авто-поиска..."))
+            self.page.snack_bar.open = True
+            self.page.update()
+            
+            await self.refresh_cover(self.upload_target_game)
+            
+        except Exception as ex:
+            import traceback
+            err = traceback.format_exc()
+            backend_logger.error(f"Error in on_api_search_click: {err}")
+            with open("debug_api_click.txt", "a", encoding="utf-8") as f:
+                f.write(f"Error: {err}\n")
 
     async def upload_cover_from_url(self, game: GameModel, url: str):
         """Upload cover from URL"""
@@ -1152,7 +1484,14 @@ class CyberLauncher:
                 bgcolor="#4CAF50",
             )
             self.page.snack_bar.open = True
-            self.update_game_grid()
+            # Инвалидируем кеш карточки
+            if game.uid in self._card_cache:
+                del self._card_cache[game.uid]
+            # Инвалидируем кеш существования иконки
+            if new_path in GameCard._icon_exists_cache:
+                del GameCard._icon_exists_cache[new_path]
+            GameCard._icon_exists_cache[new_path] = True
+            self.update_game_grid(reset_page=False)
         else:
             self.page.snack_bar = ft.SnackBar(
                 content=ft.Text("Ошибка загрузки обложки"),
@@ -1175,8 +1514,8 @@ class CyberLauncher:
             except:
                 pass
 
-        # Re-fetch using CoverAPIManager
-        new_path = self.game_manager.cover_api_manager.get_cover(
+        # Re-fetch using CoverAPIManager (now returns path, source)
+        new_path, source = self.game_manager.cover_api_manager.get_cover(
             game.title,
             app_id=game.app_id,
             exe_path=game.exe_path
@@ -1187,12 +1526,20 @@ class CyberLauncher:
             self.game_manager._games[game.uid] = game
             await self.game_manager.save_library()
 
+            # Show source in success message
             self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("Обложка обновлена!"),
+                content=ft.Text(f"Обложка обновлена! (Источник: {source})"),
                 bgcolor="#4CAF50",
             )
             self.page.snack_bar.open = True
-            self.update_game_grid()
+            # Инвалидируем кеш карточки
+            if game.uid in self._card_cache:
+                del self._card_cache[game.uid]
+            # Инвалидируем кеш существования иконки
+            if new_path in GameCard._icon_exists_cache:
+                del GameCard._icon_exists_cache[new_path]
+            GameCard._icon_exists_cache[new_path] = True
+            self.update_game_grid(reset_page=False)
         else:
             self.page.snack_bar = ft.SnackBar(
                 content=ft.Text("Не удалось найти обложку"),

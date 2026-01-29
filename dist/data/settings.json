@@ -1,0 +1,9 @@
+{
+  "theme": "dark",
+  "show_game_size": false,
+  "api_keys": {
+    "rawg": "608bf43d8ea14559a488d58616fcc950",
+    "steamgriddb": "1fa0e0b6671f5c933899ae8f979f9b9d"
+  },
+  "enable_animations": true
+}

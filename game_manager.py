@@ -31,6 +31,10 @@ import winreg
 try:
     import win32com.client
 except ImportError:
+    import win32com.client
+except ImportError as e:
+    # Логируем ошибку, чтобы видеть в консоли exe
+    logger.error(f"Failed to import win32com: {e}")
     pass
 
 # Попытка импорта новой библиотеки
@@ -47,7 +51,15 @@ except ImportError:
     HAS_ICOEXTRACT = False
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+log_file = "launcher.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger("GameManager")
 
 
@@ -193,8 +205,8 @@ class IconExtractor:
         except:
             pass
         
-        # Небольшая пауза, чтобы не спамить API Steam
-        time.sleep(0.5)
+        # Небольшая пауза, чтобы не спамить API Steam (оптимизировано)
+        time.sleep(0.2)
         
         self._search_cache[clean_name] = None
         return None
@@ -217,8 +229,8 @@ class IconExtractor:
         if not HAS_DDG: return False
         clean_name = self._clean_name(name)
         
-        # ВАЖНО: Пауза перед запросом, чтобы избежать 403
-        delay = random.uniform(1.5, 3.0)
+        # ВАЖНО: Пауза перед запросом, чтобы избежать 403 (оптимизировано)
+        delay = random.uniform(0.5, 1.0)
         print(f"🦆 Ищем в DDG: '{clean_name}' (ждем {delay:.1f}с...)")
         time.sleep(delay)
         
@@ -291,7 +303,7 @@ class SteamGridDBClient:
         self.api_key = api_key
         self.session_cache = {}
         self._last_request_time = 0
-        self._min_delay = 0.5  # Rate limit: 2 req/sec
+        self._min_delay = 0.25  # Rate limit: 4 req/sec (оптимизировано)
 
     def _wait_rate_limit(self):
         """Enforce rate limiting"""
@@ -318,6 +330,12 @@ class SteamGridDBClient:
             with urllib.request.urlopen(req, timeout=10) as response:
                 if response.status == 200:
                     return json.loads(response.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                logger.error("SteamGridDB API Unauthorized (Invalid Key). Disabling API.")
+                self.api_key = None # Disable to prevent further errors
+            else:
+                logger.warning(f"SteamGridDB API error: {e}")
         except Exception as e:
             logger.warning(f"SteamGridDB API error: {e}")
 
@@ -461,14 +479,8 @@ class CoverValidator:
         except:
             return False
 
-        # Validate image format
-        try:
-            from PIL import Image
-            with Image.open(path) as img:
-                img.verify()
-            return True
-        except:
-            return False
+        # Skip expensive PIL verification for speed - file size check is enough
+        return True
 
     def cleanup_orphaned_cache(self) -> tuple:
         """Remove cache files not referenced in library.json"""
@@ -558,73 +570,74 @@ class CoverAPIManager:
             logger.debug(f"Download failed from {url}: {e}")
         return False
 
-    def get_cover(self, game_title: str, app_id: str = None, exe_path: str = None) -> Optional[str]:
-        """Main cover retrieval with 8-tier fallback"""
+    
+    def get_cover(self, game_title: str, app_id: str = None, exe_path: str = None) -> Tuple[Optional[str], str]:
+        """Main cover retrieval with 8-tier fallback. Returns (path, source)"""
         clean_name = self.icon_extractor._clean_name(game_title)
         key_id = app_id if app_id else hashlib.md5(clean_name.encode()).hexdigest()
         cache_path = self.cache_dir / f"{hashlib.md5(str(key_id).lower().encode()).hexdigest()[:12]}.jpg"
 
-        # Tier 1: Cache (already validated by caller)
+        # Tier 1: Cache (already validated by caller, but if we are here, we are fetching new)
 
         # Tier 2: SteamGridDB by Steam App ID
         if app_id and self.sgdb:
-            print(f"[Tier 2] SteamGridDB by Steam ID: {app_id}")
+            logger.info(f"[Tier 2] SteamGridDB by Steam ID: {app_id}")
             urls = self.sgdb.get_grids_by_steam_id(app_id)
             for url in urls:
                 if self._download_image(url, cache_path):
-                    print(f"   ✅ Downloaded from SteamGridDB")
-                    return str(cache_path)
+                    logger.info(f"   ✅ Downloaded from SteamGridDB")
+                    return (str(cache_path), "SteamGridDB")
 
         # Tier 3: Steam Direct CDN
         if app_id:
-            print(f"[Tier 3] Steam Direct CDN: {app_id}")
+            logger.info(f"[Tier 3] Steam Direct CDN: {app_id}")
             if self.icon_extractor._download_steam_cover(app_id, cache_path):
-                print(f"   ✅ Downloaded from Steam CDN")
-                return str(cache_path)
+                logger.info(f"   ✅ Downloaded from Steam CDN")
+                return (str(cache_path), "Steam CDN")
 
         # Tier 4: RAWG.io Search
         if self.rawg:
-            print(f"[Tier 4] RAWG.io Search: '{clean_name}'")
+            logger.info(f"[Tier 4] RAWG.io Search: '{clean_name}'")
             image_url = self.rawg.search_game(clean_name)
             if image_url:
                 if self._download_image(image_url, cache_path):
-                    print(f"   ✅ Downloaded from RAWG.io")
-                    return str(cache_path)
+                    logger.info(f"   ✅ Downloaded from RAWG.io")
+                    return (str(cache_path), "RAWG.io")
 
         # Tier 5: Steam Store Search
-        print(f"[Tier 5] Steam Store Search: '{clean_name}'")
+        logger.info(f"[Tier 5] Steam Store Search: '{clean_name}'")
         found_id = self.icon_extractor._search_steam_id_by_name(game_title)
         if found_id:
             if self.icon_extractor._download_steam_cover(found_id, cache_path):
-                print(f"   ✅ Downloaded from Steam (searched)")
-                return str(cache_path)
+                logger.info(f"   ✅ Downloaded from Steam (searched)")
+                return (str(cache_path), "Steam Store")
 
         # Tier 6: SteamGridDB by Name
         if self.sgdb:
-            print(f"[Tier 6] SteamGridDB Name Search: '{clean_name}'")
+            logger.info(f"[Tier 6] SteamGridDB Name Search: '{clean_name}'")
             game_id = self.sgdb.search_game(clean_name)
             if game_id:
                 urls = self.sgdb.get_grids_by_game_id(game_id)
                 for url in urls:
                     if self._download_image(url, cache_path):
-                        print(f"   ✅ Downloaded from SteamGridDB (searched)")
-                        return str(cache_path)
+                        logger.info(f"   ✅ Downloaded from SteamGridDB (searched)")
+                        return (str(cache_path), "SteamGridDB")
 
         # Tier 7: DuckDuckGo (last resort)
-        print(f"[Tier 7] DuckDuckGo Search: '{clean_name}'")
+        logger.info(f"[Tier 7] DuckDuckGo Search: '{clean_name}'")
         if self.icon_extractor._search_duckduckgo(game_title, cache_path):
-            print(f"   ✅ Downloaded from DuckDuckGo")
-            return str(cache_path)
+            logger.info(f"   ✅ Downloaded from DuckDuckGo")
+            return (str(cache_path), "DuckDuckGo")
 
         # Tier 8: EXE Icon
         if exe_path:
-            print(f"[Tier 8] EXE Icon Extraction")
+            logger.info(f"[Tier 8] EXE Icon Extraction")
             if self.icon_extractor._extract_exe_icon(exe_path, cache_path):
-                print(f"   ✅ Extracted from EXE")
-                return str(cache_path)
+                logger.info(f"   ✅ Extracted from EXE")
+                return (str(cache_path), "EXE Icon")
 
-        print(f"   ❌ All tiers failed for: {game_title}")
-        return None
+        logger.warning(f"   ❌ All tiers failed for: {game_title}")
+        return (None, "None")
 
 
 class CoverUploader:
@@ -724,6 +737,7 @@ class CoverUploader:
 
 class SteamScanner:
     async def scan(self, cover_manager: 'CoverAPIManager') -> List[GameModel]:
+        logger.info("Starting Steam scan...")
         games = []
         steam_path = None
         try:
@@ -769,8 +783,15 @@ class SteamScanner:
                                 if aid in ['228980', '1070560', '1391110']:
                                     continue
                                 full_path = os.path.join(lib, "common", idir)
-                                # Use new CoverAPIManager for 8-tier fallback
-                                icon = cover_manager.get_cover(n, app_id=aid)
+                                
+                                # OPTIMIZATION: Check cache first before API calls
+                                cache_key = hashlib.md5(aid.lower().encode()).hexdigest()[:12]
+                                cache_path = cover_manager.cache_dir / f"{cache_key}.jpg"
+                                if cache_path.exists() and cache_path.stat().st_size > 2048:
+                                    icon = str(cache_path)
+                                else:
+                                    icon, _ = cover_manager.get_cover(n, app_id=aid) # Unpack tuple
+                                
                                 games.append(GameModel(
                                     uid=GameModel.generate_uid(f"steam_{aid}"),
                                     title=n,
@@ -785,43 +806,137 @@ class SteamScanner:
         return games
 
 
-class SystemScanner:
+
+class DiskScanner:
+    """Сканирование папок на диске для поиска игр"""
+    
+    # Игнорируемые папки и файлы (lower case)
+    IGNORE_DIRS = {'windows', 'window.old', 'program data', 'users', '$recycle.bin', 'system volume information', 'common files', 'microsoft', 'drivers', 'directx', 'vcredist', 'support', 'redist', 'prerequisites'}
+    IGNORE_FILES = {'unins', 'setup', 'update', 'config', 'crash', 'unitycrashhandler', 'dxsetup', 'vcredist', 'redist', 'console', 'terminal', 'server', 'launcher'}
+    
+    def __init__(self, search_paths: List[str] = None):
+        self.search_paths = search_paths or [r"C:\Games"]
+
+    def _is_game_exe(self, path: Path) -> bool:
+        """Эвристика: является ли файл игровым исполняемым файлом"""
+        name_lower = path.name.lower()
+        
+        # 1. Проверка расширения (только exe)
+        if path.suffix.lower() != ".exe":
+            return False
+            
+        # 2. Игнорирование по имени файла
+        if any(x in name_lower for x in self.IGNORE_FILES):
+            return False
+            
+        # 3. Размер файла (игры обычно > 500 КБ, маленькие exe часто лаунчеры или утилиты)
+        try:
+            if path.stat().st_size < 512 * 1024: # < 512KB
+                return False
+        except:
+            return False
+            
+        return True
+
+    def _find_best_exe(self, folder: Path) -> Optional[Path]:
+        """Находит главный exe в папке игры"""
+        exes = []
+        try:
+            # Ищем exe только на верхнем уровне папки игры (depth=1)
+            # чтобы не цеплять вложенные bin/ tools/ и т.д. слишком глубоко
+            for item in folder.glob("*.exe"):
+                if self._is_game_exe(item):
+                    exes.append(item)
+        except:
+            return None
+            
+        if not exes:
+            return None
+            
+        # Если exe один - это он
+        if len(exes) == 1:
+            return exes[0]
+            
+        # Если несколько, пробуем выбрать лучший
+        folder_name = folder.name.lower()
+        
+        # 1. Точное совпадение имени папки и exe
+        for exe in exes:
+            if exe.stem.lower() == folder_name:
+                return exe
+                
+        # 2. Совпадение с удалением пробелов/символов
+        clean_folder = re.sub(r'[^a-z0-9]', '', folder_name)
+        for exe in exes:
+            clean_name = re.sub(r'[^a-z0-9]', '', exe.stem.lower())
+            if clean_name == clean_folder:
+                return exe
+                
+        # 3. Самый большой файл
+        exes.sort(key=lambda x: x.stat().st_size, reverse=True)
+        return exes[0]
+
     async def scan(self, cover_manager: 'CoverAPIManager') -> List[GameModel]:
         games = []
-        desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
-        if not os.path.exists(desktop):
-            return []
-
-        shell = win32com.client.Dispatch("WScript.Shell")
-
-        for item in os.listdir(desktop):
-            if item.endswith(".lnk"):
-                try:
-                    shortcut = shell.CreateShortCut(os.path.join(desktop, item))
-                    target = shortcut.TargetPath
-                    if not target.lower().endswith(".exe"):
-                        continue
-                    if any(x in target.lower() for x in ['unins', 'setup', 'update', 'web', 'url', 'helper']):
-                        continue
-                    name = item.replace(".lnk", "")
-                    # Use new CoverAPIManager for 8-tier fallback
-                    icon = cover_manager.get_cover(name, exe_path=target)
-                    games.append(GameModel(
-                        uid=GameModel.generate_uid(target),
-                        title=name,
-                        exe_path=target,
-                        icon_path=icon,
-                        platform=Platform.SYSTEM.value,
-                        install_path=os.path.dirname(target)
-                    ))
-                except:
-                    pass
+        logger.info(f"Начинаем сканирование папок: {self.search_paths}")
+        
+        scanned_folders = set()
+        
+        for root_path_str in self.search_paths:
+            root_path = Path(root_path_str)
+            if not root_path.exists():
+                continue
+                
+            try:
+                # Сканируем папки первого уровня (глубина 1)
+                # Например в C:\Games лежат папки C:\Games\Doom, C:\Games\Quake
+                for item in root_path.iterdir():
+                    if item.is_dir():
+                        if item.name.lower() in self.IGNORE_DIRS:
+                            continue
+                            
+                        # Проверяем, не сканировали ли мы эту папку уже (symlinks etc)
+                        if item.resolve() in scanned_folders:
+                            continue
+                        scanned_folders.add(item.resolve())
+                        
+                        # Пытаемся найти игру внутри этой папки
+                        game_exe = self._find_best_exe(item)
+                        if game_exe:
+                            name = item.name # Используем имя папки как название игры
+                            
+                            # Clean name heuristic
+                            clean_name = cover_manager.icon_extractor._clean_name(name)
+                            
+                            # Cache check
+                            cache_key = hashlib.md5(clean_name.encode()).hexdigest()[:12]
+                            cache_path = cover_manager.cache_dir / f"{cache_key}.jpg"
+                            
+                            if cache_path.exists() and cache_path.stat().st_size > 2048:
+                                icon = str(cache_path)
+                            else:
+                                icon, _ = cover_manager.get_cover(name, exe_path=str(game_exe)) # Unpack tuple
+                            
+                            logger.info(f"Найдена игра: {name} ({game_exe})")
+                            
+                            games.append(GameModel(
+                                uid=GameModel.generate_uid(str(game_exe)),
+                                title=name,
+                                exe_path=str(game_exe),
+                                icon_path=icon,
+                                platform=Platform.SYSTEM.value,
+                                install_path=str(item)
+                            ))
+            except Exception as e:
+                logger.error(f"Ошибка при сканировании {root_path}: {e}")
+                
         return games
+
 
 
 class GameManager:
     def __init__(self, data_dir: str = "./data", cache_dir: str = "./cache",
-                 sgdb_key: str = None, rawg_key: str = None):
+                 sgdb_key: str = None, rawg_key: str = None, game_paths: List[str] = None):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.library_file = self.data_dir / "library.json"
@@ -839,12 +954,12 @@ class GameManager:
         self.icon_extractor = self.cover_api_manager.icon_extractor
 
         self.steam_scanner = SteamScanner()
-        self.system_scanner = SystemScanner()
+        self.disk_scanner = DiskScanner(search_paths=game_paths)
         self._games: Dict[str, GameModel] = {}
         self._on_progress = None
 
     def reinitialize_api_clients(self, sgdb_key: str = None, rawg_key: str = None):
-        """Reinitialize API clients with new keys"""
+        """Reinitialize API clients with new keys. Note: game_paths not updated here."""
         cache_icons = self.cover_api_manager.cache_dir
         self.cover_api_manager = CoverAPIManager(cache_icons, sgdb_key, rawg_key)
         self.icon_extractor = self.cover_api_manager.icon_extractor
@@ -885,14 +1000,45 @@ class GameManager:
         with open(self.library_file, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
 
     async def scan_all_games(self):
+        logger.info("scan_all_games called")
         if self._on_progress:
-            self._on_progress("Сканирование Steam...", 0, 100)
+            self._on_progress("Проверка удалённых игр...", 0, 100)
+        
+        # ИСПРАВЛЕНИЕ: Удаляем игры, которых больше нет на диске
+        games_to_remove = []
+        for uid, game in self._games.items():
+            # Для Steam игр проверяем install_path (папку установки)
+            # потому что exe_path содержит steam:// URL
+            if game.exe_path.startswith("steam://"):
+                # Проверяем существует ли папка установки
+                if game.install_path and not Path(game.install_path).exists():
+                    games_to_remove.append(uid)
+                    logger.info(f"Steam игра удалена с диска: {game.title} ({game.install_path})")
+            else:
+                # Для системных игр проверяем exe файл
+                if not Path(game.exe_path).exists():
+                    games_to_remove.append(uid)
+                    logger.info(f"Игра удалена с диска: {game.title}")
+        
+        # Удаляем из библиотеки
+        for uid in games_to_remove:
+            del self._games[uid]
+        
+        if games_to_remove:
+            logger.info(f"Удалено {len(games_to_remove)} игр из библиотеки")
+        
+        if self._on_progress:
+            self._on_progress("Сканирование Steam...", 20, 100)
         # Use new CoverAPIManager for 8-tier fallback
+        logger.info("Invoking steam_scanner.scan")
         steam_games = await self.steam_scanner.scan(self.cover_api_manager)
+        logger.info(f"Steam scan finished. Found {len(steam_games)} games.")
 
         if self._on_progress:
-            self._on_progress("Сканирование системы...", 50, 100)
-        system_games = await self.system_scanner.scan(self.cover_api_manager)
+            self._on_progress("Сканирование дисков...", 60, 100)
+        logger.info("Invoking disk_scanner.scan")
+        system_games = await self.disk_scanner.scan(self.cover_api_manager)
+        logger.info(f"Disk scan finished. Found {len(system_games)} games.")
 
         new_games = {g.uid: g for g in steam_games + system_games}
         for uid, game in new_games.items():

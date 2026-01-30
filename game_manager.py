@@ -20,7 +20,7 @@ import time  # <--- Добавлено для пауз
 import random # <--- Для случайных пауз
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from enum import Enum
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -28,29 +28,8 @@ import tempfile
 
 # Windows-specific imports
 import winreg
-try:
-    import win32com.client
-except ImportError:
-    import win32com.client
-except ImportError as e:
-    # Логируем ошибку, чтобы видеть в консоли exe
-    logger.error(f"Failed to import win32com: {e}")
-    pass
 
-# Попытка импорта новой библиотеки
-try:
-    from duckduckgo_search import DDGS
-    HAS_DDG = True
-except ImportError:
-    HAS_DDG = False
-
-try:
-    import icoextract
-    HAS_ICOEXTRACT = True
-except ImportError:
-    HAS_ICOEXTRACT = False
-
-# Настройка логирования
+# Настройка логирования (must be before any code that uses logger)
 log_file = "launcher.log"
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +40,27 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("GameManager")
+
+try:
+    import win32com.client
+except ImportError as e:
+    logger.error(f"Failed to import win32com: {e}")
+
+# Попытка импорта новой библиотеки
+try:
+    from duckduckgo_search import DDGS
+    HAS_DDG = True
+    logger.info("DuckDuckGo search library loaded successfully")
+except ImportError as e:
+    HAS_DDG = False
+    logger.warning(f"DuckDuckGo search not available: {e}")
+
+try:
+    import icoextract
+    HAS_ICOEXTRACT = True
+except ImportError:
+    HAS_ICOEXTRACT = False
+
 
 
 class Platform(Enum):
@@ -226,25 +226,29 @@ class IconExtractor:
 
     def _search_duckduckgo(self, name: str, save_path: Path) -> bool:
         """Поиск в DDG с задержкой (Anti-Ban)"""
-        if not HAS_DDG: return False
+        if not HAS_DDG:
+            logger.warning("   DuckDuckGo недоступен (библиотека не загружена)")
+            return False
         clean_name = self._clean_name(name)
         
         # ВАЖНО: Пауза перед запросом, чтобы избежать 403 (оптимизировано)
-        delay = random.uniform(0.5, 1.0)
-        print(f"🦆 Ищем в DDG: '{clean_name}' (ждем {delay:.1f}с...)")
+        delay = random.uniform(0.3, 0.6)
+        logger.info(f"   🦆 Ищем в DDG: '{clean_name}'")
         time.sleep(delay)
         
         try:
-            query = f"{clean_name} game box art vertical 600x900"
+            query = f"{clean_name} game box art"
             with DDGS() as ddgs:
-                # Ищем только 1 результат для экономии
-                results = list(ddgs.images(query, max_results=1))
+                # Ищем 3 результата для большей вероятности успеха
+                results = list(ddgs.images(query, max_results=3))
+                logger.info(f"   DDG нашёл {len(results)} изображений")
                 for res in results:
                     if self._download_file(res['image'], save_path):
-                        print(f"   ✅ Скачано через DDG")
+                        logger.info(f"   ✅ Скачано через DDG")
                         return True
+                logger.warning(f"   DDG: не удалось скачать ни одно изображение")
         except Exception as e:
-            print(f"   ❌ Ошибка DDG (возможно, лимит): {e}")
+            logger.error(f"   ❌ Ошибка DDG: {e}")
         return False
 
     def _extract_exe_icon(self, exe_path: str, save_path: Path) -> bool:
@@ -341,6 +345,28 @@ class SteamGridDBClient:
 
         return None
 
+    def validate_key(self) -> tuple[bool, str]:
+        """Validate API key. Returns (success, message)"""
+        if not self.api_key:
+            return False, "Ключ не указан"
+        
+        try:
+            url = f"{self.BASE_URL}/search/autocomplete/portal"
+            req = urllib.request.Request(url, headers={
+                'Authorization': f'Bearer {self.api_key}',
+                'User-Agent': 'CyberLauncher/1.0'
+            })
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    return True, "✅ Ключ валидный"
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return False, "❌ Неверный ключ (401)"
+            return False, f"❌ Ошибка: {e.code}"
+        except Exception as e:
+            return False, f"❌ Ошибка: {e}"
+        return False, "❌ Неизвестная ошибка"
+
     def get_grids_by_steam_id(self, steam_app_id: str) -> List[str]:
         """Get grid images by Steam App ID"""
         cache_key = f"steam_{steam_app_id}"
@@ -413,6 +439,26 @@ class RAWGClient:
         if elapsed < self._min_delay:
             time.sleep(self._min_delay - elapsed)
         self._last_request_time = time.time()
+
+    def validate_key(self) -> tuple[bool, str]:
+        """Validate API key. Returns (success, message)"""
+        if not self.api_key:
+            return False, "Ключ не указан"
+        
+        try:
+            params = urllib.parse.urlencode({'key': self.api_key, 'page_size': '1'})
+            url = f"{self.BASE_URL}/games?{params}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'CyberLauncher/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    return True, "✅ Ключ валидный"
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return False, "❌ Неверный ключ (401)"
+            return False, f"❌ Ошибка: {e.code}"
+        except Exception as e:
+            return False, f"❌ Ошибка: {e}"
+        return False, "❌ Неизвестная ошибка"
 
     def search_game(self, game_name: str) -> Optional[str]:
         """Search for game and return background image URL"""
@@ -572,59 +618,59 @@ class CoverAPIManager:
 
     
     def get_cover(self, game_title: str, app_id: str = None, exe_path: str = None) -> Tuple[Optional[str], str]:
-        """Main cover retrieval with 8-tier fallback. Returns (path, source)"""
+        """Main cover retrieval with 7-tier fallback. Returns (path, source)"""
         clean_name = self.icon_extractor._clean_name(game_title)
         key_id = app_id if app_id else hashlib.md5(clean_name.encode()).hexdigest()
         cache_path = self.cache_dir / f"{hashlib.md5(str(key_id).lower().encode()).hexdigest()[:12]}.jpg"
 
         # Tier 1: Cache (already validated by caller, but if we are here, we are fetching new)
 
-        # Tier 2: SteamGridDB by Steam App ID
+        # Tier 2: Steam Direct CDN (fast, free, no API key needed)
+        if app_id:
+            logger.info(f"[Tier 2] Steam CDN: {app_id}")
+            if self.icon_extractor._download_steam_cover(app_id, cache_path):
+                logger.info(f"   ✅ Downloaded from Steam CDN")
+                return (str(cache_path), "Steam CDN")
+
+        # Tier 3: Steam Store Search → CDN (find ID by name, then download)
+        logger.info(f"[Tier 3] Steam Store Search: '{clean_name}'")
+        found_id = self.icon_extractor._search_steam_id_by_name(game_title)
+        if found_id:
+            if self.icon_extractor._download_steam_cover(found_id, cache_path):
+                logger.info(f"   ✅ Downloaded from Steam Store")
+                return (str(cache_path), "Steam Store")
+
+        # Tier 4: SteamGridDB by Steam App ID (higher quality, needs API key)
         if app_id and self.sgdb:
-            logger.info(f"[Tier 2] SteamGridDB by Steam ID: {app_id}")
+            logger.info(f"[Tier 4] SteamGridDB by ID: {app_id}")
             urls = self.sgdb.get_grids_by_steam_id(app_id)
             for url in urls:
                 if self._download_image(url, cache_path):
                     logger.info(f"   ✅ Downloaded from SteamGridDB")
                     return (str(cache_path), "SteamGridDB")
 
-        # Tier 3: Steam Direct CDN
-        if app_id:
-            logger.info(f"[Tier 3] Steam Direct CDN: {app_id}")
-            if self.icon_extractor._download_steam_cover(app_id, cache_path):
-                logger.info(f"   ✅ Downloaded from Steam CDN")
-                return (str(cache_path), "Steam CDN")
-
-        # Tier 4: RAWG.io Search
+        # Tier 5: RAWG.io Search
         if self.rawg:
-            logger.info(f"[Tier 4] RAWG.io Search: '{clean_name}'")
+            logger.info(f"[Tier 5] RAWG.io: '{clean_name}'")
             image_url = self.rawg.search_game(clean_name)
             if image_url:
                 if self._download_image(image_url, cache_path):
                     logger.info(f"   ✅ Downloaded from RAWG.io")
                     return (str(cache_path), "RAWG.io")
 
-        # Tier 5: Steam Store Search
-        logger.info(f"[Tier 5] Steam Store Search: '{clean_name}'")
-        found_id = self.icon_extractor._search_steam_id_by_name(game_title)
-        if found_id:
-            if self.icon_extractor._download_steam_cover(found_id, cache_path):
-                logger.info(f"   ✅ Downloaded from Steam (searched)")
-                return (str(cache_path), "Steam Store")
-
         # Tier 6: SteamGridDB by Name
         if self.sgdb:
-            logger.info(f"[Tier 6] SteamGridDB Name Search: '{clean_name}'")
+            logger.info(f"[Tier 6] SteamGridDB by Name: '{clean_name}'")
             game_id = self.sgdb.search_game(clean_name)
             if game_id:
                 urls = self.sgdb.get_grids_by_game_id(game_id)
                 for url in urls:
                     if self._download_image(url, cache_path):
-                        logger.info(f"   ✅ Downloaded from SteamGridDB (searched)")
+                        logger.info(f"   ✅ Downloaded from SteamGridDB")
                         return (str(cache_path), "SteamGridDB")
 
-        # Tier 7: DuckDuckGo (last resort)
-        logger.info(f"[Tier 7] DuckDuckGo Search: '{clean_name}'")
+        # Tier 7: DuckDuckGo (last resort for images)
+        logger.info(f"[Tier 7] DuckDuckGo: '{clean_name}'")
         if self.icon_extractor._search_duckduckgo(game_title, cache_path):
             logger.info(f"   ✅ Downloaded from DuckDuckGo")
             return (str(cache_path), "DuckDuckGo")
@@ -1077,3 +1123,68 @@ class GameManager:
     @property
     def games_count(self) -> int:
         return len(self._games)
+
+    async def exclude_game(self, uid: str) -> Optional[str]:
+        """Remove game from library and return its path for exclusion list"""
+        if uid in self._games:
+            game = self._games[uid]
+            path = game.exe_path or game.install_path
+            del self._games[uid]
+            await self.save_library()
+            logger.info(f"Excluded game: {game.title} (path: {path})")
+            return path
+        return None
+
+    async def add_game_from_path(self, path: str) -> Optional[GameModel]:
+        """Add a single game/app from path (used for restoring excluded items)"""
+        path_obj = Path(path)
+        if not path_obj.exists():
+            logger.warning(f"Cannot restore game, path not found: {path}")
+            return None
+
+        # Check if already exists
+        for game in self._games.values():
+            if game.exe_path == path or game.install_path == path:
+                 logger.info(f"Game already in library: {game.title}")
+                 return game
+
+        # Create basic GameModel (treat as System game for simplicity)
+        name = path_obj.name
+        # Try to use parent folder name if it's an exe
+        if path_obj.is_file() and path_obj.suffix.lower() == '.exe':
+             name = path_obj.parent.name
+        
+        # Add basic cleaned name
+        name = self.icon_extractor._clean_name(name)
+
+        # Generate UID
+        uid = GameModel.generate_uid(str(path_obj))
+        
+        # Try to find icon in cache or extract new
+        icon = None
+        cache_key = hashlib.md5(name.encode()).hexdigest()[:12]
+        cache_path = self.cover_api_manager.cache_dir / f"{cache_key}.jpg"
+        
+        if cache_path.exists():
+             icon = str(cache_path)
+        else:
+             # Try to extract icon since we are restoring
+             exe_path = str(path_obj) if path_obj.is_file() else None
+             if exe_path:
+                 self.icon_extractor._extract_exe_icon(exe_path, cache_path)
+                 if cache_path.exists():
+                     icon = str(cache_path)
+        
+        game = GameModel(
+            uid=uid,
+            title=name,
+            exe_path=str(path_obj) if path_obj.is_file() else "",
+            icon_path=icon,
+            platform=Platform.SYSTEM.value,
+            install_path=str(path_obj.parent) if path_obj.is_file() else str(path_obj)
+        )
+        
+        self._games[uid] = game
+        await self.save_library()
+        logger.info(f"Restored game: {game.title}")
+        return game

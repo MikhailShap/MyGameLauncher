@@ -2,8 +2,9 @@
   "theme": "forest",
   "show_game_size": true,
   "api_keys": {
-    "steamgriddb": "74adfc7bc9f3339e40e41e985d85e85a",
+    "steamgriddb": "1fa0e0b6671f5c933899ae8f979f9b9d",
     "rawg": "608bf43d8ea14559a488d58616fcc950"
   },
-  "enable_animations": true
+  "enable_animations": true,
+  "excluded_paths": []
 }

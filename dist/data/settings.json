@@ -5,5 +5,9 @@
     "rawg": "608bf43d8ea14559a488d58616fcc950",
     "steamgriddb": "1fa0e0b6671f5c933899ae8f979f9b9d"
   },
-  "enable_animations": true
+  "enable_animations": true,
+  "excluded_paths": [
+    "D:\\Install Games\\LEGO Voyagers\\LEGO Voyagers.exe",
+    "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe"
+  ]
 }

@@ -12,7 +12,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:31.787832"
+      "added_date": "2026-01-30T20:23:20.868264"
     },
     {
       "uid": "9b0c5cbf7fff",
@@ -25,8 +25,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Apex Legends",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T00:22:31.788123"
+      "is_favorite": true,
+      "added_date": "2026-01-30T20:23:20.868578"
     },
     {
       "uid": "da82595bb057",
@@ -39,8 +39,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Battlefield 2042",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T00:22:31.788360"
+      "is_favorite": true,
+      "added_date": "2026-01-30T20:23:20.868812"
     },
     {
       "uid": "e241bd6f9fc0",
@@ -53,8 +53,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Lightyear Frontier",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T00:22:31.788559"
+      "is_favorite": true,
+      "added_date": "2026-01-30T20:23:20.869017"
     },
     {
       "uid": "7c9cf31d0bcb",
@@ -68,7 +68,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:31.788729"
+      "added_date": "2026-01-30T20:23:20.869333"
     },
     {
       "uid": "a1b37691da44",
@@ -82,7 +82,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:31.789114"
+      "added_date": "2026-01-30T20:23:20.869578"
     },
     {
       "uid": "b99fe02da2d0",
@@ -96,7 +96,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:33.208383"
+      "added_date": "2026-01-30T20:23:20.869793"
     },
     {
       "uid": "6c76ebb444ba",
@@ -109,8 +109,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\A Game About Feeeding A Black Hole",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T00:22:33.208623"
+      "is_favorite": true,
+      "added_date": "2026-01-30T20:23:20.870000"
     },
     {
       "uid": "4f65e90b5085",
@@ -124,7 +124,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:33.208878"
+      "added_date": "2026-01-30T20:23:20.870198"
     },
     {
       "uid": "d82e92cc65e8",
@@ -138,7 +138,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:33.208990"
+      "added_date": "2026-01-30T20:23:20.870381"
     },
     {
       "uid": "5d07cd7a6f51",
@@ -152,7 +152,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:36.672141"
+      "added_date": "2026-01-30T20:23:20.870548"
     },
     {
       "uid": "a90eadeae643",
@@ -166,7 +166,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:36.672385"
+      "added_date": "2026-01-30T20:23:20.870717"
     },
     {
       "uid": "e7aad50f0dc7",
@@ -180,7 +180,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:36.672487"
+      "added_date": "2026-01-30T20:23:20.870988"
     },
     {
       "uid": "14cfad40c377",
@@ -194,21 +194,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:37.472396"
-    },
-    {
-      "uid": "ccdba8b56064",
-      "title": "FL Studio 25.1.6.4997-rev.1-WD",
-      "exe_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe",
-      "icon_path": "cache\\icons\\407a8b632db9.jpg",
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T00:22:38.178657"
+      "added_date": "2026-01-30T20:23:21.699949"
     },
     {
       "uid": "db287926945e",
@@ -222,7 +208,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:38.710686"
+      "added_date": "2026-01-30T20:23:26.383941"
     },
     {
       "uid": "fffdc14fe7f9",
@@ -236,7 +222,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:39.275209"
+      "added_date": "2026-01-30T20:23:27.133429"
     },
     {
       "uid": "dcc7b8ce69c0",
@@ -250,7 +236,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:39.755930"
+      "added_date": "2026-01-30T20:23:27.709931"
     },
     {
       "uid": "7d0140a722e7",
@@ -264,7 +250,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:40.277406"
+      "added_date": "2026-01-30T20:23:28.395169"
     },
     {
       "uid": "5bb2f0598d1c",
@@ -278,21 +264,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:41.061360"
-    },
-    {
-      "uid": "33356b4043ec",
-      "title": "LEGO Voyagers",
-      "exe_path": "D:\\Install Games\\LEGO Voyagers\\LEGO Voyagers.exe",
-      "icon_path": "cache\\icons\\06595d25368f.jpg",
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Install Games\\LEGO Voyagers",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T00:22:41.343399"
+      "added_date": "2026-01-30T20:23:29.023152"
     },
     {
       "uid": "03d71f233bd5",
@@ -306,7 +278,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:41.891301"
+      "added_date": "2026-01-30T20:23:30.603646"
     },
     {
       "uid": "34dfb3d4ea41",
@@ -320,13 +292,13 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:42.439820"
+      "added_date": "2026-01-30T20:23:31.182846"
     },
     {
       "uid": "e2185a9561ed",
       "title": "Trine 4",
       "exe_path": "D:\\Install Games\\Trine 4\\trine4.exe",
-      "icon_path": "cache\\icons\\77bfa9b33bee.jpg",
+      "icon_path": "cache\\icons\\ff4325463e55.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -334,13 +306,13 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:43.006951"
+      "added_date": "2026-01-30T20:23:31.943255"
     },
     {
       "uid": "fe9e8001c8f6",
       "title": "Trine 5",
       "exe_path": "D:\\Install Games\\Trine 5\\trine5.exe",
-      "icon_path": "cache\\icons\\f94b0fa70b1e.jpg",
+      "icon_path": "cache\\icons\\f7f2611b613e.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -348,7 +320,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:43.665380"
+      "added_date": "2026-01-30T20:23:32.639003"
     },
     {
       "uid": "1e51bb6f22cd",
@@ -362,7 +334,35 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T00:22:44.510946"
+      "added_date": "2026-01-30T20:23:33.282707"
+    },
+    {
+      "uid": "33356b4043ec",
+      "title": "LEGO Voyagers",
+      "exe_path": "D:\\Install Games\\LEGO Voyagers\\LEGO Voyagers.exe",
+      "icon_path": "cache\\icons\\06595d25368f.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Install Games\\LEGO Voyagers",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-01-30T20:23:30.050419"
+    },
+    {
+      "uid": "ccdba8b56064",
+      "title": "FL Studio 25.1.6.4997-rev.1-WD",
+      "exe_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe",
+      "icon_path": "cache\\icons\\407a8b632db9.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-01-30T20:23:23.025143"
     }
   ]
 }

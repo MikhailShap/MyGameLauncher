@@ -46,6 +46,9 @@ def build():
         "flet",
         "flet_desktop",
         "icoextract",
+        "duckduckgo_search",
+        "curl_cffi",
+        "primp",
     ]
     
     # Формируем команду

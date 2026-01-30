@@ -1,77 +1,33 @@
-2026-01-30 00:42:19,741 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI169882\assets
-2026-01-30 00:42:19,742 - INFO - Starting up TCP server on localhost:51664
-2026-01-30 00:42:19,746 - INFO - Flet app has started...
-2026-01-30 00:42:19,747 - INFO - App URL: tcp://localhost:51664
-2026-01-30 00:42:19,747 - INFO - Starting Flet View app...
-2026-01-30 00:42:19,748 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI169882\flet_desktop\app\flet\flet.exe
-2026-01-30 00:42:19,748 - INFO - Flet View found in: C:\Users\ShapM\AppData\Local\Temp\_MEI169882\flet_desktop\app\flet\flet.exe
-2026-01-30 00:42:20,231 - INFO - App session started
-2026-01-30 00:42:20,232 - INFO - SteamGridDB API initialized
-2026-01-30 00:42:20,232 - INFO - RAWG.io API initialized
-2026-01-30 00:42:20,251 - INFO - UI: load_library started
-2026-01-30 00:42:25,521 - INFO - SteamGridDB API initialized
-2026-01-30 00:42:25,521 - INFO - RAWG.io API initialized
-2026-01-30 00:42:25,521 - INFO - API clients reinitialized
-2026-01-30 00:42:31,152 - INFO - UI: API Search clicked for Gamblers Table
-2026-01-30 00:42:31,284 - INFO - [Tier 2] SteamGridDB by Steam ID: 3618390
-2026-01-30 00:42:33,026 - INFO -    ✅ Downloaded from SteamGridDB
-2026-01-30 00:42:39,270 - INFO - UI: API Search clicked for Highguard
-2026-01-30 00:42:39,404 - INFO - [Tier 2] SteamGridDB by Steam ID: 4128260
-2026-01-30 00:42:40,129 - INFO -    ✅ Downloaded from SteamGridDB
-2026-01-30 00:42:43,525 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
-2026-01-30 00:42:43,657 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
-2026-01-30 00:42:44,289 - INFO -    ✅ Downloaded from SteamGridDB
-2026-01-30 00:42:56,086 - INFO - UI: API Search clicked for Cuphead
-2026-01-30 00:42:56,359 - INFO - [Tier 4] RAWG.io Search: 'Cuphead'
-2026-01-30 00:42:59,123 - INFO -    ✅ Downloaded from RAWG.io
-2026-01-30 00:43:05,042 - INFO - UI: API Search clicked for Plan.B.Terraform.Build.19960463
-2026-01-30 00:43:05,329 - INFO - [Tier 4] RAWG.io Search: 'Plan B Terraform'
-2026-01-30 00:43:05,941 - INFO -    ✅ Downloaded from RAWG.io
-2026-01-30 00:43:43,138 - INFO - UI: API Search clicked for Trine 4
-2026-01-30 00:43:43,439 - INFO - [Tier 4] RAWG.io Search: 'Trine 4'
-2026-01-30 00:43:44,070 - INFO -    ✅ Downloaded from RAWG.io
-2026-01-30 00:43:44,581 - INFO - UI: API Search clicked for Trine 4
-2026-01-30 00:43:44,927 - INFO - [Tier 4] RAWG.io Search: 'Trine 4'
-2026-01-30 00:43:45,314 - INFO -    ✅ Downloaded from RAWG.io
-2026-01-30 00:44:00,339 - INFO - UI: API Search clicked for Rayman Legends
-2026-01-30 00:44:00,657 - INFO - [Tier 2] SteamGridDB by Steam ID: 242550
-2026-01-30 00:44:01,395 - INFO -    ✅ Downloaded from SteamGridDB
-2026-01-30 00:44:17,477 - INFO - Uploaded cover for game 14cfad40c377: cache\icons\dea1033fcb95.jpg
-2026-01-30 00:44:21,840 - INFO - UI: API Search clicked for Drill Core
-2026-01-30 00:44:22,197 - INFO - [Tier 4] RAWG.io Search: 'Drill Core'
-2026-01-30 00:44:22,740 - INFO -    ✅ Downloaded from RAWG.io
-2026-01-30 00:45:04,504 - ERROR - Task exception was never retrieved
-future: <Task finished name='Task-266' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
-Traceback (most recent call last):
-  File "main.py", line 1583, in <module>
-  File "flet\app.py", line 96, in run
-  File "asyncio\runners.py", line 204, in run
-  File "asyncio\runners.py", line 127, in run
-  File "asyncio\base_events.py", line 706, in run_until_complete
-  File "asyncio\base_events.py", line 677, in run_forever
-  File "asyncio\base_events.py", line 2046, in _run_once
-  File "asyncio\events.py", line 94, in _run
-  File "flet\messaging\session.py", line 193, in dispatch_event
-  File "flet\controls\base_control.py", line 342, in _trigger_event
-  File "main.py", line 572, in <lambda>
-  File "main.py", line 965, in window_action
-SystemExit: 0
-2026-01-30 00:50:47,837 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI356522\assets
-2026-01-30 00:50:47,838 - INFO - Starting up TCP server on localhost:49797
-2026-01-30 00:50:47,842 - INFO - Flet app has started...
-2026-01-30 00:50:47,843 - INFO - App URL: tcp://localhost:49797
-2026-01-30 00:50:47,843 - INFO - Starting Flet View app...
-2026-01-30 00:50:47,843 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI356522\flet_desktop\app\flet\flet.exe
-2026-01-30 00:50:47,843 - INFO - Flet View found in: C:\Users\ShapM\AppData\Local\Temp\_MEI356522\flet_desktop\app\flet\flet.exe
-2026-01-30 00:50:48,337 - INFO - App session started
-2026-01-30 00:50:48,338 - INFO - SteamGridDB API initialized
-2026-01-30 00:50:48,338 - INFO - RAWG.io API initialized
-2026-01-30 00:50:48,356 - INFO - UI: load_library started
-2026-01-30 00:50:56,133 - INFO - UI: API Search clicked for Gamblers Table
-2026-01-30 00:50:56,295 - INFO - [Tier 2] SteamGridDB by Steam ID: 3618390
-2026-01-30 00:50:57,027 - INFO -    ✅ Downloaded from SteamGridDB
-2026-01-30 00:51:11,770 - ERROR - Task exception was never retrieved
-future: <Task finished name='Task-72' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+2026-01-30 13:05:36,415 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI123122\assets
+2026-01-30 13:05:36,416 - INFO - Starting up TCP server on localhost:53195
+2026-01-30 13:05:36,422 - INFO - Flet app has started...
+2026-01-30 13:05:36,423 - INFO - App URL: tcp://localhost:53195
+2026-01-30 13:05:36,423 - INFO - Starting Flet View app...
+2026-01-30 13:05:36,423 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI123122\flet_desktop\app\flet\flet.exe
+2026-01-30 13:05:36,423 - INFO - Flet View found in: C:\Users\ShapM\AppData\Local\Temp\_MEI123122\flet_desktop\app\flet\flet.exe
+2026-01-30 13:05:36,688 - INFO - App session started
+2026-01-30 13:05:36,690 - INFO - SteamGridDB API initialized
+2026-01-30 13:05:36,690 - INFO - RAWG.io API initialized
+2026-01-30 13:05:36,720 - INFO - UI: load_library started
+2026-01-30 14:11:06,687 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI201402\assets
+2026-01-30 14:11:06,688 - INFO - Starting up TCP server on localhost:61598
+2026-01-30 14:11:06,694 - INFO - Flet app has started...
+2026-01-30 14:11:06,695 - INFO - App URL: tcp://localhost:61598
+2026-01-30 14:11:06,695 - INFO - Starting Flet View app...
+2026-01-30 14:11:06,696 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI201402\flet_desktop\app\flet\flet.exe
+2026-01-30 14:11:06,696 - INFO - Flet View found in: C:\Users\ShapM\AppData\Local\Temp\_MEI201402\flet_desktop\app\flet\flet.exe
+2026-01-30 14:11:06,986 - INFO - App session started
+2026-01-30 14:11:06,987 - INFO - SteamGridDB API initialized
+2026-01-30 14:11:06,987 - INFO - RAWG.io API initialized
+2026-01-30 14:11:07,028 - INFO - UI: load_library started
+2026-01-30 14:11:23,563 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 14:11:23,700 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
+2026-01-30 14:11:24,483 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 14:11:30,465 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 14:11:30,592 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
+2026-01-30 14:11:30,884 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 14:11:32,072 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-56' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
 Traceback (most recent call last):
   File "main.py", line 1584, in <module>
   File "flet\app.py", line 96, in run
@@ -86,3 +42,293 @@ Traceback (most recent call last):
   File "main.py", line 572, in <lambda>
   File "main.py", line 965, in window_action
 SystemExit: 0
+2026-01-30 18:38:21,036 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI63322\assets
+2026-01-30 18:38:21,037 - INFO - Starting up TCP server on localhost:61322
+2026-01-30 18:38:21,041 - INFO - Flet app has started...
+2026-01-30 18:38:21,042 - INFO - App URL: tcp://localhost:61322
+2026-01-30 18:38:21,042 - INFO - Starting Flet View app...
+2026-01-30 18:38:21,043 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI63322\flet_desktop\app\flet\flet.exe
+2026-01-30 18:38:21,043 - INFO - Flet View found in: C:\Users\ShapM\AppData\Local\Temp\_MEI63322\flet_desktop\app\flet\flet.exe
+2026-01-30 18:38:21,582 - INFO - App session started
+2026-01-30 18:38:21,592 - INFO - SteamGridDB API initialized
+2026-01-30 18:38:21,592 - INFO - RAWG.io API initialized
+2026-01-30 18:38:21,611 - INFO - UI: load_library started
+2026-01-30 18:38:46,846 - INFO - UI: API Search clicked for Trine 5
+2026-01-30 18:38:47,000 - INFO - [Tier 4] RAWG.io Search: 'Trine 5'
+2026-01-30 18:38:47,730 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 18:39:10,911 - INFO - Uploaded cover for game fe9e8001c8f6: cache\icons\f7f2611b613e.jpg
+2026-01-30 18:41:06,553 - INFO - UI: API Search clicked for Trine 4
+2026-01-30 18:41:06,844 - INFO - [Tier 4] RAWG.io Search: 'Trine 4'
+2026-01-30 18:41:07,613 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 18:41:37,209 - INFO - Uploaded cover for game e2185a9561ed: cache\icons\ff4325463e55.jpg
+2026-01-30 18:43:14,540 - INFO - UI: API Search clicked for LEGO Marvel Super Heroes 2
+2026-01-30 18:43:14,864 - INFO - [Tier 4] RAWG.io Search: 'LEGO Marvel Super Heroes 2'
+2026-01-30 18:43:15,625 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 18:43:27,990 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-448' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1584, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 572, in <lambda>
+  File "main.py", line 965, in window_action
+SystemExit: 0
+2026-01-30 20:11:49,639 - ERROR - Failed to import win32com: No module named 'win32com'
+2026-01-30 20:11:49,662 - INFO - DuckDuckGo search library loaded successfully
+2026-01-30 20:11:49,703 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI97962\assets
+2026-01-30 20:11:49,704 - INFO - Starting up TCP server on localhost:49663
+2026-01-30 20:11:49,708 - INFO - Flet app has started...
+2026-01-30 20:11:49,709 - INFO - App URL: tcp://localhost:49663
+2026-01-30 20:11:49,709 - INFO - Starting Flet View app...
+2026-01-30 20:11:49,710 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI97962\flet_desktop\app\flet\flet.exe
+2026-01-30 20:11:50,469 - INFO - App session started
+2026-01-30 20:11:50,470 - INFO - SteamGridDB API initialized
+2026-01-30 20:11:50,470 - INFO - RAWG.io API initialized
+2026-01-30 20:11:50,489 - INFO - UI: load_library started
+2026-01-30 20:11:50,492 - INFO - Removed orphaned cache: 77bfa9b33bee.jpg
+2026-01-30 20:11:50,492 - INFO - Removed orphaned cache: f94b0fa70b1e.jpg
+2026-01-30 20:11:50,493 - INFO - Cache cleanup: 2/27 orphaned files removed
+2026-01-30 20:11:54,608 - INFO - UI: API Search clicked for Gamblers Table
+2026-01-30 20:11:54,808 - INFO - [Tier 2] Steam CDN: 3618390
+2026-01-30 20:11:57,385 - INFO - [Tier 3] Steam Store Search: 'Gamblers Table'
+2026-01-30 20:11:58,613 - INFO - [Tier 4] SteamGridDB by ID: 3618390
+2026-01-30 20:11:59,520 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 20:12:01,421 - INFO - UI: Update Library button clicked
+2026-01-30 20:12:01,482 - INFO - UI: refresh_library async task started
+2026-01-30 20:12:01,673 - INFO - scan_all_games called
+2026-01-30 20:12:01,854 - INFO - Invoking steam_scanner.scan
+2026-01-30 20:12:01,855 - INFO - Starting Steam scan...
+2026-01-30 20:12:01,996 - INFO - Steam scan finished. Found 13 games.
+2026-01-30 20:12:02,049 - INFO - Invoking disk_scanner.scan
+2026-01-30 20:12:02,049 - INFO - Начинаем сканирование папок: ['C:\\Games', 'D:\\Games', 'D:\\Install Games']
+2026-01-30 20:12:02,053 - INFO - [Tier 3] Steam Store Search: 'Drill Core'
+2026-01-30 20:12:03,167 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:03,167 - INFO - Найдена игра: Drill Core (D:\Games\Drill Core\Drill Core.exe)
+2026-01-30 20:12:03,168 - INFO - [Tier 3] Steam Store Search: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:12:03,762 - INFO - [Tier 5] RAWG.io: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:12:04,482 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:12:04,482 - INFO - Найдена игра: FL Studio 25.1.6.4997-rev.1-WD (D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:12:04,483 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:12:06,822 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:12:07,425 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:12:07,426 - INFO - Найдена игра: LEGO Voyagers [MULTi-ENG-RUS] [R] [TN] (D:\Games\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\LEGO Voyagers.exe)
+2026-01-30 20:12:07,428 - INFO - [Tier 3] Steam Store Search: 'Plan B Terraform'
+2026-01-30 20:12:08,741 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:08,741 - INFO - Найдена игра: Plan.B.Terraform.Build.19960463 (D:\Games\Plan.B.Terraform.Build.19960463\Plan B Terraform.exe)
+2026-01-30 20:12:08,746 - INFO - [Tier 3] Steam Store Search: 'Cuphead'
+2026-01-30 20:12:09,367 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:09,367 - INFO - Найдена игра: Cuphead (D:\Install Games\Cuphead\Cuphead.exe)
+2026-01-30 20:12:09,368 - INFO - [Tier 3] Steam Store Search: 'LEGO Marvel Super Heroes 2'
+2026-01-30 20:12:09,959 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:09,959 - INFO - Найдена игра: LEGO Marvel Super Heroes 2 (D:\Install Games\LEGO Marvel Super Heroes 2\LEGOMARVEL2_DX11.exe)
+2026-01-30 20:12:09,960 - INFO - [Tier 3] Steam Store Search: 'LEGO Star Wars - The Skywalker Saga'
+2026-01-30 20:12:10,576 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:10,576 - INFO - Найдена игра: LEGO Star Wars - The Skywalker Saga (D:\Install Games\LEGO Star Wars - The Skywalker Saga\LEGOSTARWARSSKYWALKERSAGA_DX11.exe)
+2026-01-30 20:12:10,577 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:12:11,278 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:12:11,607 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:12:11,607 - INFO - Найдена игра: LEGO Voyagers (D:\Install Games\LEGO Voyagers\LEGO Voyagers.exe)
+2026-01-30 20:12:11,607 - INFO - [Tier 3] Steam Store Search: 'Poly Bridge 3'
+2026-01-30 20:12:12,773 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:12,774 - INFO - Найдена игра: Poly Bridge 3 (D:\Install Games\Poly Bridge 3\Poly Bridge 3.exe)
+2026-01-30 20:12:12,774 - INFO - [Tier 3] Steam Store Search: 'Ratchet and Clank - Rift Apart'
+2026-01-30 20:12:13,419 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:13,419 - INFO - Найдена игра: Ratchet and Clank - Rift Apart (D:\Install Games\Ratchet and Clank - Rift Apart\RiftApart.exe)
+2026-01-30 20:12:13,420 - INFO - [Tier 3] Steam Store Search: 'Trine 4'
+2026-01-30 20:12:14,605 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:14,606 - INFO - Найдена игра: Trine 4 (D:\Install Games\Trine 4\trine4.exe)
+2026-01-30 20:12:14,606 - INFO - [Tier 3] Steam Store Search: 'Trine 5'
+2026-01-30 20:12:15,241 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:15,241 - INFO - Найдена игра: Trine 5 (D:\Install Games\Trine 5\trine5.exe)
+2026-01-30 20:12:15,243 - INFO - [Tier 3] Steam Store Search: 'Wolfenstein II The New Colossus'
+2026-01-30 20:12:15,945 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:12:15,946 - INFO - Найдена игра: Wolfenstein II The New Colossus (D:\Install Games\Wolfenstein II The New Colossus\NewColossus_x64vk.exe)
+2026-01-30 20:12:15,946 - INFO - Disk scan finished. Found 13 games.
+2026-01-30 20:12:27,091 - INFO - Excluded game: FL Studio 25.1.6.4997-rev.1-WD (path: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:12:52,638 - INFO - Excluded game: LEGO Voyagers (path: D:\Install Games\LEGO Voyagers\LEGO Voyagers.exe)
+2026-01-30 20:13:00,672 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-126' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1753, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 753, in <lambda>
+  File "main.py", line 1166, in window_action
+SystemExit: 0
+2026-01-30 20:13:05,158 - ERROR - Failed to import win32com: No module named 'win32com'
+2026-01-30 20:13:05,178 - INFO - DuckDuckGo search library loaded successfully
+2026-01-30 20:13:05,247 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI257282\assets
+2026-01-30 20:13:05,248 - INFO - Starting up TCP server on localhost:50108
+2026-01-30 20:13:05,252 - INFO - Flet app has started...
+2026-01-30 20:13:05,252 - INFO - App URL: tcp://localhost:50108
+2026-01-30 20:13:05,252 - INFO - Starting Flet View app...
+2026-01-30 20:13:05,253 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI257282\flet_desktop\app\flet\flet.exe
+2026-01-30 20:13:05,654 - INFO - App session started
+2026-01-30 20:13:05,655 - INFO - SteamGridDB API initialized
+2026-01-30 20:13:05,655 - INFO - RAWG.io API initialized
+2026-01-30 20:13:05,676 - INFO - UI: load_library started
+2026-01-30 20:13:05,678 - INFO - Removed orphaned cache: 407a8b632db9.jpg
+2026-01-30 20:13:05,679 - INFO - Removed orphaned cache: 77bfa9b33bee.jpg
+2026-01-30 20:13:05,679 - INFO - Removed orphaned cache: f94b0fa70b1e.jpg
+2026-01-30 20:13:05,679 - INFO - Cache cleanup: 3/27 orphaned files removed
+2026-01-30 20:13:32,593 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-60' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1753, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 753, in <lambda>
+  File "main.py", line 1166, in window_action
+SystemExit: 0
+2026-01-30 20:14:03,318 - ERROR - Failed to import win32com: No module named 'win32com'
+2026-01-30 20:14:03,337 - INFO - DuckDuckGo search library loaded successfully
+2026-01-30 20:14:03,378 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI73042\assets
+2026-01-30 20:14:03,379 - INFO - Starting up TCP server on localhost:60213
+2026-01-30 20:14:03,383 - INFO - Flet app has started...
+2026-01-30 20:14:03,384 - INFO - App URL: tcp://localhost:60213
+2026-01-30 20:14:03,384 - INFO - Starting Flet View app...
+2026-01-30 20:14:03,384 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI73042\flet_desktop\app\flet\flet.exe
+2026-01-30 20:14:03,802 - INFO - App session started
+2026-01-30 20:14:03,802 - INFO - SteamGridDB API initialized
+2026-01-30 20:14:03,802 - INFO - RAWG.io API initialized
+2026-01-30 20:14:03,821 - INFO - UI: load_library started
+2026-01-30 20:14:10,197 - INFO - UI: Update Library button clicked
+2026-01-30 20:14:10,221 - INFO - UI: refresh_library async task started
+2026-01-30 20:14:10,370 - INFO - scan_all_games called
+2026-01-30 20:14:10,456 - INFO - Invoking steam_scanner.scan
+2026-01-30 20:14:10,456 - INFO - Starting Steam scan...
+2026-01-30 20:14:10,460 - INFO - Steam scan finished. Found 13 games.
+2026-01-30 20:14:10,503 - INFO - Invoking disk_scanner.scan
+2026-01-30 20:14:10,503 - INFO - Начинаем сканирование папок: ['C:\\Games', 'D:\\Games', 'D:\\Install Games']
+2026-01-30 20:14:10,507 - INFO - [Tier 3] Steam Store Search: 'Drill Core'
+2026-01-30 20:14:11,196 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:11,196 - INFO - Найдена игра: Drill Core (D:\Games\Drill Core\Drill Core.exe)
+2026-01-30 20:14:11,197 - INFO - [Tier 3] Steam Store Search: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:14:11,831 - INFO - [Tier 5] RAWG.io: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:14:12,445 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:14:12,445 - INFO - Найдена игра: FL Studio 25.1.6.4997-rev.1-WD (D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:14:12,445 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:14:14,674 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:14:15,263 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:14:15,263 - INFO - Найдена игра: LEGO Voyagers [MULTi-ENG-RUS] [R] [TN] (D:\Games\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\LEGO Voyagers.exe)
+2026-01-30 20:14:15,265 - INFO - [Tier 3] Steam Store Search: 'Plan B Terraform'
+2026-01-30 20:14:16,057 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:16,057 - INFO - Найдена игра: Plan.B.Terraform.Build.19960463 (D:\Games\Plan.B.Terraform.Build.19960463\Plan B Terraform.exe)
+2026-01-30 20:14:16,059 - INFO - [Tier 3] Steam Store Search: 'Cuphead'
+2026-01-30 20:14:16,738 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:16,738 - INFO - Найдена игра: Cuphead (D:\Install Games\Cuphead\Cuphead.exe)
+2026-01-30 20:14:16,739 - INFO - [Tier 3] Steam Store Search: 'LEGO Marvel Super Heroes 2'
+2026-01-30 20:14:17,321 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:17,321 - INFO - Найдена игра: LEGO Marvel Super Heroes 2 (D:\Install Games\LEGO Marvel Super Heroes 2\LEGOMARVEL2_DX11.exe)
+2026-01-30 20:14:17,321 - INFO - [Tier 3] Steam Store Search: 'LEGO Star Wars - The Skywalker Saga'
+2026-01-30 20:14:18,034 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:18,035 - INFO - Найдена игра: LEGO Star Wars - The Skywalker Saga (D:\Install Games\LEGO Star Wars - The Skywalker Saga\LEGOSTARWARSSKYWALKERSAGA_DX11.exe)
+2026-01-30 20:14:18,035 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:14:18,737 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:14:19,024 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:14:19,024 - INFO - Найдена игра: LEGO Voyagers (D:\Install Games\LEGO Voyagers\LEGO Voyagers.exe)
+2026-01-30 20:14:19,025 - INFO - [Tier 3] Steam Store Search: 'Poly Bridge 3'
+2026-01-30 20:14:19,643 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:19,643 - INFO - Найдена игра: Poly Bridge 3 (D:\Install Games\Poly Bridge 3\Poly Bridge 3.exe)
+2026-01-30 20:14:19,643 - INFO - [Tier 3] Steam Store Search: 'Ratchet and Clank - Rift Apart'
+2026-01-30 20:14:20,395 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:20,395 - INFO - Найдена игра: Ratchet and Clank - Rift Apart (D:\Install Games\Ratchet and Clank - Rift Apart\RiftApart.exe)
+2026-01-30 20:14:20,396 - INFO - [Tier 3] Steam Store Search: 'Trine 4'
+2026-01-30 20:14:21,062 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:21,062 - INFO - Найдена игра: Trine 4 (D:\Install Games\Trine 4\trine4.exe)
+2026-01-30 20:14:21,062 - INFO - [Tier 3] Steam Store Search: 'Trine 5'
+2026-01-30 20:14:21,743 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:21,743 - INFO - Найдена игра: Trine 5 (D:\Install Games\Trine 5\trine5.exe)
+2026-01-30 20:14:21,743 - INFO - [Tier 3] Steam Store Search: 'Wolfenstein II The New Colossus'
+2026-01-30 20:14:22,393 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:14:22,394 - INFO - Найдена игра: Wolfenstein II The New Colossus (D:\Install Games\Wolfenstein II The New Colossus\NewColossus_x64vk.exe)
+2026-01-30 20:14:22,394 - INFO - Disk scan finished. Found 13 games.
+2026-01-30 20:22:52,884 - ERROR - Failed to import win32com: No module named 'win32com'
+2026-01-30 20:22:52,904 - INFO - DuckDuckGo search library loaded successfully
+2026-01-30 20:22:52,965 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI250482\assets
+2026-01-30 20:22:52,966 - INFO - Starting up TCP server on localhost:59568
+2026-01-30 20:22:52,969 - INFO - Flet app has started...
+2026-01-30 20:22:52,970 - INFO - App URL: tcp://localhost:59568
+2026-01-30 20:22:52,970 - INFO - Starting Flet View app...
+2026-01-30 20:22:52,971 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI250482\flet_desktop\app\flet\flet.exe
+2026-01-30 20:22:53,366 - INFO - App session started
+2026-01-30 20:22:53,367 - INFO - SteamGridDB API initialized
+2026-01-30 20:22:53,367 - INFO - RAWG.io API initialized
+2026-01-30 20:22:53,386 - INFO - UI: load_library started
+2026-01-30 20:22:53,389 - INFO - Removed orphaned cache: 77bfa9b33bee.jpg
+2026-01-30 20:22:53,389 - INFO - Removed orphaned cache: f94b0fa70b1e.jpg
+2026-01-30 20:22:53,389 - INFO - Cache cleanup: 2/27 orphaned files removed
+2026-01-30 20:23:04,347 - INFO - Game already in library: FL Studio 25.1.6.4997-rev.1-WD
+2026-01-30 20:23:15,518 - INFO - Excluded game: FL Studio 25.1.6.4997-rev.1-WD (path: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:23:20,597 - INFO - UI: Update Library button clicked
+2026-01-30 20:23:20,624 - INFO - UI: refresh_library async task started
+2026-01-30 20:23:20,776 - INFO - scan_all_games called
+2026-01-30 20:23:20,866 - INFO - Invoking steam_scanner.scan
+2026-01-30 20:23:20,866 - INFO - Starting Steam scan...
+2026-01-30 20:23:20,871 - INFO - Steam scan finished. Found 13 games.
+2026-01-30 20:23:20,917 - INFO - Invoking disk_scanner.scan
+2026-01-30 20:23:20,917 - INFO - Начинаем сканирование папок: ['C:\\Games', 'D:\\Games', 'D:\\Install Games']
+2026-01-30 20:23:20,921 - INFO - [Tier 3] Steam Store Search: 'Drill Core'
+2026-01-30 20:23:21,699 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:21,699 - INFO - Найдена игра: Drill Core (D:\Games\Drill Core\Drill Core.exe)
+2026-01-30 20:23:21,700 - INFO - [Tier 3] Steam Store Search: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:23:22,296 - INFO - [Tier 5] RAWG.io: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:23:23,024 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:23:23,025 - INFO - Найдена игра: FL Studio 25.1.6.4997-rev.1-WD (D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:23:23,025 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:23:25,827 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:23:26,383 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:23:26,383 - INFO - Найдена игра: LEGO Voyagers [MULTi-ENG-RUS] [R] [TN] (D:\Games\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\LEGO Voyagers.exe)
+2026-01-30 20:23:26,384 - INFO - [Tier 3] Steam Store Search: 'Plan B Terraform'
+2026-01-30 20:23:27,133 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:27,133 - INFO - Найдена игра: Plan.B.Terraform.Build.19960463 (D:\Games\Plan.B.Terraform.Build.19960463\Plan B Terraform.exe)
+2026-01-30 20:23:27,135 - INFO - [Tier 3] Steam Store Search: 'Cuphead'
+2026-01-30 20:23:27,709 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:27,709 - INFO - Найдена игра: Cuphead (D:\Install Games\Cuphead\Cuphead.exe)
+2026-01-30 20:23:27,710 - INFO - [Tier 3] Steam Store Search: 'LEGO Marvel Super Heroes 2'
+2026-01-30 20:23:28,395 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:28,395 - INFO - Найдена игра: LEGO Marvel Super Heroes 2 (D:\Install Games\LEGO Marvel Super Heroes 2\LEGOMARVEL2_DX11.exe)
+2026-01-30 20:23:28,395 - INFO - [Tier 3] Steam Store Search: 'LEGO Star Wars - The Skywalker Saga'
+2026-01-30 20:23:29,023 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:29,023 - INFO - Найдена игра: LEGO Star Wars - The Skywalker Saga (D:\Install Games\LEGO Star Wars - The Skywalker Saga\LEGOSTARWARSSKYWALKERSAGA_DX11.exe)
+2026-01-30 20:23:29,023 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:23:29,724 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:23:30,050 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:23:30,050 - INFO - Найдена игра: LEGO Voyagers (D:\Install Games\LEGO Voyagers\LEGO Voyagers.exe)
+2026-01-30 20:23:30,051 - INFO - [Tier 3] Steam Store Search: 'Poly Bridge 3'
+2026-01-30 20:23:30,603 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:30,603 - INFO - Найдена игра: Poly Bridge 3 (D:\Install Games\Poly Bridge 3\Poly Bridge 3.exe)
+2026-01-30 20:23:30,604 - INFO - [Tier 3] Steam Store Search: 'Ratchet and Clank - Rift Apart'
+2026-01-30 20:23:31,182 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:31,182 - INFO - Найдена игра: Ratchet and Clank - Rift Apart (D:\Install Games\Ratchet and Clank - Rift Apart\RiftApart.exe)
+2026-01-30 20:23:31,183 - INFO - [Tier 3] Steam Store Search: 'Trine 4'
+2026-01-30 20:23:31,943 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:31,943 - INFO - Найдена игра: Trine 4 (D:\Install Games\Trine 4\trine4.exe)
+2026-01-30 20:23:31,943 - INFO - [Tier 3] Steam Store Search: 'Trine 5'
+2026-01-30 20:23:32,638 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:32,638 - INFO - Найдена игра: Trine 5 (D:\Install Games\Trine 5\trine5.exe)
+2026-01-30 20:23:32,639 - INFO - [Tier 3] Steam Store Search: 'Wolfenstein II The New Colossus'
+2026-01-30 20:23:33,282 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:23:33,282 - INFO - Найдена игра: Wolfenstein II The New Colossus (D:\Install Games\Wolfenstein II The New Colossus\NewColossus_x64vk.exe)
+2026-01-30 20:23:33,282 - INFO - Disk scan finished. Found 13 games.

@@ -155,20 +155,6 @@
       "added_date": "2026-01-19T19:00:45.803395"
     },
     {
-      "uid": "18d7d1643c63",
-      "title": "Ubisoft Connect",
-      "exe_path": "C:\\Program Files (x86)\\Ubisoft\\Ubisoft Game Launcher\\UbisoftConnect.exe",
-      "icon_path": "cache\\icons\\9bdb55a12669.jpg",
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "C:\\Program Files (x86)\\Ubisoft\\Ubisoft Game Launcher",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-19T17:52:33.774286"
-    },
-    {
       "uid": "33356b4043ec",
       "title": "LEGO Voyagers",
       "exe_path": "D:\\Install Games\\LEGO Voyagers\\LEGO Voyagers.exe",
@@ -200,7 +186,7 @@
       "uid": "f8f3e1135fa2",
       "title": "Severed Steel DX11",
       "exe_path": "D:\\Install Games\\Severed Steel\\ThankYouVeryCool.exe",
-      "icon_path": "cache\\icons\\61bd9cd06155.jpg",
+      "icon_path": "cache\\icons\\d51fb0a8a66b.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -214,7 +200,7 @@
       "uid": "1e51bb6f22cd",
       "title": "Wolfenstein II - The New Colossus",
       "exe_path": "D:\\Install Games\\Wolfenstein II The New Colossus\\NewColossus_x64vk.exe",
-      "icon_path": "cache\\icons\\9e6f8bbdbcbd.jpg",
+      "icon_path": "cache\\icons\\af9ec291eb26.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -265,20 +251,6 @@
       "play_time": 0,
       "is_favorite": false,
       "added_date": "2026-01-19T17:52:47.342382"
-    },
-    {
-      "uid": "ccdba8b56064",
-      "title": "FL Studio 25.1.6.4997 rev.1 WD",
-      "exe_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe",
-      "icon_path": "cache\\icons\\c9cbabffa31b.jpg",
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": true,
-      "added_date": "2026-01-19T17:52:48.398839"
     },
     {
       "uid": "db287926945e",
@@ -447,6 +419,20 @@
       "play_time": 0,
       "is_favorite": false,
       "added_date": "2026-01-29T23:33:38.939611"
+    },
+    {
+      "uid": "ccdba8b56064",
+      "title": "FL Studio 25 1 6 4997-rev 1-WD",
+      "exe_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe",
+      "icon_path": "cache\\icons\\407a8b632db9.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-01-30T20:05:04.186994"
     }
   ]
 }

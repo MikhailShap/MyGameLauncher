@@ -1,0 +1,36 @@
+API Search clicked for Ubisoft Connect
+API Search clicked for Ubisoft Connect
+API Search clicked for Ubisoft Connect
+Error: Traceback (most recent call last):
+  File "C:\MyGameLauncher\main.py", line 1456, in on_api_search_click
+    await self.refresh_cover(self.upload_target_game)
+  File "C:\MyGameLauncher\main.py", line 1535, in refresh_cover
+    self.page.open(ft.SnackBar(
+    ^^^^^^^^^^^^^^
+AttributeError: 'Page' object has no attribute 'open'
+
+API Search clicked for A Game About Feeding A Black Hole
+API Search clicked for A Game About Feeding A Black Hole
+API Search clicked for A Game About Feeding A Black Hole
+API Search clicked for A Game About Feeding A Black Hole
+API Search clicked for A Game About Feeding A Black Hole
+API Search clicked for Ubisoft Connect
+API Search clicked for Hogwarts Legacy
+API Search clicked for Severed Steel DX11
+API Search clicked for LEGO Voyagers
+API Search clicked for Poly.Bridge.3 TENOKE
+API Search clicked for Highguard
+API Search clicked for Highguard
+API Search clicked for Highguard
+API Search clicked for Highguard
+API Search clicked for Highguard
+API Search clicked for Highguard
+API Search clicked for Serious Sam HD: The First Encounter
+API Search clicked for A Game About Feeding A Black Hole
+API Search clicked for Gamblers Table
+API Search clicked for LEGO Voyagers
+API Search clicked for Wolfenstein II - The New Colossus
+API Search clicked for A Game About Feeding A Black Hole
+API Search clicked for FL Studio 25 1 6 4997-rev 1-WD
+API Search clicked for Pummel Party
+API Search clicked for FL Studio 25 1 6 4997-rev 1-WD

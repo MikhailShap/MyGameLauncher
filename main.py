@@ -138,12 +138,13 @@ class GameCard(ft.Container):
     # Class-level cache for icon existence checks
     _icon_exists_cache = {}
     
-    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, show_size=False, enable_animations=False):
+    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, show_size=False, enable_animations=False):
         super().__init__()
         self.game = game
         self._on_click = on_click
         self._on_favorite = on_favorite
         self._on_upload = on_upload
+        self._on_exclude = on_exclude
         self._enable_animations = enable_animations
         self._is_hovered = False  # Track hover state to avoid redundant updates
         
@@ -325,6 +326,24 @@ class GameCard(ft.Container):
                 on_click=self.on_upload_click,
                 ink=True,
             ),
+
+            # 7. Кнопка исключения - скрыть программу из библиотеки
+            ft.Container(
+                content=ft.Icon(
+                    ft.Icons.BLOCK,
+                    color="#FFFFFF",
+                    size=18,
+                ),
+                width=36,
+                height=36,
+                border_radius=18,
+                bgcolor="#80F44336",
+                alignment=ft.Alignment(0, 0),
+                right=8,
+                top=96,
+                on_click=self.on_exclude_click,
+                ink=True,
+            ),
         ]
         
         if size_badge:
@@ -395,6 +414,11 @@ class GameCard(ft.Container):
             self._on_upload(self.game)
         else:
             print(f"[DEBUG] ERROR: _on_upload is None!")
+
+    def on_exclude_click(self, e):
+        print(f"[DEBUG] Exclude button clicked for: {self.game.title}")
+        if self._on_exclude:
+            self._on_exclude(self.game)
 
 
 class LoadingOverlay(ft.Container):
@@ -534,6 +558,163 @@ class CyberLauncher:
             sgdb_key=api_keys.get("steamgriddb") or None,
             rawg_key=api_keys.get("rawg") or None
         )
+
+    def validate_api_key(self, service: str):
+        """Validate API key for given service"""
+        async def do_validate():
+            self.show_snackbar(f"Проверяем ключ {service.upper()}...")
+            
+            # Run validation in background thread
+            if service == "steamgriddb":
+                client = self.game_manager.cover_api_manager.sgdb
+                if client:
+                    success, message = await asyncio.to_thread(client.validate_key)
+                else:
+                    success, message = False, "Клиент не инициализирован"
+            elif service == "rawg":
+                client = self.game_manager.cover_api_manager.rawg
+                if client:
+                    success, message = await asyncio.to_thread(client.validate_key)
+                else:
+                    success, message = False, "Клиент не инициализирован"
+            else:
+                success, message = False, "Неизвестный сервис"
+            
+            bgcolor = "#4CAF50" if success else "#F44336"
+            self.show_snackbar(f"{service.upper()}: {message}", bgcolor=bgcolor)
+        
+        self.page.run_task(do_validate)
+
+    def exclude_game(self, game: GameModel):
+        """Show confirmation dialog to exclude game"""
+        def on_confirm(e):
+            dialog.open = False
+            self.page.update()
+            self.page.run_task(self._do_exclude, game)
+        
+        def on_cancel(e):
+            dialog.open = False
+            self.page.update()
+        
+        dialog = ft.AlertDialog(
+            title=ft.Text("Исключить программу?"),
+            content=ft.Text(f"'{game.title}' будет скрыта из библиотеки.\nВы сможете вернуть её в настройках."),
+            actions=[
+                ft.TextButton("Отмена", on_click=on_cancel),
+                ft.TextButton("Исключить", on_click=on_confirm, style=ft.ButtonStyle(color="#F44336")),
+            ],
+        )
+        self.page.overlay.append(dialog)
+        dialog.open = True
+        self.page.update()
+    
+    async def _do_exclude(self, game: GameModel):
+        """Actually exclude the game"""
+        path = await self.game_manager.exclude_game(game.uid)
+        if path:
+            # Add to exclusions list in settings
+            if "excluded_paths" not in self.settings:
+                self.settings["excluded_paths"] = []
+            if path not in self.settings["excluded_paths"]:
+                self.settings["excluded_paths"].append(path)
+            self.save_settings()
+            
+            # Remove from card cache
+            if game.uid in self._card_cache:
+                del self._card_cache[game.uid]
+            
+            # Remove from current games list
+            self._all_games_list = [g for g in self._all_games_list if g.uid != game.uid]
+            
+            # Re-render cards without resetting page
+            self._render_visible_cards()
+            self.show_snackbar(f"'{game.title}' исключена из библиотеки", bgcolor="#FF9800")
+
+
+    def show_snackbar(self, message: str, bgcolor: str = "#333333", duration: int = 4000):
+        """Helper to show snackbar compatible with Flet 0.80+"""
+        snackbar = ft.SnackBar(
+            content=ft.Text(message),
+            bgcolor=bgcolor,
+            duration=duration,
+        )
+        # Add to overlay if not already there
+        self.page.overlay.append(snackbar)
+        snackbar.open = True
+        self.page.update()
+
+    def _build_exclusions_list(self) -> ft.Container:
+        """Build the list of excluded programs for settings"""
+        excluded = self.settings.get("excluded_paths", [])
+        
+        if not excluded:
+            return ft.Container(
+                content=ft.Text("Нет исключённых программ", size=13, color=TEXT_GREY, italic=True),
+                padding=15,
+                border_radius=10,
+                bgcolor="#1E1E1E",
+            )
+        
+        rows = []
+        for path in excluded:
+            # Get just the filename from the path for display
+            display_name = Path(path).name if path else "Unknown"
+            
+            row = ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.BLOCK, color="#F44336", size=18),
+                        ft.Column(
+                            controls=[
+                                ft.Text(display_name, size=13, color=TEXT_WHITE, weight=ft.FontWeight.W_500),
+                                ft.Text(path, size=10, color=TEXT_GREY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                            ],
+                            spacing=2,
+                            expand=True,
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.RESTORE,
+                            icon_color=ACCENT_BLUE,
+                            tooltip="Вернуть в библиотеку",
+                            on_click=lambda e, p=path: self.page.run_task(self.restore_excluded, p),
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                padding=10,
+                border_radius=8,
+                bgcolor="#252525",
+                margin=ft.Margin(0, 0, 0, 8),
+            )
+            rows.append(row)
+        
+        return ft.Container(
+            content=ft.Column(controls=rows, spacing=0),
+            padding=10,
+            border_radius=10,
+            bgcolor="#1E1E1E",
+        )
+
+    async def restore_excluded(self, path: str):
+        """Remove path from exclusions list and add back to library immediately"""
+        if "excluded_paths" in self.settings:
+            if path in self.settings["excluded_paths"]:
+                self.settings["excluded_paths"].remove(path)
+                self.save_settings()
+                
+                # Attempt to restore immediately
+                game = await self.game_manager.add_game_from_path(path)
+                if game:
+                    # Add to current list and sort if needed (simplest: append)
+                    self._all_games_list.append(game)
+                    self.show_snackbar(f"'{game.title}' восстановлена в библиотеку", bgcolor="#4CAF50")
+                else:
+                    self.show_snackbar("Убрано из исключений. Появится при сканировании.", bgcolor="#4CAF50")
+                
+                # Refresh settings view to update the list
+                self.show_settings_view()
+                # Update main grid in background (if settings is closed)
+                # self.update_game_grid(reset_page=False)
 
     def setup_page(self):
         self.page.title = "CyberLauncher v1.0"
@@ -854,6 +1035,11 @@ class CyberLauncher:
                                         ft.Text("SteamGridDB API Key", size=14, color=TEXT_WHITE, weight=ft.FontWeight.BOLD),
                                         ft.Container(expand=True),
                                         ft.TextButton(
+                                            "Проверить ключ",
+                                            icon=ft.Icons.VERIFIED,
+                                            on_click=lambda _: self.validate_api_key("steamgriddb"),
+                                        ),
+                                        ft.TextButton(
                                             "Получить ключ",
                                             icon=ft.Icons.OPEN_IN_NEW,
                                             on_click=lambda _: webbrowser.open("https://www.steamgriddb.com/profile/preferences/api"),
@@ -893,6 +1079,11 @@ class CyberLauncher:
                                         ft.Text("RAWG.io API Key", size=14, color=TEXT_WHITE, weight=ft.FontWeight.BOLD),
                                         ft.Container(expand=True),
                                         ft.TextButton(
+                                            "Проверить ключ",
+                                            icon=ft.Icons.VERIFIED,
+                                            on_click=lambda _: self.validate_api_key("rawg"),
+                                        ),
+                                        ft.TextButton(
                                             "Получить ключ",
                                             icon=ft.Icons.OPEN_IN_NEW,
                                             on_click=lambda _: webbrowser.open("https://rawg.io/apidocs"),
@@ -920,6 +1111,16 @@ class CyberLauncher:
                         border_radius=10,
                         bgcolor="#1E1E1E",
                     ),
+
+                    ft.Container(height=40),
+                    ft.Divider(color="#333333"),
+                    ft.Container(height=30),
+                    
+                    # Exclusions Section
+                    ft.Text("Исключённые программы", size=18, weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
+                    ft.Text("Программы, скрытые из библиотеки", size=12, color=TEXT_GREY),
+                    ft.Container(height=15),
+                    self._build_exclusions_list(),
 
                     ft.Container(height=40),
                     ft.Divider(color="#333333"),
@@ -980,9 +1181,7 @@ class CyberLauncher:
                 
             backend_logger.info("UI: Update Library button clicked")
             
-            self.page.snack_bar = ft.SnackBar(content=ft.Text("Запуск сканирования..."))
-            self.page.snack_bar.open = True
-            self.page.update()
+            self.show_snackbar("Запуск сканирования...")
             
             # Since we are async, we can call refresh_library directly (await it)
             # or use run_task if we want it to be detached? 
@@ -1080,6 +1279,7 @@ class CyberLauncher:
                     on_click=self.on_game_click,
                     on_favorite=self.on_favorite_click,
                     on_upload=self.show_upload_dialog,
+                    on_exclude=self.exclude_game,
                     show_size=show_size,
                     enable_animations=enable_animations
                 )
@@ -1169,19 +1369,9 @@ class CyberLauncher:
         success = await self.game_manager.launch_game(game.uid)
         
         if success:
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Запуск: {game.title}"),
-                bgcolor="#333333",
-            )
-            self.page.snack_bar.open = True
+            self.show_snackbar(f"Запуск: {game.title}", bgcolor="#333333")
         else:
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Ошибка запуска: {game.title}"),
-                bgcolor="#8B0000",
-            )
-            self.page.snack_bar.open = True
-        
-        self.page.update()
+            self.show_snackbar(f"Ошибка запуска: {game.title}", bgcolor="#8B0000")
     
     def on_favorite_click(self, game: GameModel):
         self.page.run_task(self.toggle_favorite, game)
@@ -1418,11 +1608,6 @@ class CyberLauncher:
             self.game_manager._games[game.uid] = game
             await self.game_manager.save_library()
 
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("Обложка загружена успешно!"),
-                bgcolor="#4CAF50",
-            )
-            self.page.snack_bar.open = True
             # Инвалидируем кеш карточки чтобы она пересоздалась с новой обложкой
             if game.uid in self._card_cache:
                 del self._card_cache[game.uid]
@@ -1431,12 +1616,10 @@ class CyberLauncher:
                 del GameCard._icon_exists_cache[new_path]
             GameCard._icon_exists_cache[new_path] = True  # Знаем что файл есть
             self.update_game_grid(reset_page=False)
+            
+            self.show_snackbar("✅ Обложка загружена успешно!", bgcolor="#4CAF50")
         else:
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("Ошибка загрузки обложки"),
-                bgcolor="#F44336",
-            )
-            self.page.snack_bar.open = True
+            self.show_snackbar("❌ Ошибка загрузки обложки", bgcolor="#F44336")
 
         self.loading_overlay.hide()
         self.page.update()
@@ -1454,9 +1637,7 @@ class CyberLauncher:
             if self.upload_dialog:
                 self.upload_dialog.open = False
             
-            self.page.snack_bar = ft.SnackBar(content=ft.Text("Запуск авто-поиска..."))
-            self.page.snack_bar.open = True
-            self.page.update()
+            self.show_snackbar("Запуск авто-поиска...")
             
             await self.refresh_cover(self.upload_target_game)
             
@@ -1479,11 +1660,6 @@ class CyberLauncher:
             self.game_manager._games[game.uid] = game
             await self.game_manager.save_library()
 
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("Обложка загружена успешно!"),
-                bgcolor="#4CAF50",
-            )
-            self.page.snack_bar.open = True
             # Инвалидируем кеш карточки
             if game.uid in self._card_cache:
                 del self._card_cache[game.uid]
@@ -1492,20 +1668,19 @@ class CyberLauncher:
                 del GameCard._icon_exists_cache[new_path]
             GameCard._icon_exists_cache[new_path] = True
             self.update_game_grid(reset_page=False)
+            
+            self.show_snackbar("✅ Обложка загружена успешно!", bgcolor="#4CAF50")
         else:
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("Ошибка загрузки обложки"),
-                bgcolor="#F44336",
-            )
-            self.page.snack_bar.open = True
+            self.show_snackbar("❌ Ошибка загрузки обложки", bgcolor="#F44336")
 
         self.loading_overlay.hide()
         self.page.update()
 
     async def refresh_cover(self, game: GameModel):
         """Force re-download cover from APIs"""
-        self.loading_overlay.show("Обновление обложки...")
+        self.loading_overlay.show("Поиск обложки...")
         self.page.update()
+        await asyncio.sleep(0.05)  # Give UI time to render
 
         # Delete existing cache
         if game.icon_path:
@@ -1514,24 +1689,21 @@ class CyberLauncher:
             except:
                 pass
 
-        # Re-fetch using CoverAPIManager (now returns path, source)
-        new_path, source = self.game_manager.cover_api_manager.get_cover(
+        # Re-fetch using CoverAPIManager in background thread (non-blocking)
+        new_path, source = await asyncio.to_thread(
+            self.game_manager.cover_api_manager.get_cover,
             game.title,
-            app_id=game.app_id,
-            exe_path=game.exe_path
+            game.app_id,
+            game.exe_path
         )
+
+        self.loading_overlay.hide()
 
         if new_path:
             game.icon_path = new_path
             self.game_manager._games[game.uid] = game
             await self.game_manager.save_library()
 
-            # Show source in success message
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Обложка обновлена! (Источник: {source})"),
-                bgcolor="#4CAF50",
-            )
-            self.page.snack_bar.open = True
             # Инвалидируем кеш карточки
             if game.uid in self._card_cache:
                 del self._card_cache[game.uid]
@@ -1540,15 +1712,12 @@ class CyberLauncher:
                 del GameCard._icon_exists_cache[new_path]
             GameCard._icon_exists_cache[new_path] = True
             self.update_game_grid(reset_page=False)
-        else:
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("Не удалось найти обложку"),
-                bgcolor="#F44336",
-            )
-            self.page.snack_bar.open = True
 
-        self.loading_overlay.hide()
-        self.page.update()
+            # Show source in success message
+            self.show_snackbar(f"✅ Обложка найдена! Источник: {source}", bgcolor="#4CAF50")
+        else:
+            self.page.update()
+            self.show_snackbar("❌ Не удалось найти обложку", bgcolor="#F44336")
 
     # ========== End Cover Upload Methods ==========
 

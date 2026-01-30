@@ -1,0 +1,305 @@
+2026-01-30 14:12:02,832 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 14:12:02,836 - INFO - Starting up TCP server on localhost:57697
+2026-01-30 14:12:02,848 - INFO - Flet app has started...
+2026-01-30 14:12:02,857 - INFO - App URL: tcp://localhost:57697
+2026-01-30 14:12:02,858 - INFO - Starting Flet View app...
+2026-01-30 14:12:02,859 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 14:12:02,860 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 14:12:03,404 - INFO - App session started
+2026-01-30 14:12:03,407 - INFO - SteamGridDB API initialized
+2026-01-30 14:12:03,408 - INFO - RAWG.io API initialized
+2026-01-30 14:12:03,477 - INFO - UI: load_library started
+2026-01-30 14:12:10,344 - INFO - UI: API Search clicked for Ubisoft Connect
+2026-01-30 14:12:10,477 - INFO - [Tier 4] RAWG.io Search: 'Ubisoft Connect'
+2026-01-30 14:12:11,518 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 14:12:17,700 - INFO - UI: API Search clicked for Ubisoft Connect
+2026-01-30 14:12:17,824 - INFO - [Tier 4] RAWG.io Search: 'Ubisoft Connect'
+2026-01-30 14:12:18,057 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 18:55:51,726 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 18:55:51,728 - INFO - Starting up TCP server on localhost:54178
+2026-01-30 18:55:51,733 - INFO - Flet app has started...
+2026-01-30 18:55:51,739 - INFO - App URL: tcp://localhost:54178
+2026-01-30 18:55:51,739 - INFO - Starting Flet View app...
+2026-01-30 18:55:51,740 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 18:55:51,740 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 18:55:52,564 - INFO - App session started
+2026-01-30 18:55:52,566 - INFO - SteamGridDB API initialized
+2026-01-30 18:55:52,566 - INFO - RAWG.io API initialized
+2026-01-30 18:55:52,597 - INFO - UI: load_library started
+2026-01-30 18:56:11,574 - INFO - UI: API Search clicked for Ubisoft Connect
+2026-01-30 18:56:11,682 - INFO - [Tier 4] RAWG.io Search: 'Ubisoft Connect'
+2026-01-30 18:56:12,337 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 18:56:12,398 - ERROR - Error in on_api_search_click: Traceback (most recent call last):
+  File "C:\MyGameLauncher\main.py", line 1456, in on_api_search_click
+    await self.refresh_cover(self.upload_target_game)
+  File "C:\MyGameLauncher\main.py", line 1535, in refresh_cover
+    self.page.open(ft.SnackBar(
+    ^^^^^^^^^^^^^^
+AttributeError: 'Page' object has no attribute 'open'
+
+2026-01-30 18:59:55,923 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 18:59:55,924 - INFO - Starting up TCP server on localhost:52303
+2026-01-30 18:59:55,928 - INFO - Flet app has started...
+2026-01-30 18:59:55,931 - INFO - App URL: tcp://localhost:52303
+2026-01-30 18:59:55,932 - INFO - Starting Flet View app...
+2026-01-30 18:59:55,933 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 18:59:55,933 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 18:59:56,376 - INFO - App session started
+2026-01-30 18:59:56,378 - INFO - SteamGridDB API initialized
+2026-01-30 18:59:56,378 - INFO - RAWG.io API initialized
+2026-01-30 18:59:56,400 - INFO - UI: load_library started
+2026-01-30 19:00:00,521 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 19:00:00,647 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
+2026-01-30 19:00:09,686 - WARNING - SteamGridDB API error: <urlopen error [Errno 11001] getaddrinfo failed>
+2026-01-30 19:00:09,687 - INFO - [Tier 3] Steam Direct CDN: 3694480
+2026-01-30 19:00:20,143 - INFO - [Tier 4] RAWG.io Search: 'A Game About Feeding A Black Hole'
+2026-01-30 19:00:20,938 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:00:21,082 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 19:00:21,180 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
+2026-01-30 19:00:21,180 - INFO - [Tier 3] Steam Direct CDN: 3694480
+2026-01-30 19:00:21,884 - INFO - [Tier 4] RAWG.io Search: 'A Game About Feeding A Black Hole'
+2026-01-30 19:00:22,092 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:00:22,233 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 19:00:22,333 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
+2026-01-30 19:00:22,334 - INFO - [Tier 3] Steam Direct CDN: 3694480
+2026-01-30 19:00:23,042 - INFO - [Tier 4] RAWG.io Search: 'A Game About Feeding A Black Hole'
+2026-01-30 19:00:23,231 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:00:23,373 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 19:00:23,468 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
+2026-01-30 19:00:23,468 - INFO - [Tier 3] Steam Direct CDN: 3694480
+2026-01-30 19:00:24,166 - INFO - [Tier 4] RAWG.io Search: 'A Game About Feeding A Black Hole'
+2026-01-30 19:00:24,335 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:02:36,916 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:02:36,918 - INFO - Starting up TCP server on localhost:50805
+2026-01-30 19:02:36,921 - INFO - Flet app has started...
+2026-01-30 19:02:36,925 - INFO - App URL: tcp://localhost:50805
+2026-01-30 19:02:36,925 - INFO - Starting Flet View app...
+2026-01-30 19:02:36,926 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:02:36,926 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:02:37,366 - INFO - App session started
+2026-01-30 19:02:37,367 - INFO - SteamGridDB API initialized
+2026-01-30 19:02:37,367 - INFO - RAWG.io API initialized
+2026-01-30 19:02:37,389 - INFO - UI: load_library started
+2026-01-30 19:02:40,290 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 19:02:40,452 - INFO - [Tier 2] SteamGridDB by Steam ID: 3694480
+2026-01-30 19:02:41,367 - ERROR - SteamGridDB API Unauthorized (Invalid Key). Disabling API.
+2026-01-30 19:02:41,368 - INFO - [Tier 3] Steam Direct CDN: 3694480
+2026-01-30 19:02:43,227 - INFO - [Tier 4] RAWG.io Search: 'A Game About Feeding A Black Hole'
+2026-01-30 19:02:43,927 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:02:51,645 - INFO - UI: API Search clicked for Ubisoft Connect
+2026-01-30 19:02:51,805 - INFO - [Tier 4] RAWG.io Search: 'Ubisoft Connect'
+2026-01-30 19:02:52,368 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:02:55,444 - INFO - UI: API Search clicked for Hogwarts Legacy
+2026-01-30 19:02:55,611 - INFO - [Tier 2] SteamGridDB by Steam ID: 990080
+2026-01-30 19:02:55,611 - INFO - [Tier 3] Steam Direct CDN: 990080
+2026-01-30 19:02:55,811 - INFO -    ✅ Downloaded from Steam CDN
+2026-01-30 19:03:00,986 - INFO - UI: API Search clicked for Severed Steel DX11
+2026-01-30 19:03:01,234 - INFO - [Tier 4] RAWG.io Search: 'Severed Steel'
+2026-01-30 19:03:01,921 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:03:06,873 - INFO - UI: API Search clicked for LEGO Voyagers
+2026-01-30 19:03:07,120 - INFO - [Tier 4] RAWG.io Search: 'LEGO Voyagers'
+2026-01-30 19:03:07,791 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:03:20,856 - INFO - UI: API Search clicked for Poly.Bridge.3 TENOKE
+2026-01-30 19:03:21,112 - INFO - [Tier 4] RAWG.io Search: 'Poly Bridge 3'
+2026-01-30 19:03:21,757 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:03:32,675 - INFO - UI: API Search clicked for Highguard
+2026-01-30 19:03:32,996 - INFO - [Tier 2] SteamGridDB by Steam ID: 4128260
+2026-01-30 19:03:32,996 - INFO - [Tier 3] Steam Direct CDN: 4128260
+2026-01-30 19:03:35,421 - INFO - [Tier 4] RAWG.io Search: 'Highguard'
+2026-01-30 19:03:35,691 - INFO - [Tier 5] Steam Store Search: 'Highguard'
+2026-01-30 19:03:36,900 - INFO - [Tier 6] SteamGridDB Name Search: 'Highguard'
+2026-01-30 19:03:36,900 - INFO - [Tier 7] DuckDuckGo Search: 'Highguard'
+2026-01-30 19:03:36,900 - INFO - [Tier 8] EXE Icon Extraction
+2026-01-30 19:03:36,900 - WARNING -    ❌ All tiers failed for: Highguard
+2026-01-30 19:03:45,566 - INFO - UI: API Search clicked for Highguard
+2026-01-30 19:03:45,896 - INFO - [Tier 2] SteamGridDB by Steam ID: 4128260
+2026-01-30 19:03:45,897 - INFO - [Tier 3] Steam Direct CDN: 4128260
+2026-01-30 19:03:47,278 - INFO - [Tier 4] RAWG.io Search: 'Highguard'
+2026-01-30 19:03:47,278 - INFO - [Tier 5] Steam Store Search: 'Highguard'
+2026-01-30 19:03:48,027 - INFO - [Tier 6] SteamGridDB Name Search: 'Highguard'
+2026-01-30 19:03:48,027 - INFO - [Tier 7] DuckDuckGo Search: 'Highguard'
+2026-01-30 19:03:48,028 - INFO - [Tier 8] EXE Icon Extraction
+2026-01-30 19:03:48,028 - WARNING -    ❌ All tiers failed for: Highguard
+2026-01-30 19:04:18,684 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:04:18,685 - INFO - Starting up TCP server on localhost:49198
+2026-01-30 19:04:18,690 - INFO - Flet app has started...
+2026-01-30 19:04:18,694 - INFO - App URL: tcp://localhost:49198
+2026-01-30 19:04:18,694 - INFO - Starting Flet View app...
+2026-01-30 19:04:18,695 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:04:18,695 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:04:19,108 - INFO - App session started
+2026-01-30 19:04:19,109 - INFO - SteamGridDB API initialized
+2026-01-30 19:04:19,109 - INFO - RAWG.io API initialized
+2026-01-30 19:04:19,130 - INFO - UI: load_library started
+2026-01-30 19:04:19,142 - INFO - Invalidated missing cache for: Highguard
+2026-01-30 19:04:19,142 - INFO - Repaired 1 invalid cache references
+2026-01-30 19:04:26,163 - INFO - UI: API Search clicked for Highguard
+2026-01-30 19:04:26,465 - INFO - [Tier 2] SteamGridDB by Steam ID: 4128260
+2026-01-30 19:04:26,838 - ERROR - SteamGridDB API Unauthorized (Invalid Key). Disabling API.
+2026-01-30 19:04:26,842 - INFO - [Tier 3] Steam Direct CDN: 4128260
+2026-01-30 19:04:28,413 - INFO - [Tier 4] RAWG.io Search: 'Highguard'
+2026-01-30 19:04:28,661 - INFO - [Tier 5] Steam Store Search: 'Highguard'
+2026-01-30 19:04:29,782 - INFO - [Tier 6] SteamGridDB Name Search: 'Highguard'
+2026-01-30 19:04:29,783 - INFO - [Tier 7] DuckDuckGo Search: 'Highguard'
+2026-01-30 19:04:29,783 - INFO - [Tier 8] EXE Icon Extraction
+2026-01-30 19:04:29,783 - WARNING -    ❌ All tiers failed for: Highguard
+2026-01-30 19:04:43,796 - INFO - UI: API Search clicked for Highguard
+2026-01-30 19:04:44,106 - INFO - [Tier 2] SteamGridDB by Steam ID: 4128260
+2026-01-30 19:04:44,106 - INFO - [Tier 3] Steam Direct CDN: 4128260
+2026-01-30 19:04:45,681 - INFO - [Tier 4] RAWG.io Search: 'Highguard'
+2026-01-30 19:04:45,684 - INFO - [Tier 5] Steam Store Search: 'Highguard'
+2026-01-30 19:04:46,362 - INFO - [Tier 6] SteamGridDB Name Search: 'Highguard'
+2026-01-30 19:04:46,362 - INFO - [Tier 7] DuckDuckGo Search: 'Highguard'
+2026-01-30 19:04:46,362 - INFO - [Tier 8] EXE Icon Extraction
+2026-01-30 19:04:46,362 - WARNING -    ❌ All tiers failed for: Highguard
+2026-01-30 19:07:42,746 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:07:42,748 - INFO - Starting up TCP server on localhost:63436
+2026-01-30 19:07:42,751 - INFO - Flet app has started...
+2026-01-30 19:07:42,756 - INFO - App URL: tcp://localhost:63436
+2026-01-30 19:07:42,756 - INFO - Starting Flet View app...
+2026-01-30 19:07:42,757 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:07:42,758 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:07:43,206 - INFO - App session started
+2026-01-30 19:07:43,207 - INFO - SteamGridDB API initialized
+2026-01-30 19:07:43,208 - INFO - RAWG.io API initialized
+2026-01-30 19:07:43,240 - INFO - UI: load_library started
+2026-01-30 19:07:50,803 - INFO - UI: API Search clicked for Highguard
+2026-01-30 19:07:51,103 - INFO - [Tier 2] SteamGridDB by Steam ID: 4128260
+2026-01-30 19:07:51,497 - ERROR - SteamGridDB API Unauthorized (Invalid Key). Disabling API.
+2026-01-30 19:07:51,498 - INFO - [Tier 3] Steam Direct CDN: 4128260
+2026-01-30 19:07:53,613 - INFO - [Tier 4] RAWG.io Search: 'Highguard'
+2026-01-30 19:07:54,058 - INFO - [Tier 5] Steam Store Search: 'Highguard'
+2026-01-30 19:07:55,264 - INFO - [Tier 6] SteamGridDB Name Search: 'Highguard'
+2026-01-30 19:07:55,264 - INFO - [Tier 7] DuckDuckGo Search: 'Highguard'
+2026-01-30 19:07:55,264 - WARNING -    DuckDuckGo недоступен (библиотека не загружена)
+2026-01-30 19:07:55,264 - INFO - [Tier 8] EXE Icon Extraction
+2026-01-30 19:07:55,264 - WARNING -    ❌ All tiers failed for: Highguard
+2026-01-30 19:15:28,093 - WARNING - DuckDuckGo search not available: No module named 'duckduckgo_search'
+2026-01-30 19:15:28,096 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:15:28,097 - INFO - Starting up TCP server on localhost:54444
+2026-01-30 19:15:28,101 - INFO - Flet app has started...
+2026-01-30 19:15:28,105 - INFO - App URL: tcp://localhost:54444
+2026-01-30 19:15:28,105 - INFO - Starting Flet View app...
+2026-01-30 19:15:28,107 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:15:28,107 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:15:28,618 - INFO - App session started
+2026-01-30 19:15:28,619 - INFO - SteamGridDB API initialized
+2026-01-30 19:15:28,619 - INFO - RAWG.io API initialized
+2026-01-30 19:15:28,638 - INFO - UI: load_library started
+2026-01-30 19:17:00,922 - INFO - SteamGridDB API initialized
+2026-01-30 19:17:00,923 - INFO - RAWG.io API initialized
+2026-01-30 19:17:00,923 - INFO - API clients reinitialized
+2026-01-30 19:18:03,751 - INFO - UI: API Search clicked for Highguard
+2026-01-30 19:18:04,064 - INFO - [Tier 2] SteamGridDB by Steam ID: 4128260
+2026-01-30 19:18:04,838 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 19:29:03,045 - WARNING - DuckDuckGo search not available: No module named 'duckduckgo_search'
+2026-01-30 19:29:03,048 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:29:03,050 - INFO - Starting up TCP server on localhost:57574
+2026-01-30 19:29:03,053 - INFO - Flet app has started...
+2026-01-30 19:29:03,057 - INFO - App URL: tcp://localhost:57574
+2026-01-30 19:29:03,057 - INFO - Starting Flet View app...
+2026-01-30 19:29:03,058 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:29:03,058 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:29:03,506 - INFO - App session started
+2026-01-30 19:29:03,507 - INFO - SteamGridDB API initialized
+2026-01-30 19:29:03,507 - INFO - RAWG.io API initialized
+2026-01-30 19:29:03,531 - INFO - UI: load_library started
+2026-01-30 19:29:08,236 - INFO - UI: API Search clicked for Serious Sam HD: The First Encounter
+2026-01-30 19:29:08,394 - INFO - [Tier 2] Steam CDN: 41000
+2026-01-30 19:29:08,705 - INFO -    ✅ Downloaded from Steam CDN
+2026-01-30 19:29:12,586 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 19:29:12,759 - INFO - [Tier 2] Steam CDN: 3694480
+2026-01-30 19:29:15,144 - INFO - [Tier 3] Steam Store Search: 'A Game About Feeding A Black Hole'
+2026-01-30 19:29:16,293 - INFO - [Tier 4] SteamGridDB by ID: 3694480
+2026-01-30 19:29:17,006 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 19:29:21,118 - INFO - UI: API Search clicked for Gamblers Table
+2026-01-30 19:29:21,305 - INFO - [Tier 2] Steam CDN: 3618390
+2026-01-30 19:29:23,707 - INFO - [Tier 3] Steam Store Search: 'Gamblers Table'
+2026-01-30 19:29:24,963 - INFO - [Tier 4] SteamGridDB by ID: 3618390
+2026-01-30 19:29:25,584 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 19:30:03,699 - INFO - UI: API Search clicked for LEGO Voyagers
+2026-01-30 19:30:04,008 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 19:30:06,505 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 19:30:07,245 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:30:10,551 - INFO - UI: API Search clicked for Wolfenstein II - The New Colossus
+2026-01-30 19:30:10,839 - INFO - [Tier 3] Steam Store Search: 'Wolfenstein II - The New Colossus'
+2026-01-30 19:30:11,890 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 19:45:39,465 - WARNING - DuckDuckGo search not available: No module named 'duckduckgo_search'
+2026-01-30 19:45:39,468 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:45:39,469 - INFO - Starting up TCP server on localhost:65121
+2026-01-30 19:45:39,473 - INFO - Flet app has started...
+2026-01-30 19:45:39,477 - INFO - App URL: tcp://localhost:65121
+2026-01-30 19:45:39,477 - INFO - Starting Flet View app...
+2026-01-30 19:45:39,478 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:45:39,478 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:45:39,914 - INFO - App session started
+2026-01-30 19:45:39,915 - INFO - SteamGridDB API initialized
+2026-01-30 19:45:39,916 - INFO - RAWG.io API initialized
+2026-01-30 19:45:39,935 - INFO - UI: load_library started
+2026-01-30 19:45:57,499 - INFO - Excluded game: Ubisoft Connect (path: C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\UbisoftConnect.exe)
+2026-01-30 19:47:13,430 - WARNING - DuckDuckGo search not available: No module named 'duckduckgo_search'
+2026-01-30 19:47:13,432 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:47:13,434 - INFO - Starting up TCP server on localhost:60271
+2026-01-30 19:47:13,437 - INFO - Flet app has started...
+2026-01-30 19:47:13,442 - INFO - App URL: tcp://localhost:60271
+2026-01-30 19:47:13,445 - INFO - Starting Flet View app...
+2026-01-30 19:47:13,447 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:47:13,447 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:47:13,945 - INFO - App session started
+2026-01-30 19:47:13,956 - INFO - SteamGridDB API initialized
+2026-01-30 19:47:13,956 - INFO - RAWG.io API initialized
+2026-01-30 19:47:13,978 - INFO - UI: load_library started
+2026-01-30 19:47:13,991 - INFO - Removed orphaned cache: 9bdb55a12669.jpg
+2026-01-30 19:47:13,992 - INFO - Cache cleanup: 1/29 orphaned files removed
+2026-01-30 19:47:37,259 - INFO - Excluded game: FL Studio 25.1.6.4997 rev.1 WD (path: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 19:51:17,296 - WARNING - DuckDuckGo search not available: No module named 'duckduckgo_search'
+2026-01-30 19:51:17,300 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:51:17,302 - INFO - Starting up TCP server on localhost:60971
+2026-01-30 19:51:17,306 - INFO - Flet app has started...
+2026-01-30 19:51:17,310 - INFO - App URL: tcp://localhost:60971
+2026-01-30 19:51:17,310 - INFO - Starting Flet View app...
+2026-01-30 19:51:17,312 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:51:17,312 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:51:17,770 - INFO - App session started
+2026-01-30 19:51:17,771 - INFO - SteamGridDB API initialized
+2026-01-30 19:51:17,771 - INFO - RAWG.io API initialized
+2026-01-30 19:51:17,794 - INFO - UI: load_library started
+2026-01-30 19:51:17,798 - INFO - Removed orphaned cache: c9cbabffa31b.jpg
+2026-01-30 19:51:17,798 - INFO - Cache cleanup: 1/28 orphaned files removed
+2026-01-30 19:51:25,963 - INFO - UI: API Search clicked for A Game About Feeding A Black Hole
+2026-01-30 19:51:26,140 - INFO - [Tier 2] Steam CDN: 3694480
+2026-01-30 19:51:28,206 - INFO - [Tier 3] Steam Store Search: 'A Game About Feeding A Black Hole'
+2026-01-30 19:51:29,430 - INFO - [Tier 4] SteamGridDB by ID: 3694480
+2026-01-30 19:51:30,205 - INFO -    ✅ Downloaded from SteamGridDB
+2026-01-30 19:51:52,787 - INFO - Restored game: FL Studio 25 1 6 4997-rev 1-WD
+2026-01-30 19:52:04,938 - INFO - Excluded game: FL Studio 25 1 6 4997-rev 1-WD (path: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 19:52:16,280 - INFO - Restored game: FL Studio 25 1 6 4997-rev 1-WD
+2026-01-30 19:52:26,480 - INFO - UI: API Search clicked for FL Studio 25 1 6 4997-rev 1-WD
+2026-01-30 19:52:26,835 - INFO - [Tier 3] Steam Store Search: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 19:52:27,488 - INFO - [Tier 5] RAWG.io: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 19:52:28,200 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 19:52:32,055 - INFO - Excluded game: FL Studio 25 1 6 4997-rev 1-WD (path: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 19:52:56,162 - WARNING - DuckDuckGo search not available: No module named 'duckduckgo_search'
+2026-01-30 19:52:56,165 - INFO - Assets path configured: C:\MyGameLauncher\assets
+2026-01-30 19:52:56,167 - INFO - Starting up TCP server on localhost:54060
+2026-01-30 19:52:56,170 - INFO - Flet app has started...
+2026-01-30 19:52:56,175 - INFO - App URL: tcp://localhost:54060
+2026-01-30 19:52:56,175 - INFO - Starting Flet View app...
+2026-01-30 19:52:56,176 - INFO - Looking for Flet executable at: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:52:56,176 - INFO - Flet View found in: c:\MyGameLauncher\venv\Lib\site-packages\flet_desktop\app\flet\flet.exe
+2026-01-30 19:52:56,614 - INFO - App session started
+2026-01-30 19:52:56,616 - INFO - SteamGridDB API initialized
+2026-01-30 19:52:56,616 - INFO - RAWG.io API initialized
+2026-01-30 19:52:56,637 - INFO - UI: load_library started
+2026-01-30 19:52:56,650 - INFO - Removed orphaned cache: 407a8b632db9.jpg
+2026-01-30 19:52:56,651 - INFO - Cache cleanup: 1/28 orphaned files removed
+2026-01-30 19:53:01,659 - INFO - Restored game: FL Studio 25 1 6 4997-rev 1-WD
+2026-01-30 20:03:47,752 - INFO - UI: API Search clicked for Pummel Party
+2026-01-30 20:03:48,013 - INFO - [Tier 2] Steam CDN: 880940
+2026-01-30 20:03:48,290 - INFO -    ✅ Downloaded from Steam CDN
+2026-01-30 20:04:46,215 - INFO - Excluded game: FL Studio 25 1 6 4997-rev 1-WD (path: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:05:04,188 - INFO - Restored game: FL Studio 25 1 6 4997-rev 1-WD
+2026-01-30 20:05:18,638 - INFO - UI: API Search clicked for FL Studio 25 1 6 4997-rev 1-WD
+2026-01-30 20:05:19,244 - INFO - [Tier 3] Steam Store Search: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:05:19,850 - INFO - [Tier 5] RAWG.io: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:05:21,060 - INFO -    ✅ Downloaded from RAWG.io

@@ -782,9 +782,11 @@ class CoverUploader:
 
 
 class SteamScanner:
-    async def scan(self, cover_manager: 'CoverAPIManager') -> List[GameModel]:
+    async def scan(self, cover_manager: 'CoverAPIManager', excluded_paths: List[str] = None) -> List[GameModel]:
         logger.info("Starting Steam scan...")
         games = []
+        excluded = set(str(Path(p).resolve()).lower() for p in (excluded_paths or []))
+        
         steam_path = None
         try:
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam")
@@ -829,6 +831,11 @@ class SteamScanner:
                                 if aid in ['228980', '1070560', '1391110']:
                                     continue
                                 full_path = os.path.join(lib, "common", idir)
+                                
+                                # EXCLUSION CHECK
+                                if str(Path(full_path).resolve()).lower() in excluded:
+                                    logger.info(f"Skipping excluded Steam game: {n}")
+                                    continue
                                 
                                 # OPTIMIZATION: Check cache first before API calls
                                 cache_key = hashlib.md5(aid.lower().encode()).hexdigest()[:12]
@@ -922,10 +929,11 @@ class DiskScanner:
         exes.sort(key=lambda x: x.stat().st_size, reverse=True)
         return exes[0]
 
-    async def scan(self, cover_manager: 'CoverAPIManager') -> List[GameModel]:
+    async def scan(self, cover_manager: 'CoverAPIManager', excluded_paths: List[str] = None) -> List[GameModel]:
         games = []
         logger.info(f"Начинаем сканирование папок: {self.search_paths}")
         
+        excluded = set(str(Path(p).resolve()).lower() for p in (excluded_paths or []))
         scanned_folders = set()
         
         for root_path_str in self.search_paths:
@@ -944,11 +952,22 @@ class DiskScanner:
                         # Проверяем, не сканировали ли мы эту папку уже (symlinks etc)
                         if item.resolve() in scanned_folders:
                             continue
+                        
+                        # EXCLUSION CHECK (Folder)
+                        if str(item.resolve()).lower() in excluded:
+                            logger.info(f"Skipping excluded folder: {item}")
+                            continue
+                        
                         scanned_folders.add(item.resolve())
                         
                         # Пытаемся найти игру внутри этой папки
                         game_exe = self._find_best_exe(item)
                         if game_exe:
+                            # EXCLUSION CHECK (Exe)
+                            if str(game_exe.resolve()).lower() in excluded:
+                                logger.info(f"Skipping excluded exe: {game_exe}")
+                                continue
+
                             name = item.name # Используем имя папки как название игры
                             
                             # Clean name heuristic
@@ -1045,7 +1064,7 @@ class GameManager:
         data = {'games': [g.to_dict() for g in self._games.values()]}
         with open(self.library_file, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
 
-    async def scan_all_games(self):
+    async def scan_all_games(self, excluded_paths: List[str] = None):
         logger.info("scan_all_games called")
         if self._on_progress:
             self._on_progress("Проверка удалённых игр...", 0, 100)
@@ -1077,13 +1096,13 @@ class GameManager:
             self._on_progress("Сканирование Steam...", 20, 100)
         # Use new CoverAPIManager for 8-tier fallback
         logger.info("Invoking steam_scanner.scan")
-        steam_games = await self.steam_scanner.scan(self.cover_api_manager)
+        steam_games = await self.steam_scanner.scan(self.cover_api_manager, excluded_paths)
         logger.info(f"Steam scan finished. Found {len(steam_games)} games.")
 
         if self._on_progress:
             self._on_progress("Сканирование дисков...", 60, 100)
         logger.info("Invoking disk_scanner.scan")
-        system_games = await self.disk_scanner.scan(self.cover_api_manager)
+        system_games = await self.disk_scanner.scan(self.cover_api_manager, excluded_paths)
         logger.info(f"Disk scan finished. Found {len(system_games)} games.")
 
         new_games = {g.uid: g for g in steam_games + system_games}

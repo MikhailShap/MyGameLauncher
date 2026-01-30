@@ -1204,7 +1204,8 @@ class CyberLauncher:
             backend_logger.info("UI: Library empty, starting initial scan")
             self.loading_overlay.show("Первый запуск. Сканирование игр...")
             self.game_manager.set_progress_callback(self.on_scan_progress)
-            await self.game_manager.scan_all_games()
+            excluded = self.settings.get("excluded_paths", [])
+            await self.game_manager.scan_all_games(excluded)
         
         self.loading_overlay.hide()
         self.update_game_grid()
@@ -1215,7 +1216,8 @@ class CyberLauncher:
         self.page.update()  # ВАЖНО: показать оверлей СРАЗУ
         await asyncio.sleep(0.1)  # Даём UI время отрендериться
         self.game_manager.set_progress_callback(self.on_scan_progress)
-        await self.game_manager.scan_all_games()
+        excluded = self.settings.get("excluded_paths", [])
+        await self.game_manager.scan_all_games(excluded)
         self.loading_overlay.hide()
         self.page.update()  # Скрыть оверлей
         self.update_game_grid()

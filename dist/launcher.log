@@ -332,3 +332,223 @@ SystemExit: 0
 2026-01-30 20:23:33,282 - INFO -    ✅ Downloaded from Steam Store
 2026-01-30 20:23:33,282 - INFO - Найдена игра: Wolfenstein II The New Colossus (D:\Install Games\Wolfenstein II The New Colossus\NewColossus_x64vk.exe)
 2026-01-30 20:23:33,282 - INFO - Disk scan finished. Found 13 games.
+2026-01-30 20:24:52,712 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-163' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1753, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 753, in <lambda>
+  File "main.py", line 1166, in window_action
+SystemExit: 0
+2026-01-30 20:30:15,579 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-89' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1753, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 753, in <lambda>
+  File "main.py", line 1166, in window_action
+SystemExit: 0
+2026-01-30 20:30:54,672 - ERROR - Failed to import win32com: No module named 'win32com'
+2026-01-30 20:30:54,690 - INFO - DuckDuckGo search library loaded successfully
+2026-01-30 20:30:54,732 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI175362\assets
+2026-01-30 20:30:54,733 - INFO - Starting up TCP server on localhost:58969
+2026-01-30 20:30:54,737 - INFO - Flet app has started...
+2026-01-30 20:30:54,737 - INFO - App URL: tcp://localhost:58969
+2026-01-30 20:30:54,737 - INFO - Starting Flet View app...
+2026-01-30 20:30:54,738 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI175362\flet_desktop\app\flet\flet.exe
+2026-01-30 20:30:55,166 - INFO - App session started
+2026-01-30 20:30:55,167 - INFO - SteamGridDB API initialized
+2026-01-30 20:30:55,167 - INFO - RAWG.io API initialized
+2026-01-30 20:30:55,187 - INFO - UI: load_library started
+2026-01-30 20:30:55,189 - INFO - Removed orphaned cache: 77bfa9b33bee.jpg
+2026-01-30 20:30:55,189 - INFO - Removed orphaned cache: f94b0fa70b1e.jpg
+2026-01-30 20:30:55,189 - INFO - Cache cleanup: 2/27 orphaned files removed
+2026-01-30 20:31:02,713 - INFO - Excluded game: FL Studio 25.1.6.4997-rev.1-WD (path: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:31:08,383 - INFO - UI: Update Library button clicked
+2026-01-30 20:31:08,406 - INFO - UI: refresh_library async task started
+2026-01-30 20:31:08,554 - INFO - scan_all_games called
+2026-01-30 20:31:08,648 - INFO - Invoking steam_scanner.scan
+2026-01-30 20:31:08,648 - INFO - Starting Steam scan...
+2026-01-30 20:31:08,657 - INFO - Steam scan finished. Found 13 games.
+2026-01-30 20:31:08,703 - INFO - Invoking disk_scanner.scan
+2026-01-30 20:31:08,703 - INFO - Начинаем сканирование папок: ['C:\\Games', 'D:\\Games', 'D:\\Install Games']
+2026-01-30 20:31:08,709 - INFO - [Tier 3] Steam Store Search: 'Drill Core'
+2026-01-30 20:31:09,585 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:09,586 - INFO - Найдена игра: Drill Core (D:\Games\Drill Core\Drill Core.exe)
+2026-01-30 20:31:09,586 - INFO - Skipping excluded exe: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe
+2026-01-30 20:31:09,588 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:31:12,134 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:31:12,863 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:31:12,863 - INFO - Найдена игра: LEGO Voyagers [MULTi-ENG-RUS] [R] [TN] (D:\Games\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\LEGO Voyagers.exe)
+2026-01-30 20:31:12,865 - INFO - [Tier 3] Steam Store Search: 'Plan B Terraform'
+2026-01-30 20:31:13,510 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:13,510 - INFO - Найдена игра: Plan.B.Terraform.Build.19960463 (D:\Games\Plan.B.Terraform.Build.19960463\Plan B Terraform.exe)
+2026-01-30 20:31:13,516 - INFO - [Tier 3] Steam Store Search: 'Cuphead'
+2026-01-30 20:31:14,161 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:14,161 - INFO - Найдена игра: Cuphead (D:\Install Games\Cuphead\Cuphead.exe)
+2026-01-30 20:31:14,162 - INFO - [Tier 3] Steam Store Search: 'LEGO Marvel Super Heroes 2'
+2026-01-30 20:31:14,744 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:14,744 - INFO - Найдена игра: LEGO Marvel Super Heroes 2 (D:\Install Games\LEGO Marvel Super Heroes 2\LEGOMARVEL2_DX11.exe)
+2026-01-30 20:31:14,745 - INFO - [Tier 3] Steam Store Search: 'LEGO Star Wars - The Skywalker Saga'
+2026-01-30 20:31:15,358 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:15,358 - INFO - Найдена игра: LEGO Star Wars - The Skywalker Saga (D:\Install Games\LEGO Star Wars - The Skywalker Saga\LEGOSTARWARSSKYWALKERSAGA_DX11.exe)
+2026-01-30 20:31:15,359 - INFO - Skipping excluded exe: D:\Install Games\LEGO Voyagers\LEGO Voyagers.exe
+2026-01-30 20:31:15,359 - INFO - [Tier 3] Steam Store Search: 'Poly Bridge 3'
+2026-01-30 20:31:15,901 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:15,902 - INFO - Найдена игра: Poly Bridge 3 (D:\Install Games\Poly Bridge 3\Poly Bridge 3.exe)
+2026-01-30 20:31:15,902 - INFO - [Tier 3] Steam Store Search: 'Ratchet and Clank - Rift Apart'
+2026-01-30 20:31:16,485 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:16,485 - INFO - Найдена игра: Ratchet and Clank - Rift Apart (D:\Install Games\Ratchet and Clank - Rift Apart\RiftApart.exe)
+2026-01-30 20:31:16,486 - INFO - [Tier 3] Steam Store Search: 'Trine 4'
+2026-01-30 20:31:17,268 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:17,268 - INFO - Найдена игра: Trine 4 (D:\Install Games\Trine 4\trine4.exe)
+2026-01-30 20:31:17,268 - INFO - [Tier 3] Steam Store Search: 'Trine 5'
+2026-01-30 20:31:17,888 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:17,888 - INFO - Найдена игра: Trine 5 (D:\Install Games\Trine 5\trine5.exe)
+2026-01-30 20:31:17,888 - INFO - [Tier 3] Steam Store Search: 'Wolfenstein II The New Colossus'
+2026-01-30 20:31:18,419 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:18,419 - INFO - Найдена игра: Wolfenstein II The New Colossus (D:\Install Games\Wolfenstein II The New Colossus\NewColossus_x64vk.exe)
+2026-01-30 20:31:18,420 - INFO - Disk scan finished. Found 11 games.
+2026-01-30 20:31:32,653 - INFO - Restored game: FL Studio 25 1 6 4997-rev 1-WD
+2026-01-30 20:31:39,473 - INFO - UI: Update Library button clicked
+2026-01-30 20:31:39,639 - INFO - UI: refresh_library async task started
+2026-01-30 20:31:39,941 - INFO - scan_all_games called
+2026-01-30 20:31:40,321 - INFO - Invoking steam_scanner.scan
+2026-01-30 20:31:40,321 - INFO - Starting Steam scan...
+2026-01-30 20:31:40,328 - INFO - Steam scan finished. Found 13 games.
+2026-01-30 20:31:40,501 - INFO - Invoking disk_scanner.scan
+2026-01-30 20:31:40,501 - INFO - Начинаем сканирование папок: ['C:\\Games', 'D:\\Games', 'D:\\Install Games']
+2026-01-30 20:31:40,504 - INFO - [Tier 3] Steam Store Search: 'Drill Core'
+2026-01-30 20:31:40,785 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:40,785 - INFO - Найдена игра: Drill Core (D:\Games\Drill Core\Drill Core.exe)
+2026-01-30 20:31:40,786 - INFO - [Tier 3] Steam Store Search: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:31:41,447 - INFO - [Tier 5] RAWG.io: 'FL Studio 25 1 6 4997-rev 1-WD'
+2026-01-30 20:31:41,959 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:31:41,959 - INFO - Найдена игра: FL Studio 25.1.6.4997-rev.1-WD (D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:31:41,960 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:31:43,419 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:31:43,698 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:31:43,698 - INFO - Найдена игра: LEGO Voyagers [MULTi-ENG-RUS] [R] [TN] (D:\Games\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\LEGO Voyagers.exe)
+2026-01-30 20:31:43,699 - INFO - [Tier 3] Steam Store Search: 'Plan B Terraform'
+2026-01-30 20:31:43,939 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:43,939 - INFO - Найдена игра: Plan.B.Terraform.Build.19960463 (D:\Games\Plan.B.Terraform.Build.19960463\Plan B Terraform.exe)
+2026-01-30 20:31:43,942 - INFO - [Tier 3] Steam Store Search: 'Cuphead'
+2026-01-30 20:31:44,133 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:44,133 - INFO - Найдена игра: Cuphead (D:\Install Games\Cuphead\Cuphead.exe)
+2026-01-30 20:31:44,133 - INFO - [Tier 3] Steam Store Search: 'LEGO Marvel Super Heroes 2'
+2026-01-30 20:31:44,335 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:44,336 - INFO - Найдена игра: LEGO Marvel Super Heroes 2 (D:\Install Games\LEGO Marvel Super Heroes 2\LEGOMARVEL2_DX11.exe)
+2026-01-30 20:31:44,336 - INFO - [Tier 3] Steam Store Search: 'LEGO Star Wars - The Skywalker Saga'
+2026-01-30 20:31:44,566 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:44,566 - INFO - Найдена игра: LEGO Star Wars - The Skywalker Saga (D:\Install Games\LEGO Star Wars - The Skywalker Saga\LEGOSTARWARSSKYWALKERSAGA_DX11.exe)
+2026-01-30 20:31:44,568 - INFO - Skipping excluded exe: D:\Install Games\LEGO Voyagers\LEGO Voyagers.exe
+2026-01-30 20:31:44,569 - INFO - [Tier 3] Steam Store Search: 'Poly Bridge 3'
+2026-01-30 20:31:44,760 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:44,760 - INFO - Найдена игра: Poly Bridge 3 (D:\Install Games\Poly Bridge 3\Poly Bridge 3.exe)
+2026-01-30 20:31:44,761 - INFO - [Tier 3] Steam Store Search: 'Ratchet and Clank - Rift Apart'
+2026-01-30 20:31:44,991 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:44,991 - INFO - Найдена игра: Ratchet and Clank - Rift Apart (D:\Install Games\Ratchet and Clank - Rift Apart\RiftApart.exe)
+2026-01-30 20:31:44,992 - INFO - [Tier 3] Steam Store Search: 'Trine 4'
+2026-01-30 20:31:45,204 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:45,204 - INFO - Найдена игра: Trine 4 (D:\Install Games\Trine 4\trine4.exe)
+2026-01-30 20:31:45,205 - INFO - [Tier 3] Steam Store Search: 'Trine 5'
+2026-01-30 20:31:45,440 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:45,440 - INFO - Найдена игра: Trine 5 (D:\Install Games\Trine 5\trine5.exe)
+2026-01-30 20:31:45,441 - INFO - [Tier 3] Steam Store Search: 'Wolfenstein II The New Colossus'
+2026-01-30 20:31:45,614 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:45,614 - INFO - Найдена игра: Wolfenstein II The New Colossus (D:\Install Games\Wolfenstein II The New Colossus\NewColossus_x64vk.exe)
+2026-01-30 20:31:45,614 - INFO - Disk scan finished. Found 12 games.
+2026-01-30 20:31:52,918 - INFO - Excluded game: FL Studio 25.1.6.4997-rev.1-WD (path: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe)
+2026-01-30 20:31:56,554 - INFO - UI: Update Library button clicked
+2026-01-30 20:31:56,580 - INFO - UI: refresh_library async task started
+2026-01-30 20:31:56,721 - INFO - scan_all_games called
+2026-01-30 20:31:56,813 - INFO - Invoking steam_scanner.scan
+2026-01-30 20:31:56,813 - INFO - Starting Steam scan...
+2026-01-30 20:31:56,820 - INFO - Steam scan finished. Found 13 games.
+2026-01-30 20:31:56,866 - INFO - Invoking disk_scanner.scan
+2026-01-30 20:31:56,866 - INFO - Начинаем сканирование папок: ['C:\\Games', 'D:\\Games', 'D:\\Install Games']
+2026-01-30 20:31:56,869 - INFO - [Tier 3] Steam Store Search: 'Drill Core'
+2026-01-30 20:31:57,098 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:57,098 - INFO - Найдена игра: Drill Core (D:\Games\Drill Core\Drill Core.exe)
+2026-01-30 20:31:57,098 - INFO - Skipping excluded exe: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe
+2026-01-30 20:31:57,099 - INFO - [Tier 3] Steam Store Search: 'LEGO Voyagers'
+2026-01-30 20:31:58,583 - INFO - [Tier 5] RAWG.io: 'LEGO Voyagers'
+2026-01-30 20:31:58,917 - INFO -    ✅ Downloaded from RAWG.io
+2026-01-30 20:31:58,917 - INFO - Найдена игра: LEGO Voyagers [MULTi-ENG-RUS] [R] [TN] (D:\Games\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\LEGO Voyagers.exe)
+2026-01-30 20:31:58,918 - INFO - [Tier 3] Steam Store Search: 'Plan B Terraform'
+2026-01-30 20:31:59,274 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:59,274 - INFO - Найдена игра: Plan.B.Terraform.Build.19960463 (D:\Games\Plan.B.Terraform.Build.19960463\Plan B Terraform.exe)
+2026-01-30 20:31:59,276 - INFO - [Tier 3] Steam Store Search: 'Cuphead'
+2026-01-30 20:31:59,452 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:59,452 - INFO - Найдена игра: Cuphead (D:\Install Games\Cuphead\Cuphead.exe)
+2026-01-30 20:31:59,452 - INFO - [Tier 3] Steam Store Search: 'LEGO Marvel Super Heroes 2'
+2026-01-30 20:31:59,647 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:59,647 - INFO - Найдена игра: LEGO Marvel Super Heroes 2 (D:\Install Games\LEGO Marvel Super Heroes 2\LEGOMARVEL2_DX11.exe)
+2026-01-30 20:31:59,648 - INFO - [Tier 3] Steam Store Search: 'LEGO Star Wars - The Skywalker Saga'
+2026-01-30 20:31:59,878 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:31:59,878 - INFO - Найдена игра: LEGO Star Wars - The Skywalker Saga (D:\Install Games\LEGO Star Wars - The Skywalker Saga\LEGOSTARWARSSKYWALKERSAGA_DX11.exe)
+2026-01-30 20:31:59,879 - INFO - Skipping excluded exe: D:\Install Games\LEGO Voyagers\LEGO Voyagers.exe
+2026-01-30 20:31:59,879 - INFO - [Tier 3] Steam Store Search: 'Poly Bridge 3'
+2026-01-30 20:32:00,069 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:32:00,070 - INFO - Найдена игра: Poly Bridge 3 (D:\Install Games\Poly Bridge 3\Poly Bridge 3.exe)
+2026-01-30 20:32:00,070 - INFO - [Tier 3] Steam Store Search: 'Ratchet and Clank - Rift Apart'
+2026-01-30 20:32:00,313 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:32:00,314 - INFO - Найдена игра: Ratchet and Clank - Rift Apart (D:\Install Games\Ratchet and Clank - Rift Apart\RiftApart.exe)
+2026-01-30 20:32:00,314 - INFO - [Tier 3] Steam Store Search: 'Trine 4'
+2026-01-30 20:32:00,535 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:32:00,535 - INFO - Найдена игра: Trine 4 (D:\Install Games\Trine 4\trine4.exe)
+2026-01-30 20:32:00,536 - INFO - [Tier 3] Steam Store Search: 'Trine 5'
+2026-01-30 20:32:00,768 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:32:00,768 - INFO - Найдена игра: Trine 5 (D:\Install Games\Trine 5\trine5.exe)
+2026-01-30 20:32:00,769 - INFO - [Tier 3] Steam Store Search: 'Wolfenstein II The New Colossus'
+2026-01-30 20:32:00,962 - INFO -    ✅ Downloaded from Steam Store
+2026-01-30 20:32:00,962 - INFO - Найдена игра: Wolfenstein II The New Colossus (D:\Install Games\Wolfenstein II The New Colossus\NewColossus_x64vk.exe)
+2026-01-30 20:32:00,962 - INFO - Disk scan finished. Found 11 games.
+2026-01-30 20:32:33,334 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-244' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1755, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 753, in <lambda>
+  File "main.py", line 1166, in window_action
+SystemExit: 0
+2026-01-30 20:32:36,521 - ERROR - Failed to import win32com: No module named 'win32com'
+2026-01-30 20:32:36,541 - INFO - DuckDuckGo search library loaded successfully
+2026-01-30 20:32:36,631 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI202922\assets
+2026-01-30 20:32:36,632 - INFO - Starting up TCP server on localhost:56207
+2026-01-30 20:32:36,636 - INFO - Flet app has started...
+2026-01-30 20:32:36,637 - INFO - App URL: tcp://localhost:56207
+2026-01-30 20:32:36,637 - INFO - Starting Flet View app...
+2026-01-30 20:32:36,637 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI202922\flet_desktop\app\flet\flet.exe
+2026-01-30 20:32:37,026 - INFO - App session started
+2026-01-30 20:32:37,027 - INFO - SteamGridDB API initialized
+2026-01-30 20:32:37,027 - INFO - RAWG.io API initialized
+2026-01-30 20:32:37,048 - INFO - UI: load_library started
+2026-01-30 20:32:37,049 - INFO - Removed orphaned cache: 407a8b632db9.jpg
+2026-01-30 20:32:37,050 - INFO - Removed orphaned cache: 77bfa9b33bee.jpg
+2026-01-30 20:32:37,050 - INFO - Removed orphaned cache: f94b0fa70b1e.jpg
+2026-01-30 20:32:37,050 - INFO - Cache cleanup: 3/27 orphaned files removed

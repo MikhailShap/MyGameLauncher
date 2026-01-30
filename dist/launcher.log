@@ -552,3 +552,31 @@ SystemExit: 0
 2026-01-30 20:32:37,050 - INFO - Removed orphaned cache: 77bfa9b33bee.jpg
 2026-01-30 20:32:37,050 - INFO - Removed orphaned cache: f94b0fa70b1e.jpg
 2026-01-30 20:32:37,050 - INFO - Cache cleanup: 3/27 orphaned files removed
+2026-01-30 20:34:07,778 - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-76' coro=<Session.dispatch_event() done, defined at flet\messaging\session.py:181> exception=SystemExit(0)>
+Traceback (most recent call last):
+  File "main.py", line 1755, in <module>
+  File "flet\app.py", line 96, in run
+  File "asyncio\runners.py", line 204, in run
+  File "asyncio\runners.py", line 127, in run
+  File "asyncio\base_events.py", line 706, in run_until_complete
+  File "asyncio\base_events.py", line 677, in run_forever
+  File "asyncio\base_events.py", line 2046, in _run_once
+  File "asyncio\events.py", line 94, in _run
+  File "flet\messaging\session.py", line 193, in dispatch_event
+  File "flet\controls\base_control.py", line 342, in _trigger_event
+  File "main.py", line 753, in <lambda>
+  File "main.py", line 1166, in window_action
+SystemExit: 0
+2026-01-30 20:37:12,608 - ERROR - Failed to import win32com: No module named 'win32com'
+2026-01-30 20:37:12,628 - INFO - DuckDuckGo search library loaded successfully
+2026-01-30 20:37:12,664 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI261922\assets
+2026-01-30 20:37:12,665 - INFO - Starting up TCP server on localhost:55498
+2026-01-30 20:37:12,669 - INFO - Flet app has started...
+2026-01-30 20:37:12,669 - INFO - App URL: tcp://localhost:55498
+2026-01-30 20:37:12,670 - INFO - Starting Flet View app...
+2026-01-30 20:37:12,670 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI261922\flet_desktop\app\flet\flet.exe
+2026-01-30 20:37:13,077 - INFO - App session started
+2026-01-30 20:37:13,079 - INFO - SteamGridDB API initialized
+2026-01-30 20:37:13,079 - INFO - RAWG.io API initialized
+2026-01-30 20:37:13,101 - INFO - UI: load_library started

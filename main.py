@@ -846,11 +846,26 @@ class CyberLauncher:
             ],
         )
         
+        self.search_field = ft.TextField(
+            hint_text="Поиск игр...",
+            prefix_icon=ft.Icons.SEARCH,
+            on_change=lambda e: self.update_game_grid(reset_page=True),
+            height=35,
+            content_padding=10,
+            text_size=13,
+            border_radius=8,
+            bgcolor="#1E1E1E",
+            border_color="#333333",
+            focused_border_color=ACCENT_BLUE,
+            expand=True,
+        )
+
         self.sort_panel = ft.Container(
-            height=50,
+            height=60,
             content=ft.Row(
                 controls=[
-                    ft.Container(expand=True),
+                    self.search_field,
+                    ft.Container(width=20),
                     ft.Icon(ft.Icons.SORT, color=TEXT_GREY, size=16),
                     ft.Text("Сортировка:", size=12, color=TEXT_GREY),
                     self.sort_button,
@@ -858,7 +873,7 @@ class CyberLauncher:
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.Padding(left=20, right=20, top=8, bottom=5),
+            padding=ft.Padding(left=20, right=20, top=10, bottom=5),
         )
         
         # Game grid
@@ -1247,6 +1262,11 @@ class CyberLauncher:
                 games = self.game_manager.get_all_games()
             
             self._all_games_list = list(games)
+
+            # Search filtering
+            if hasattr(self, 'search_field') and self.search_field.value:
+                query = self.search_field.value.lower()
+                self._all_games_list = [g for g in self._all_games_list if query in g.title.lower()]
             
             # Сортировка
             if self.current_sort == "name_asc":

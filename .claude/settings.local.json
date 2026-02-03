@@ -8,7 +8,18 @@
       "Bash(if exist requirements.txt type requirements.txt)",
       "Bash(pip show:*)",
       "Bash(timeout /t 5)",
-      "Bash(ping:*)"
+      "Bash(ping:*)",
+      "Bash(dir:*)",
+      "Bash(find:*)",
+      "Bash(/dev/null -exec ls -la {} ;)",
+      "Bash(ls:*)",
+      "Bash(pip install:*)",
+      "Bash(ie4uinit.exe:*)",
+      "Bash(taskkill:*)",
+      "Bash(del /f /s /q \"%LocalAppData%\\\\IconCache.db\")",
+      "Bash(del /f /s /q \"%LocalAppData%\\\\Microsoft\\\\Windows\\\\Explorer\\\\iconcache*\")",
+      "Bash(start explorer.exe)",
+      "Bash(git add:*)"
     ]
   }
 }

@@ -12,7 +12,21 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:56.815256"
+      "added_date": "2026-02-03T11:01:32.625232"
+    },
+    {
+      "uid": "5ebea71ca16c",
+      "title": "Biped",
+      "exe_path": "steam://rungameid/1071870",
+      "icon_path": "cache\\icons\\f66ab15b861d.jpg",
+      "platform": "Steam",
+      "category": "All",
+      "app_id": "1071870",
+      "install_path": "D:\\SteamLibrary\\steamapps\\common\\Biped",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": true,
+      "added_date": "2026-02-03T11:01:32.625740"
     },
     {
       "uid": "9b0c5cbf7fff",
@@ -25,8 +39,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Apex Legends",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": true,
-      "added_date": "2026-01-30T20:31:56.815719"
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:32.626336"
     },
     {
       "uid": "da82595bb057",
@@ -39,8 +53,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Battlefield 2042",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": true,
-      "added_date": "2026-01-30T20:31:56.816073"
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:32.626772"
     },
     {
       "uid": "e241bd6f9fc0",
@@ -53,8 +67,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Lightyear Frontier",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": true,
-      "added_date": "2026-01-30T20:31:56.816589"
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:32.627411"
     },
     {
       "uid": "7c9cf31d0bcb",
@@ -68,7 +82,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:56.816953"
+      "added_date": "2026-02-03T11:01:32.627818"
     },
     {
       "uid": "a1b37691da44",
@@ -82,7 +96,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:56.817299"
+      "added_date": "2026-02-03T11:01:32.628201"
     },
     {
       "uid": "b99fe02da2d0",
@@ -96,7 +110,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:56.817766"
+      "added_date": "2026-02-03T11:01:32.628599"
     },
     {
       "uid": "6c76ebb444ba",
@@ -109,8 +123,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\A Game About Feeeding A Black Hole",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": true,
-      "added_date": "2026-01-30T20:31:56.818144"
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:32.628997"
     },
     {
       "uid": "4f65e90b5085",
@@ -124,7 +138,21 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:56.818483"
+      "added_date": "2026-02-03T11:01:32.629378"
+    },
+    {
+      "uid": "be159e9b7a8b",
+      "title": "REANIMAL Demo",
+      "exe_path": "steam://rungameid/4019420",
+      "icon_path": "cache\\icons\\956d8396e584.jpg",
+      "platform": "Steam",
+      "category": "All",
+      "app_id": "4019420",
+      "install_path": "D:\\SteamLibrary\\steamapps\\common\\REANIMAL Demo",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": true,
+      "added_date": "2026-02-03T11:01:32.629734"
     },
     {
       "uid": "d82e92cc65e8",
@@ -138,7 +166,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:56.818903"
+      "added_date": "2026-02-03T11:01:32.630071"
     },
     {
       "uid": "5d07cd7a6f51",
@@ -151,8 +179,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Highguard",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": true,
-      "added_date": "2026-01-30T20:31:56.819265"
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:32.630705"
     },
     {
       "uid": "a90eadeae643",
@@ -165,8 +193,8 @@
       "install_path": "D:\\SteamLibrary\\steamapps\\common\\Deep Rock Galactic",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": true,
-      "added_date": "2026-01-30T20:31:56.819602"
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:32.631179"
     },
     {
       "uid": "e7aad50f0dc7",
@@ -180,49 +208,21 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:56.820046"
+      "added_date": "2026-02-03T11:01:32.631585"
     },
     {
-      "uid": "14cfad40c377",
-      "title": "Drill Core",
-      "exe_path": "D:\\Games\\Drill Core\\Drill Core.exe",
-      "icon_path": "cache\\icons\\6c6b95c369ed.jpg",
-      "platform": "System",
+      "uid": "fd4e0af158a6",
+      "title": "Beyond: Two Souls",
+      "exe_path": "steam://rungameid/960990",
+      "icon_path": "cache\\icons\\5cfb3d1e59f5.jpg",
+      "platform": "Steam",
       "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Games\\Drill Core",
+      "app_id": "960990",
+      "install_path": "D:\\SteamLibrary\\steamapps\\common\\BEYOND Two Souls",
       "last_played": null,
       "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T20:31:57.098268"
-    },
-    {
-      "uid": "db287926945e",
-      "title": "LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]",
-      "exe_path": "D:\\Games\\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\\LEGO Voyagers.exe",
-      "icon_path": "cache\\icons\\06595d25368f.jpg",
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Games\\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T20:31:58.917634"
-    },
-    {
-      "uid": "fffdc14fe7f9",
-      "title": "Plan.B.Terraform.Build.19960463",
-      "exe_path": "D:\\Games\\Plan.B.Terraform.Build.19960463\\Plan B Terraform.exe",
-      "icon_path": "cache\\icons\\18979219c649.jpg",
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Games\\Plan.B.Terraform.Build.19960463",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T20:31:59.274361"
+      "is_favorite": true,
+      "added_date": "2026-02-03T11:01:32.631962"
     },
     {
       "uid": "dcc7b8ce69c0",
@@ -236,35 +236,21 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:59.452210"
+      "added_date": "2026-02-03T11:01:33.478997"
     },
     {
-      "uid": "7d0140a722e7",
-      "title": "LEGO Marvel Super Heroes 2",
-      "exe_path": "D:\\Install Games\\LEGO Marvel Super Heroes 2\\LEGOMARVEL2_DX11.exe",
-      "icon_path": "cache\\icons\\4077719c4e11.jpg",
+      "uid": "18650e8c42a2",
+      "title": "Mario Party Superstars",
+      "exe_path": "D:\\Install Games\\Mario Party Superstars\\emu\\Ryujinx.exe",
+      "icon_path": "cache\\icons\\1e0fad2c6e20.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
-      "install_path": "D:\\Install Games\\LEGO Marvel Super Heroes 2",
+      "install_path": "D:\\Install Games\\Mario Party Superstars",
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:31:59.647635"
-    },
-    {
-      "uid": "5bb2f0598d1c",
-      "title": "LEGO Star Wars - The Skywalker Saga",
-      "exe_path": "D:\\Install Games\\LEGO Star Wars - The Skywalker Saga\\LEGOSTARWARSSKYWALKERSAGA_DX11.exe",
-      "icon_path": "cache\\icons\\5208ff7e3eca.jpg",
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Install Games\\LEGO Star Wars - The Skywalker Saga",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-01-30T20:31:59.878808"
+      "added_date": "2026-02-03T11:01:35.107652"
     },
     {
       "uid": "03d71f233bd5",
@@ -278,7 +264,7 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:32:00.070044"
+      "added_date": "2026-02-03T11:01:35.659282"
     },
     {
       "uid": "34dfb3d4ea41",
@@ -292,13 +278,27 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:32:00.314105"
+      "added_date": "2026-02-03T11:01:36.255024"
+    },
+    {
+      "uid": "aa840a68aeee",
+      "title": "Severed Steel",
+      "exe_path": "D:\\Install Games\\Severed Steel\\ThankYouVeryCool\\Binaries\\Win64\\ThankYouVeryCool-Win64-Shipping.exe",
+      "icon_path": "cache\\icons\\d51fb0a8a66b.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Install Games\\Severed Steel",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:36.792967"
     },
     {
       "uid": "e2185a9561ed",
       "title": "Trine 4",
       "exe_path": "D:\\Install Games\\Trine 4\\trine4.exe",
-      "icon_path": "cache\\icons\\ff4325463e55.jpg",
+      "icon_path": "cache\\icons\\77bfa9b33bee.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -306,13 +306,13 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:32:00.535647"
+      "added_date": "2026-02-03T11:01:37.419907"
     },
     {
       "uid": "fe9e8001c8f6",
       "title": "Trine 5",
       "exe_path": "D:\\Install Games\\Trine 5\\trine5.exe",
-      "icon_path": "cache\\icons\\f7f2611b613e.jpg",
+      "icon_path": "cache\\icons\\f94b0fa70b1e.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -320,7 +320,21 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:32:00.768521"
+      "added_date": "2026-02-03T11:01:38.073590"
+    },
+    {
+      "uid": "ef946f4d504c",
+      "title": "Unravel Two",
+      "exe_path": "D:\\Install Games\\Unravel Two\\UnravelTwo.exe",
+      "icon_path": "cache\\icons\\38460fcfabbb.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Install Games\\Unravel Two",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:38.700550"
     },
     {
       "uid": "1e51bb6f22cd",
@@ -334,21 +348,91 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:32:00.962185"
+      "added_date": "2026-02-03T11:01:39.264279"
     },
     {
-      "uid": "33356b4043ec",
-      "title": "LEGO Voyagers",
-      "exe_path": "D:\\Install Games\\LEGO Voyagers\\LEGO Voyagers.exe",
-      "icon_path": "cache\\icons\\06595d25368f.jpg",
+      "uid": "13f5b61de778",
+      "title": "Biped 2 (2025)",
+      "exe_path": "D:\\Games\\Biped 2 (2025)\\Biped 2\\Biped2.exe",
+      "icon_path": "cache\\icons\\438b056d85bd.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
-      "install_path": "D:\\Install Games\\LEGO Voyagers",
+      "install_path": "D:\\Games\\Biped 2 (2025)",
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-01-30T20:23:30.050419"
+      "added_date": "2026-02-03T11:01:39.877756"
+    },
+    {
+      "uid": "14cfad40c377",
+      "title": "Drill Core",
+      "exe_path": "D:\\Games\\Drill Core\\Drill Core.exe",
+      "icon_path": "cache\\icons\\6c6b95c369ed.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Games\\Drill Core",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:40.479003"
+    },
+    {
+      "uid": "fffdc14fe7f9",
+      "title": "Plan.B.Terraform.Build.19960463",
+      "exe_path": "D:\\Games\\Plan.B.Terraform.Build.19960463\\Plan B Terraform.exe",
+      "icon_path": "cache\\icons\\18979219c649.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Games\\Plan.B.Terraform.Build.19960463",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:41.037305"
+    },
+    {
+      "uid": "4badb0079255",
+      "title": "Quarantine.Zone.The.Last.Check-InsaneRamZes",
+      "exe_path": "D:\\Games\\Quarantine.Zone.The.Last.Check-InsaneRamZes\\QZSim\\Binaries\\Win64\\QZSim-Win64-Shipping.exe",
+      "icon_path": "cache\\icons\\cec4a3491a11.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Games\\Quarantine.Zone.The.Last.Check-InsaneRamZes",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:42.212738"
+    },
+    {
+      "uid": "2c67bc6ff007",
+      "title": "SpongeBob SquarePants Titans of the Tide",
+      "exe_path": "D:\\Games\\SpongeBob SquarePants Titans of the Tide\\Ghost\\Binaries\\Win64\\Ghost-Win64-Shipping.exe",
+      "icon_path": "cache\\icons\\7d757499a6fe.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Games\\SpongeBob SquarePants Titans of the Tide",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:44.434484"
+    },
+    {
+      "uid": "be56c6e1ea86",
+      "title": "Tower Dominion",
+      "exe_path": "D:\\Games\\Tower Dominion\\Tower Dominion 1.47\\Tower Dominion\\tower-dominion.exe",
+      "icon_path": "cache\\icons\\664f2e196191.jpg",
+      "platform": "System",
+      "category": "All",
+      "app_id": null,
+      "install_path": "D:\\Games\\Tower Dominion",
+      "last_played": null,
+      "play_time": 0,
+      "is_favorite": false,
+      "added_date": "2026-02-03T11:01:45.095623"
     }
   ]
 }

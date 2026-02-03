@@ -6,5 +6,14 @@
     "rawg": "608bf43d8ea14559a488d58616fcc950"
   },
   "enable_animations": true,
-  "excluded_paths": []
+  "excluded_paths": [
+    "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe"
+  ],
+  "enabled_launchers": {
+    "Steam": true
+  },
+  "extra_game_paths": [
+    "D:\\Install Games",
+    "D:\\Games"
+  ]
 }

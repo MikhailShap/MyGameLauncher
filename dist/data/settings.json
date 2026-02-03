@@ -1,5 +1,5 @@
 {
-  "theme": "dark",
+  "theme": "midnight",
   "show_game_size": false,
   "api_keys": {
     "rawg": "608bf43d8ea14559a488d58616fcc950",
@@ -7,7 +7,11 @@
   },
   "enable_animations": true,
   "excluded_paths": [
-    "D:\\Install Games\\LEGO Voyagers\\LEGO Voyagers.exe",
-    "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe"
+    "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe",
+    "D:\\Games\\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\\LEGO Voyagers.exe"
+  ],
+  "extra_game_paths": [
+    "D:\\Install Games",
+    "D:\\Games"
   ]
 }

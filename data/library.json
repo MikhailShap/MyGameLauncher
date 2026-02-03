@@ -12,7 +12,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.767165"
+      "added_date": "2026-02-03T09:34:31.767165",
+      "collections": []
     },
     {
       "uid": "5ebea71ca16c",
@@ -26,7 +27,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.767401"
+      "added_date": "2026-02-03T09:34:31.767401",
+      "collections": []
     },
     {
       "uid": "9b0c5cbf7fff",
@@ -40,7 +42,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.767570"
+      "added_date": "2026-02-03T09:34:31.767570",
+      "collections": []
     },
     {
       "uid": "da82595bb057",
@@ -54,7 +57,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.767731"
+      "added_date": "2026-02-03T09:34:31.767731",
+      "collections": []
     },
     {
       "uid": "e241bd6f9fc0",
@@ -68,7 +72,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.767889"
+      "added_date": "2026-02-03T09:34:31.767889",
+      "collections": []
     },
     {
       "uid": "7c9cf31d0bcb",
@@ -82,7 +87,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.768046"
+      "added_date": "2026-02-03T09:34:31.768046",
+      "collections": []
     },
     {
       "uid": "a1b37691da44",
@@ -96,7 +102,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.768232"
+      "added_date": "2026-02-03T09:34:31.768232",
+      "collections": []
     },
     {
       "uid": "b99fe02da2d0",
@@ -110,7 +117,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.768381"
+      "added_date": "2026-02-03T09:34:31.768381",
+      "collections": []
     },
     {
       "uid": "6c76ebb444ba",
@@ -124,13 +132,14 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.768531"
+      "added_date": "2026-02-03T09:34:31.768531",
+      "collections": []
     },
     {
       "uid": "4f65e90b5085",
       "title": "Typing Break",
       "exe_path": "steam://rungameid/3959590",
-      "icon_path": "C:\\MyGameLauncher\\cache\\icons\\e7c589b35dbe.jpg",
+      "icon_path": "cache\\icons\\281486381718.jpg",
       "platform": "Steam",
       "category": "All",
       "app_id": "3959590",
@@ -138,7 +147,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.768679"
+      "added_date": "2026-02-03T09:34:31.768679",
+      "collections": []
     },
     {
       "uid": "be159e9b7a8b",
@@ -152,7 +162,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.768828"
+      "added_date": "2026-02-03T09:34:31.768828",
+      "collections": []
     },
     {
       "uid": "d82e92cc65e8",
@@ -166,7 +177,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.768973"
+      "added_date": "2026-02-03T09:34:31.768973",
+      "collections": []
     },
     {
       "uid": "5d07cd7a6f51",
@@ -180,7 +192,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.769115"
+      "added_date": "2026-02-03T09:34:31.769115",
+      "collections": []
     },
     {
       "uid": "a90eadeae643",
@@ -194,7 +207,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.769250"
+      "added_date": "2026-02-03T09:34:31.769250",
+      "collections": []
     },
     {
       "uid": "e7aad50f0dc7",
@@ -208,7 +222,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.769389"
+      "added_date": "2026-02-03T09:34:31.769389",
+      "collections": []
     },
     {
       "uid": "fd4e0af158a6",
@@ -222,7 +237,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:31.769523"
+      "added_date": "2026-02-03T09:34:31.769523",
+      "collections": []
     },
     {
       "uid": "dcc7b8ce69c0",
@@ -236,7 +252,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:32.007762"
+      "added_date": "2026-02-03T09:34:32.007762",
+      "collections": []
     },
     {
       "uid": "18650e8c42a2",
@@ -250,7 +267,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:32.370487"
+      "added_date": "2026-02-03T09:34:32.370487",
+      "collections": []
     },
     {
       "uid": "03d71f233bd5",
@@ -264,7 +282,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:32.576901"
+      "added_date": "2026-02-03T09:34:32.576901",
+      "collections": []
     },
     {
       "uid": "34dfb3d4ea41",
@@ -278,7 +297,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:32.791551"
+      "added_date": "2026-02-03T09:34:32.791551",
+      "collections": []
     },
     {
       "uid": "aa840a68aeee",
@@ -292,7 +312,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:32.969070"
+      "added_date": "2026-02-03T09:34:32.969070",
+      "collections": []
     },
     {
       "uid": "e2185a9561ed",
@@ -306,7 +327,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:33.205328"
+      "added_date": "2026-02-03T09:34:33.205328",
+      "collections": []
     },
     {
       "uid": "fe9e8001c8f6",
@@ -320,7 +342,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:33.437504"
+      "added_date": "2026-02-03T09:34:33.437504",
+      "collections": []
     },
     {
       "uid": "ef946f4d504c",
@@ -334,7 +357,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:33.670421"
+      "added_date": "2026-02-03T09:34:33.670421",
+      "collections": []
     },
     {
       "uid": "1e51bb6f22cd",
@@ -348,7 +372,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:33.869932"
+      "added_date": "2026-02-03T09:34:33.869932",
+      "collections": []
     },
     {
       "uid": "13f5b61de778",
@@ -362,7 +387,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:34.511284"
+      "added_date": "2026-02-03T09:34:34.511284",
+      "collections": []
     },
     {
       "uid": "14cfad40c377",
@@ -376,21 +402,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:35.131613"
-    },
-    {
-      "uid": "db287926945e",
-      "title": "LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]",
-      "exe_path": "D:\\Games\\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\\LEGO Voyagers.exe",
-      "icon_path": "cache\\icons\\06595d25368f.jpg",
-      "platform": "System",
-      "category": "All",
-      "app_id": null,
-      "install_path": "D:\\Games\\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]",
-      "last_played": null,
-      "play_time": 0,
-      "is_favorite": false,
-      "added_date": "2026-02-03T09:34:38.707715"
+      "added_date": "2026-02-03T09:34:35.131613",
+      "collections": []
     },
     {
       "uid": "fffdc14fe7f9",
@@ -404,7 +417,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:39.344759"
+      "added_date": "2026-02-03T09:34:39.344759",
+      "collections": []
     },
     {
       "uid": "4badb0079255",
@@ -418,13 +432,14 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:40.569621"
+      "added_date": "2026-02-03T09:34:40.569621",
+      "collections": []
     },
     {
       "uid": "2c67bc6ff007",
       "title": "SpongeBob SquarePants Titans of the Tide",
       "exe_path": "D:\\Games\\SpongeBob SquarePants Titans of the Tide\\Ghost\\Binaries\\Win64\\Ghost-Win64-Shipping.exe",
-      "icon_path": "cache\\icons\\7d757499a6fe.jpg",
+      "icon_path": "cache\\icons\\388e999d2cb2.jpg",
       "platform": "System",
       "category": "All",
       "app_id": null,
@@ -432,7 +447,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:41.991646"
+      "added_date": "2026-02-03T09:34:41.991646",
+      "collections": []
     },
     {
       "uid": "be56c6e1ea86",
@@ -446,7 +462,9 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T09:34:42.542626"
+      "added_date": "2026-02-03T09:34:42.542626",
+      "collections": []
     }
-  ]
+  ],
+  "collections": []
 }

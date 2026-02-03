@@ -1,13 +1,15 @@
 {
   "theme": "forest",
   "show_game_size": true,
+  "show_disk_info": true,
   "api_keys": {
     "steamgriddb": "1fa0e0b6671f5c933899ae8f979f9b9d",
     "rawg": "608bf43d8ea14559a488d58616fcc950"
   },
   "enable_animations": true,
   "excluded_paths": [
-    "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe"
+    "D:\\Games\\FL Studio 25.1.6.4997-rev.1-WD\\flstudio_win64_25.1.6.4997.exe",
+    "D:\\Games\\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\\LEGO Voyagers.exe"
   ],
   "enabled_launchers": {
     "Steam": true

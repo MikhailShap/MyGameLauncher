@@ -12,7 +12,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.625232"
+      "added_date": "2026-02-03T11:13:56.024948",
+      "collections": []
     },
     {
       "uid": "5ebea71ca16c",
@@ -26,7 +27,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": true,
-      "added_date": "2026-02-03T11:01:32.625740"
+      "added_date": "2026-02-03T11:13:56.025941",
+      "collections": []
     },
     {
       "uid": "9b0c5cbf7fff",
@@ -40,7 +42,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.626336"
+      "added_date": "2026-02-03T11:13:56.026562",
+      "collections": []
     },
     {
       "uid": "da82595bb057",
@@ -54,7 +57,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.626772"
+      "added_date": "2026-02-03T11:13:56.027027",
+      "collections": []
     },
     {
       "uid": "e241bd6f9fc0",
@@ -68,7 +72,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.627411"
+      "added_date": "2026-02-03T11:13:56.027449",
+      "collections": []
     },
     {
       "uid": "7c9cf31d0bcb",
@@ -82,7 +87,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.627818"
+      "added_date": "2026-02-03T11:13:56.027845",
+      "collections": []
     },
     {
       "uid": "a1b37691da44",
@@ -96,7 +102,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.628201"
+      "added_date": "2026-02-03T11:13:56.028240",
+      "collections": []
     },
     {
       "uid": "b99fe02da2d0",
@@ -110,7 +117,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.628599"
+      "added_date": "2026-02-03T11:13:56.028612",
+      "collections": []
     },
     {
       "uid": "6c76ebb444ba",
@@ -124,7 +132,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.628997"
+      "added_date": "2026-02-03T11:13:56.029003",
+      "collections": []
     },
     {
       "uid": "4f65e90b5085",
@@ -138,7 +147,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.629378"
+      "added_date": "2026-02-03T11:13:56.029373",
+      "collections": []
     },
     {
       "uid": "be159e9b7a8b",
@@ -152,7 +162,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": true,
-      "added_date": "2026-02-03T11:01:32.629734"
+      "added_date": "2026-02-03T11:13:56.029744",
+      "collections": []
     },
     {
       "uid": "d82e92cc65e8",
@@ -166,7 +177,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.630071"
+      "added_date": "2026-02-03T11:13:56.030123",
+      "collections": []
     },
     {
       "uid": "5d07cd7a6f51",
@@ -180,7 +192,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.630705"
+      "added_date": "2026-02-03T11:13:56.030513",
+      "collections": []
     },
     {
       "uid": "a90eadeae643",
@@ -194,7 +207,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.631179"
+      "added_date": "2026-02-03T11:13:56.031072",
+      "collections": []
     },
     {
       "uid": "e7aad50f0dc7",
@@ -208,7 +222,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:32.631585"
+      "added_date": "2026-02-03T11:13:56.031668",
+      "collections": []
     },
     {
       "uid": "fd4e0af158a6",
@@ -222,7 +237,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": true,
-      "added_date": "2026-02-03T11:01:32.631962"
+      "added_date": "2026-02-03T11:13:56.032156",
+      "collections": []
     },
     {
       "uid": "dcc7b8ce69c0",
@@ -236,7 +252,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:33.478997"
+      "added_date": "2026-02-03T11:13:56.371840",
+      "collections": []
     },
     {
       "uid": "18650e8c42a2",
@@ -250,7 +267,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:35.107652"
+      "added_date": "2026-02-03T11:13:56.767825",
+      "collections": []
     },
     {
       "uid": "03d71f233bd5",
@@ -264,7 +282,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:35.659282"
+      "added_date": "2026-02-03T11:13:56.950113",
+      "collections": []
     },
     {
       "uid": "34dfb3d4ea41",
@@ -278,7 +297,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:36.255024"
+      "added_date": "2026-02-03T11:13:57.167771",
+      "collections": []
     },
     {
       "uid": "aa840a68aeee",
@@ -292,7 +312,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:36.792967"
+      "added_date": "2026-02-03T11:13:57.346912",
+      "collections": []
     },
     {
       "uid": "e2185a9561ed",
@@ -306,7 +327,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:37.419907"
+      "added_date": "2026-02-03T11:13:57.586332",
+      "collections": []
     },
     {
       "uid": "fe9e8001c8f6",
@@ -320,7 +342,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:38.073590"
+      "added_date": "2026-02-03T11:13:57.823790",
+      "collections": []
     },
     {
       "uid": "ef946f4d504c",
@@ -334,7 +357,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:38.700550"
+      "added_date": "2026-02-03T11:13:58.066093",
+      "collections": []
     },
     {
       "uid": "1e51bb6f22cd",
@@ -348,7 +372,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:39.264279"
+      "added_date": "2026-02-03T11:13:58.239936",
+      "collections": []
     },
     {
       "uid": "13f5b61de778",
@@ -362,7 +387,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:39.877756"
+      "added_date": "2026-02-03T11:13:58.448624",
+      "collections": []
     },
     {
       "uid": "14cfad40c377",
@@ -376,7 +402,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:40.479003"
+      "added_date": "2026-02-03T11:13:58.682674",
+      "collections": []
     },
     {
       "uid": "fffdc14fe7f9",
@@ -390,7 +417,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:41.037305"
+      "added_date": "2026-02-03T11:13:58.910253",
+      "collections": []
     },
     {
       "uid": "4badb0079255",
@@ -404,7 +432,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:42.212738"
+      "added_date": "2026-02-03T11:13:59.233428",
+      "collections": []
     },
     {
       "uid": "2c67bc6ff007",
@@ -418,7 +447,8 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:44.434484"
+      "added_date": "2026-02-03T11:13:59.657990",
+      "collections": []
     },
     {
       "uid": "be56c6e1ea86",
@@ -432,7 +462,24 @@
       "last_played": null,
       "play_time": 0,
       "is_favorite": false,
-      "added_date": "2026-02-03T11:01:45.095623"
+      "added_date": "2026-02-03T11:13:59.867118",
+      "collections": []
+    }
+  ],
+  "collections": [
+    {
+      "id": "8b376367",
+      "name": "Кооператив",
+      "color": "#D500F9",
+      "icon": "folder",
+      "created": "2026-02-03T13:44:58.692218"
+    },
+    {
+      "id": "9dcd1870",
+      "name": "фывфывфв",
+      "color": "#D500F9",
+      "icon": "folder",
+      "created": "2026-02-03T13:45:36.580696"
     }
   ]
 }

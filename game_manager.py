@@ -88,6 +88,7 @@ class GameModel:
     play_time: int = 0
     is_favorite: bool = False
     added_date: str = field(default_factory=lambda: datetime.now().isoformat())
+    collections: List[str] = field(default_factory=list)  # Список ID коллекций
     
     @staticmethod
     def generate_uid(path: str) -> str:
@@ -1058,6 +1059,7 @@ class GameManager:
         self.steam_scanner = SteamScanner()
         self.disk_scanner = DiskScanner()
         self._games: Dict[str, GameModel] = {}
+        self._collections: List[Dict[str, Any]] = []  # Пользовательские коллекции
         self._on_progress = None
 
     def reinitialize_api_clients(self, sgdb_key: str = None, rawg_key: str = None):
@@ -1076,7 +1078,13 @@ class GameManager:
                 with open(self.library_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     for g in data.get('games', []):
+                        # Ensure collections field exists for backward compatibility
+                        if 'collections' not in g:
+                            g['collections'] = []
                         self._games[g['uid']] = GameModel.from_dict(g)
+
+                    # Загрузка коллекций
+                    self._collections = data.get('collections', [])
 
                 # Validate and repair cache references
                 games_list = list(self._games.values())
@@ -1098,8 +1106,12 @@ class GameManager:
                 logger.error(f"Load library error: {e}")
 
     async def save_library(self):
-        data = {'games': [g.to_dict() for g in self._games.values()]}
-        with open(self.library_file, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
+        data = {
+            'games': [g.to_dict() for g in self._games.values()],
+            'collections': self._collections
+        }
+        with open(self.library_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
     
     # Standard paths for launchers
@@ -1241,6 +1253,78 @@ class GameManager:
             logger.info(f"Excluded game: {game.title} (path: {path})")
             return path
         return None
+
+    # ========== Collections Management ==========
+
+    def get_collections(self) -> List[Dict[str, Any]]:
+        """Получить список всех коллекций из settings"""
+        return self._collections
+
+    def add_collection(self, name: str, color: str = "#D500F9", icon: str = "folder") -> Dict[str, Any]:
+        """Создать новую коллекцию"""
+        collection_id = hashlib.md5(f"{name}_{datetime.now().isoformat()}".encode()).hexdigest()[:8]
+        collection = {
+            "id": collection_id,
+            "name": name,
+            "color": color,
+            "icon": icon,
+            "created": datetime.now().isoformat()
+        }
+        self._collections.append(collection)
+        logger.info(f"Created collection: {name} (id: {collection_id})")
+        return collection
+
+    def update_collection(self, collection_id: str, name: str = None, color: str = None, icon: str = None) -> bool:
+        """Обновить коллекцию"""
+        for col in self._collections:
+            if col["id"] == collection_id:
+                if name is not None:
+                    col["name"] = name
+                if color is not None:
+                    col["color"] = color
+                if icon is not None:
+                    col["icon"] = icon
+                logger.info(f"Updated collection: {collection_id}")
+                return True
+        return False
+
+    def delete_collection(self, collection_id: str) -> bool:
+        """Удалить коллекцию и убрать её из всех игр"""
+        # Убираем коллекцию из всех игр
+        for game in self._games.values():
+            if collection_id in game.collections:
+                game.collections.remove(collection_id)
+
+        # Удаляем саму коллекцию
+        self._collections = [c for c in self._collections if c["id"] != collection_id]
+        logger.info(f"Deleted collection: {collection_id}")
+        return True
+
+    async def add_game_to_collection(self, game_uid: str, collection_id: str) -> bool:
+        """Добавить игру в коллекцию"""
+        if game_uid in self._games:
+            game = self._games[game_uid]
+            if collection_id not in game.collections:
+                game.collections.append(collection_id)
+                await self.save_library()
+                logger.info(f"Added game {game.title} to collection {collection_id}")
+                return True
+        return False
+
+    async def remove_game_from_collection(self, game_uid: str, collection_id: str) -> bool:
+        """Убрать игру из коллекции"""
+        if game_uid in self._games:
+            game = self._games[game_uid]
+            if collection_id in game.collections:
+                game.collections.remove(collection_id)
+                await self.save_library()
+                logger.info(f"Removed game {game.title} from collection {collection_id}")
+                return True
+        return False
+
+    def get_games_by_collection(self, collection_id: str) -> List[GameModel]:
+        """Получить игры в коллекции"""
+        return [g for g in self._games.values() if collection_id in g.collections]
 
     async def add_game_from_path(self, path: str) -> Optional[GameModel]:
         """Add a single game/app from path (used for restoring excluded items)"""

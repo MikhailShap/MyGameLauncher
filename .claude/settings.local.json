@@ -19,7 +19,8 @@
       "Bash(del /f /s /q \"%LocalAppData%\\\\IconCache.db\")",
       "Bash(del /f /s /q \"%LocalAppData%\\\\Microsoft\\\\Windows\\\\Explorer\\\\iconcache*\")",
       "Bash(start explorer.exe)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(start python:*)"
     ]
   }
 }

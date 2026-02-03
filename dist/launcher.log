@@ -3081,3 +3081,78 @@ SystemExit: 0
 2026-02-03 11:01:45,095 - INFO - Найдена игра: Tower Dominion (D:\Games\Tower Dominion\Tower Dominion 1.47\Tower Dominion\tower-dominion.exe)
 2026-02-03 11:01:45,097 - INFO - Disk scan finished. Found 15 system games.
 2026-02-03 11:01:45,098 - INFO - Library updated. Total games: 31
+2026-02-03 11:13:55,551 - INFO - UI: Update Library button clicked
+2026-02-03 11:13:55,632 - INFO - UI: refresh_library async task started
+2026-02-03 11:13:55,831 - INFO - scan_all_games called
+2026-02-03 11:13:56,022 - INFO - Invoking steam_scanner.scan
+2026-02-03 11:13:56,023 - INFO - Starting Steam scan...
+2026-02-03 11:13:56,032 - INFO - Steam scan finished. Found 16 games.
+2026-02-03 11:13:56,126 - INFO - Scanning custom paths: ['D:\\Install Games', 'D:\\Games']
+2026-02-03 11:13:56,126 - INFO - Сканирование системных игр в папках: ['D:\\Install Games', 'D:\\Games']
+2026-02-03 11:13:56,132 - INFO - [Tier 3] Steam Store Search: 'Cuphead'
+2026-02-03 11:13:56,371 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:56,371 - INFO - Найдена игра: Cuphead (D:\Install Games\Cuphead\Cuphead.exe)
+2026-02-03 11:13:56,373 - INFO - [Tier 3] Steam Store Search: 'Mario Party Superstars'
+2026-02-03 11:13:56,373 - INFO - [Tier 5] RAWG.io: 'Mario Party Superstars'
+2026-02-03 11:13:56,767 - INFO -    ✅ Downloaded from RAWG.io
+2026-02-03 11:13:56,767 - INFO - Найдена игра: Mario Party Superstars (D:\Install Games\Mario Party Superstars\emu\Ryujinx.exe)
+2026-02-03 11:13:56,771 - INFO - [Tier 3] Steam Store Search: 'Poly Bridge 3'
+2026-02-03 11:13:56,949 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:56,950 - INFO - Найдена игра: Poly Bridge 3 (D:\Install Games\Poly Bridge 3\Poly Bridge 3.exe)
+2026-02-03 11:13:56,951 - INFO - [Tier 3] Steam Store Search: 'Ratchet and Clank - Rift Apart'
+2026-02-03 11:13:57,167 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:57,167 - INFO - Найдена игра: Ratchet and Clank - Rift Apart (D:\Install Games\Ratchet and Clank - Rift Apart\RiftApart.exe)
+2026-02-03 11:13:57,170 - INFO - [Tier 3] Steam Store Search: 'Severed Steel'
+2026-02-03 11:13:57,346 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:57,346 - INFO - Найдена игра: Severed Steel (D:\Install Games\Severed Steel\ThankYouVeryCool\Binaries\Win64\ThankYouVeryCool-Win64-Shipping.exe)
+2026-02-03 11:13:57,348 - INFO - [Tier 3] Steam Store Search: 'Trine 4'
+2026-02-03 11:13:57,586 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:57,586 - INFO - Найдена игра: Trine 4 (D:\Install Games\Trine 4\trine4.exe)
+2026-02-03 11:13:57,587 - INFO - [Tier 3] Steam Store Search: 'Trine 5'
+2026-02-03 11:13:57,823 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:57,823 - INFO - Найдена игра: Trine 5 (D:\Install Games\Trine 5\trine5.exe)
+2026-02-03 11:13:57,826 - INFO - [Tier 3] Steam Store Search: 'Unravel Two'
+2026-02-03 11:13:58,065 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:58,066 - INFO - Найдена игра: Unravel Two (D:\Install Games\Unravel Two\UnravelTwo.exe)
+2026-02-03 11:13:58,068 - INFO - [Tier 3] Steam Store Search: 'Wolfenstein II The New Colossus'
+2026-02-03 11:13:58,239 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:58,239 - INFO - Найдена игра: Wolfenstein II The New Colossus (D:\Install Games\Wolfenstein II The New Colossus\NewColossus_x64vk.exe)
+2026-02-03 11:13:58,241 - INFO - [Tier 3] Steam Store Search: 'Biped 2'
+2026-02-03 11:13:58,448 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:58,448 - INFO - Найдена игра: Biped 2 (2025) (D:\Games\Biped 2 (2025)\Biped 2\Biped2.exe)
+2026-02-03 11:13:58,450 - INFO - [Tier 3] Steam Store Search: 'Drill Core'
+2026-02-03 11:13:58,682 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:58,682 - INFO - Найдена игра: Drill Core (D:\Games\Drill Core\Drill Core.exe)
+2026-02-03 11:13:58,684 - INFO - Skipping excluded exe: D:\Games\FL Studio 25.1.6.4997-rev.1-WD\flstudio_win64_25.1.6.4997.exe
+2026-02-03 11:13:58,686 - INFO - [Tier 3] Steam Store Search: 'Plan B Terraform'
+2026-02-03 11:13:58,910 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:58,910 - INFO - Найдена игра: Plan.B.Terraform.Build.19960463 (D:\Games\Plan.B.Terraform.Build.19960463\Plan B Terraform.exe)
+2026-02-03 11:13:58,912 - INFO - [Tier 3] Steam Store Search: 'Quarantine Zone The Last Check-InsaneRamZes'
+2026-02-03 11:13:58,913 - INFO - [Tier 5] RAWG.io: 'Quarantine Zone The Last Check-InsaneRamZes'
+2026-02-03 11:13:59,233 - INFO -    ✅ Downloaded from RAWG.io
+2026-02-03 11:13:59,233 - INFO - Найдена игра: Quarantine.Zone.The.Last.Check-InsaneRamZes (D:\Games\Quarantine.Zone.The.Last.Check-InsaneRamZes\QZSim\Binaries\Win64\QZSim-Win64-Shipping.exe)
+2026-02-03 11:13:59,235 - INFO - [Tier 3] Steam Store Search: 'SpongeBob SquarePants Titans of the Tide'
+2026-02-03 11:13:59,235 - INFO - [Tier 5] RAWG.io: 'SpongeBob SquarePants Titans of the Tide'
+2026-02-03 11:13:59,657 - INFO -    ✅ Downloaded from RAWG.io
+2026-02-03 11:13:59,657 - INFO - Найдена игра: SpongeBob SquarePants Titans of the Tide (D:\Games\SpongeBob SquarePants Titans of the Tide\Ghost\Binaries\Win64\Ghost-Win64-Shipping.exe)
+2026-02-03 11:13:59,660 - INFO - [Tier 3] Steam Store Search: 'Tower Dominion'
+2026-02-03 11:13:59,866 - INFO -    ✅ Downloaded from Steam Store
+2026-02-03 11:13:59,867 - INFO - Найдена игра: Tower Dominion (D:\Games\Tower Dominion\Tower Dominion 1.47\Tower Dominion\tower-dominion.exe)
+2026-02-03 11:13:59,869 - INFO - Disk scan finished. Found 15 system games.
+2026-02-03 11:13:59,870 - INFO - Library updated. Total games: 31
+2026-02-03 13:07:44,996 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 13:09:09,508 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 13:09:57,343 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 13:42:40,881 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 13:42:40,986 - INFO - Assets path configured: C:\Users\ShapM\AppData\Local\Temp\_MEI121962
+2026-02-03 13:42:40,988 - INFO - Starting up TCP server on localhost:60055
+2026-02-03 13:42:40,995 - INFO - Flet app has started...
+2026-02-03 13:42:40,996 - INFO - App URL: tcp://localhost:60055
+2026-02-03 13:42:40,997 - INFO - Starting Flet View app...
+2026-02-03 13:42:40,997 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Local\Temp\_MEI121962\flet_desktop\app\flet\flet.exe
+2026-02-03 13:42:41,792 - INFO - App session started
+2026-02-03 13:42:41,807 - INFO - SteamGridDB API initialized
+2026-02-03 13:42:41,808 - INFO - RAWG.io API initialized
+2026-02-03 13:42:41,837 - INFO - UI: load_library started
+2026-02-03 13:44:58,692 - INFO - Created collection: Кооператив (id: 8b376367)
+2026-02-03 13:45:36,580 - INFO - Created collection: фывфывфв (id: 9dcd1870)

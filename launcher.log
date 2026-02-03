@@ -1757,3 +1757,133 @@ SystemExit: 0
 2026-02-03 10:53:41,775 - INFO - SteamGridDB API initialized
 2026-02-03 10:53:41,776 - INFO - RAWG.io API initialized
 2026-02-03 10:53:41,803 - INFO - UI: load_library started
+2026-02-03 11:13:51,931 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 11:34:15,872 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 11:34:49,798 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 11:36:39,627 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 11:37:10,060 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 11:37:10,187 - INFO - Assets path configured: C:\MyGameLauncher
+2026-02-03 11:37:10,191 - INFO - Starting up TCP server on localhost:61212
+2026-02-03 11:37:10,196 - INFO - Flet app has started...
+2026-02-03 11:37:10,203 - INFO - App URL: tcp://localhost:61212
+2026-02-03 11:37:10,204 - INFO - Starting Flet View app...
+2026-02-03 11:37:10,204 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 11:37:10,205 - INFO - Flet View found in: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 11:37:10,725 - INFO - App session started
+2026-02-03 11:37:10,726 - INFO - SteamGridDB API initialized
+2026-02-03 11:37:10,726 - INFO - RAWG.io API initialized
+2026-02-03 11:37:10,752 - INFO - UI: load_library started
+2026-02-03 11:37:27,406 - INFO - Created collection: Кристина (id: 802e7cf4)
+2026-02-03 11:37:32,013 - ERROR - Unhandled error in 'on_click' handler
+Traceback (most recent call last):
+  File "C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet\messaging\session.py", line 193, in dispatch_event
+    await control._trigger_event(event_name, event_data)
+  File "C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet\controls\base_control.py", line 342, in _trigger_event
+    event_handler(e)
+    ~~~~~~~~~~~~~^^^
+  File "C:\MyGameLauncher\main.py", line 247, in click_handler
+    self._on_click_handler(self.button_data)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\MyGameLauncher\main.py", line 1642, in on_filter_click
+    button.set_active(name == filter_name)
+    ^^^^^^^^^^^^^^^^^
+AttributeError: 'Container' object has no attribute 'set_active'
+2026-02-03 11:47:33,038 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 11:47:33,131 - INFO - Assets path configured: C:\MyGameLauncher
+2026-02-03 11:47:33,132 - INFO - Starting up TCP server on localhost:53849
+2026-02-03 11:47:33,137 - INFO - Flet app has started...
+2026-02-03 11:47:33,143 - INFO - App URL: tcp://localhost:53849
+2026-02-03 11:47:33,144 - INFO - Starting Flet View app...
+2026-02-03 11:47:33,145 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 11:47:33,146 - INFO - Flet View found in: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 11:47:33,600 - INFO - App session started
+2026-02-03 11:47:33,602 - INFO - SteamGridDB API initialized
+2026-02-03 11:47:33,602 - INFO - RAWG.io API initialized
+2026-02-03 11:47:33,629 - INFO - UI: load_library started
+2026-02-03 11:58:48,369 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 11:58:48,476 - INFO - Assets path configured: C:\MyGameLauncher
+2026-02-03 11:58:48,478 - INFO - Starting up TCP server on localhost:55222
+2026-02-03 11:58:48,484 - INFO - Flet app has started...
+2026-02-03 11:58:48,490 - INFO - App URL: tcp://localhost:55222
+2026-02-03 11:58:48,491 - INFO - Starting Flet View app...
+2026-02-03 11:58:48,492 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 11:58:48,493 - INFO - Flet View found in: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 11:58:48,990 - INFO - App session started
+2026-02-03 11:58:48,991 - INFO - SteamGridDB API initialized
+2026-02-03 11:58:48,992 - INFO - RAWG.io API initialized
+2026-02-03 11:58:49,021 - INFO - UI: load_library started
+2026-02-03 11:59:01,974 - INFO - Deleted collection: 802e7cf4
+2026-02-03 11:59:11,890 - INFO - Created collection: Кооператив (id: 54d5b503)
+2026-02-03 11:59:35,753 - INFO - Deleted collection: 54d5b503
+2026-02-03 11:59:39,102 - INFO - Created collection: апап (id: 47472cd3)
+2026-02-03 12:01:31,670 - INFO - Deleted collection: 47472cd3
+2026-02-03 12:01:38,801 - INFO - Created collection: Кооператив (id: f32fc72c)
+2026-02-03 12:51:38,194 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 12:51:38,426 - INFO - Assets path configured: C:\MyGameLauncher
+2026-02-03 12:51:38,428 - INFO - Starting up TCP server on localhost:56481
+2026-02-03 12:51:38,432 - INFO - Flet app has started...
+2026-02-03 12:51:38,437 - INFO - App URL: tcp://localhost:56481
+2026-02-03 12:51:38,437 - INFO - Starting Flet View app...
+2026-02-03 12:51:38,438 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 12:51:38,438 - INFO - Flet View found in: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 12:51:39,250 - INFO - App session started
+2026-02-03 12:51:39,264 - INFO - SteamGridDB API initialized
+2026-02-03 12:51:39,264 - INFO - RAWG.io API initialized
+2026-02-03 12:51:39,294 - INFO - UI: load_library started
+2026-02-03 12:51:52,985 - INFO - Created collection: авыы (id: 1d2246b3)
+2026-02-03 12:51:54,825 - INFO - Created collection: ваыва (id: 12a4ef84)
+2026-02-03 12:51:56,975 - INFO - Created collection: аыва (id: 37e4252f)
+2026-02-03 12:52:00,532 - INFO - Created collection: ваываыв (id: 62b96082)
+2026-02-03 12:53:45,337 - INFO - UI: API Search clicked for Typing Break
+2026-02-03 12:53:45,673 - INFO - [Tier 2] Steam CDN: 3959590
+2026-02-03 12:53:47,667 - INFO - [Tier 3] Steam Store Search: 'Typing Break'
+2026-02-03 12:53:48,801 - INFO - [Tier 4] SteamGridDB by ID: 3959590
+2026-02-03 12:53:49,242 - INFO - [Tier 5] RAWG.io: 'Typing Break'
+2026-02-03 12:53:50,213 - INFO -    ✅ Downloaded from RAWG.io
+2026-02-03 12:55:53,305 - INFO - DuckDuckGo search library loaded successfully
+2026-02-03 12:55:53,416 - INFO - Assets path configured: C:\MyGameLauncher
+2026-02-03 12:55:53,419 - INFO - Starting up TCP server on localhost:57445
+2026-02-03 12:55:53,426 - INFO - Flet app has started...
+2026-02-03 12:55:53,434 - INFO - App URL: tcp://localhost:57445
+2026-02-03 12:55:53,435 - INFO - Starting Flet View app...
+2026-02-03 12:55:53,435 - INFO - Looking for Flet executable at: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 12:55:53,436 - INFO - Flet View found in: C:\Users\ShapM\AppData\Roaming\Python\Python314\site-packages\flet_desktop\app\flet\flet.exe
+2026-02-03 12:55:53,915 - INFO - App session started
+2026-02-03 12:55:53,916 - INFO - SteamGridDB API initialized
+2026-02-03 12:55:53,916 - INFO - RAWG.io API initialized
+2026-02-03 12:55:53,944 - INFO - UI: load_library started
+2026-02-03 12:57:41,210 - ERROR - Cover upload from URL failed: HTTP Error 403: Forbidden
+2026-02-03 12:58:29,393 - INFO - Uploaded cover for game 4f65e90b5085: cache\icons\281486381718.jpg
+2026-02-03 12:59:23,316 - INFO - Uploaded cover for game 2c67bc6ff007: cache\icons\388e999d2cb2.jpg
+2026-02-03 13:00:54,751 - INFO - Uploaded cover for game 2c67bc6ff007: cache\icons\388e999d2cb2.jpg
+2026-02-03 13:01:33,042 - INFO - Uploaded cover for game 2c67bc6ff007: cache\icons\388e999d2cb2.jpg
+2026-02-03 13:01:57,777 - INFO - UI: API Search clicked for SpongeBob SquarePants Titans of the Tide
+2026-02-03 13:01:58,367 - INFO - [Tier 3] Steam Store Search: 'SpongeBob SquarePants Titans of the Tide'
+2026-02-03 13:01:59,110 - INFO - [Tier 5] RAWG.io: 'SpongeBob SquarePants Titans of the Tide'
+2026-02-03 13:02:00,027 - INFO -    ✅ Downloaded from RAWG.io
+2026-02-03 13:03:08,555 - INFO - Uploaded cover for game 2c67bc6ff007: cache\icons\388e999d2cb2.jpg
+2026-02-03 13:03:31,059 - INFO - Excluded game: LEGO Voyagers [MULTi-ENG-RUS] [R] [TN] (path: D:\Games\LEGO Voyagers [MULTi-ENG-RUS] [R] [TN]\LEGO Voyagers.exe)
+2026-02-03 13:03:37,827 - INFO - Deleted collection: f32fc72c
+2026-02-03 13:03:41,354 - INFO - Deleted collection: 1d2246b3
+2026-02-03 13:03:46,280 - INFO - Deleted collection: 12a4ef84
+2026-02-03 13:03:47,322 - INFO - Deleted collection: 12a4ef84
+2026-02-03 13:04:19,635 - INFO - Deleted collection: 37e4252f
+2026-02-03 13:04:20,344 - INFO - Deleted collection: 37e4252f
+2026-02-03 13:04:22,904 - INFO - Deleted collection: 37e4252f
+2026-02-03 13:04:33,802 - INFO - Deleted collection: 62b96082
+2026-02-03 13:12:07,206 - INFO - Created collection: Кооператив (id: 682271dd)
+2026-02-03 13:12:16,610 - INFO - Updated collection: 682271dd
+2026-02-03 13:12:43,606 - INFO - Created collection: фывфыв (id: 721a3427)
+2026-02-03 13:12:56,047 - INFO - Deleted collection: 721a3427
+2026-02-03 13:12:59,380 - INFO - Deleted collection: 682271dd
+2026-02-03 13:33:53,823 - ERROR - Exception in callback _ProactorBasePipeTransport._call_connection_lost()
+handle: <Handle _ProactorBasePipeTransport._call_connection_lost()>
+Traceback (most recent call last):
+  File "c:\Python314\Lib\asyncio\events.py", line 94, in _run
+    self._context.run(self._callback, *self._args)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Python314\Lib\asyncio\proactor_events.py", line 165, in _call_connection_lost
+    self._sock.shutdown(socket.SHUT_RDWR)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+ConnectionResetError: [WinError 10054] Удаленный хост принудительно разорвал существующее подключение
+2026-02-03 14:20:39,102 - INFO - DuckDuckGo search library loaded successfully

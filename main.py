@@ -261,17 +261,18 @@ class SidebarButton(ft.Container):
 
 class GameCard(ft.Container):
     """Карточка игры с иконкой на весь фон - ОПТИМИЗИРОВАНО"""
-    
+
     # Class-level cache for icon existence checks
     _icon_exists_cache = {}
-    
-    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, show_size=False, enable_animations=False):
+
+    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, on_collection=None, show_size=False, enable_animations=False):
         super().__init__()
         self.game = game
         self._on_click = on_click
         self._on_favorite = on_favorite
         self._on_upload = on_upload
         self._on_exclude = on_exclude
+        self._on_collection = on_collection
         self._enable_animations = enable_animations
         self._is_hovered = False  # Track hover state to avoid redundant updates
         
@@ -454,7 +455,25 @@ class GameCard(ft.Container):
                 ink=True,
             ),
 
-            # 7. Кнопка исключения - скрыть программу из библиотеки
+            # 7. Кнопка коллекции - добавить в коллекцию
+            ft.Container(
+                content=ft.Icon(
+                    ft.Icons.FOLDER_SPECIAL if game.collections else ft.Icons.FOLDER_OUTLINED,
+                    color="#FFFFFF" if not game.collections else "#FFD54F",
+                    size=18,
+                ),
+                width=36,
+                height=36,
+                border_radius=18,
+                bgcolor="#80D500F9",
+                alignment=ft.Alignment(0, 0),
+                right=8,
+                top=96,
+                on_click=self.on_collection_click,
+                ink=True,
+            ),
+
+            # 8. Кнопка исключения - скрыть программу из библиотеки
             ft.Container(
                 content=ft.Icon(
                     ft.Icons.BLOCK,
@@ -467,7 +486,7 @@ class GameCard(ft.Container):
                 bgcolor="#80F44336",
                 alignment=ft.Alignment(0, 0),
                 right=8,
-                top=96,
+                top=140,
                 on_click=self.on_exclude_click,
                 ink=True,
             ),
@@ -546,6 +565,11 @@ class GameCard(ft.Container):
         print(f"[DEBUG] Exclude button clicked for: {self.game.title}")
         if self._on_exclude:
             self._on_exclude(self.game)
+
+    def on_collection_click(self, e):
+        print(f"[DEBUG] Collection button clicked for: {self.game.title}")
+        if self._on_collection:
+            self._on_collection(self.game)
 
 
 class LoadingOverlay(ft.Container):
@@ -898,12 +922,37 @@ class CyberLauncher:
         self.sidebar_buttons["epic"] = SidebarButton(ft.Icons.TOKEN_OUTLINED, "Epic Games", on_click=self.on_filter_click, data="epic")
         self.sidebar_buttons["system"] = SidebarButton(ft.Icons.COMPUTER_OUTLINED, "Системные", on_click=self.on_filter_click, data="system")
         self.sidebar_buttons["settings"] = SidebarButton(ft.Icons.SETTINGS_OUTLINED, "Настройки", on_click=self.on_filter_click, data="settings")
+        self.sidebar_buttons["disk_info"] = SidebarButton(ft.Icons.STORAGE_OUTLINED, "Диски", on_click=self.on_filter_click, data="disk_info")
+
+        # Disk info button visibility depends on settings
+        self.disk_info_sidebar_button = ft.Container(
+            content=self.sidebar_buttons["disk_info"],
+            visible=self.settings.get("show_disk_info", False),
+        )
+
+        # Коллекции - динамически создаются после загрузки
+        self.collections_column = ft.Column(controls=[], spacing=2)
         
         self.games_count_text = ft.Text("0 игр", size=11, color=TEXT_GREY)
         
         theme_data = GRADIENT_THEMES.get(self.current_theme, GRADIENT_THEMES["dark"])
         sidebar_color = theme_data.get("sidebar", "#801A1A1A")
         
+        # Кнопка добавления коллекции
+        self.add_collection_btn = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.ADD, color=ACCENT_PURPLE, size=16),
+                    ft.Text("Добавить", color=ACCENT_PURPLE, size=12),
+                ],
+                spacing=5,
+            ),
+            padding=ft.Padding(left=15, right=15, top=8, bottom=8),
+            border_radius=8,
+            on_click=self.show_add_collection_dialog,
+            ink=True,
+        )
+
         self.sidebar = ft.Container(
             width=240,
             bgcolor=sidebar_color,
@@ -926,9 +975,21 @@ class CyberLauncher:
                     self.sidebar_buttons["system"],
                     ft.Container(height=10),
                     ft.Divider(color="#1AFFFFFF"),
+                    ft.Container(height=10),
+                    # Секция коллекций
+                    ft.Row(controls=[
+                        ft.Text("КОЛЛЕКЦИИ", color="#80FFFFFF", size=11, weight=ft.FontWeight.BOLD),
+                        ft.Container(expand=True),
+                        self.add_collection_btn,
+                    ]),
+                    ft.Container(height=5),
+                    self.collections_column,
+                    ft.Container(height=10),
+                    ft.Divider(color="#1AFFFFFF"),
                     ft.Container(height=5),
                     self.sidebar_buttons["settings"],
-                        ft.Container(
+                    self.disk_info_sidebar_button,
+                    ft.Container(
                         content=ft.TextButton(
                             "Обновить библиотеку",
                             icon=ft.Icons.REFRESH,
@@ -940,6 +1001,7 @@ class CyberLauncher:
                     ),
                 ],
                 spacing=2,
+                scroll=ft.ScrollMode.AUTO,
             ),
             padding=ft.Padding(left=15, right=15, top=20, bottom=20),
             alignment=ft.Alignment(0, -1),
@@ -1149,7 +1211,7 @@ class CyberLauncher:
                     ),
                     
                     ft.Container(height=15),
-                    
+
                     # Переключатель анимации
                     ft.Container(
                         content=ft.Row(
@@ -1171,6 +1233,31 @@ class CyberLauncher:
                         border_radius=10,
                         bgcolor="#1E1E1E",
                     ),
+
+                    ft.Container(height=15),
+
+                    # Переключатель вкладки дисков
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[
+                                ft.Column(controls=[
+                                    ft.Text("Показывать вкладку Диски", size=14, color=TEXT_WHITE),
+                                    ft.Text("Информация о свободном месте на дисках", size=12, color=TEXT_GREY),
+                                ], spacing=2),
+                                ft.Container(expand=True),
+                                ft.Switch(
+                                    value=self.settings.get("show_disk_info", False),
+                                    active_color=ACCENT_BLUE,
+                                    on_change=lambda e: self.toggle_show_disk_info(e.control.value),
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        padding=15,
+                        border_radius=10,
+                        bgcolor="#1E1E1E",
+                    ),
+
                     ft.Container(height=40),
                     ft.Divider(color="#333333"),
                     ft.Container(height=30),
@@ -1376,7 +1463,183 @@ class CyberLauncher:
         self._card_cache.clear()
         if self.current_filter != "settings":
             self.update_game_grid()
-    
+
+    def toggle_show_disk_info(self, value: bool):
+        """Включить/выключить вкладку информации о дисках"""
+        self.settings["show_disk_info"] = value
+        self.save_settings()
+        self.disk_info_sidebar_button.visible = value
+        self.disk_info_sidebar_button.update()
+
+    def build_disk_info_view(self):
+        """Создает представление с информацией о дисках"""
+        import shutil
+        import string
+
+        disk_cards = []
+
+        # Получаем список доступных дисков (Windows)
+        if sys.platform == "win32":
+            drives = []
+            for letter in string.ascii_uppercase:
+                drive = f"{letter}:\\"
+                if os.path.exists(drive):
+                    drives.append(drive)
+        else:
+            drives = ["/"]
+
+        for drive in drives:
+            try:
+                usage = shutil.disk_usage(drive)
+                total_gb = usage.total / (1024 ** 3)
+                used_gb = usage.used / (1024 ** 3)
+                free_gb = usage.free / (1024 ** 3)
+                percent_used = (usage.used / usage.total) * 100
+
+                # Цвет индикатора в зависимости от заполненности
+                if percent_used >= 90:
+                    bar_color = "#FF5252"  # Красный
+                elif percent_used >= 70:
+                    bar_color = "#FFB74D"  # Оранжевый
+                else:
+                    bar_color = ACCENT_BLUE  # Синий
+
+                # Карточка диска
+                disk_card = ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            ft.Row(
+                                controls=[
+                                    ft.Icon(ft.Icons.STORAGE, color=bar_color, size=28),
+                                    ft.Text(
+                                        drive.rstrip("\\"),
+                                        size=18,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=TEXT_WHITE,
+                                    ),
+                                    ft.Container(expand=True),
+                                    ft.Text(
+                                        f"{percent_used:.1f}%",
+                                        size=16,
+                                        color=bar_color,
+                                        weight=ft.FontWeight.BOLD,
+                                    ),
+                                ],
+                            ),
+                            ft.Container(height=10),
+                            # Прогресс-бар
+                            ft.Container(
+                                content=ft.Stack(
+                                    controls=[
+                                        ft.Container(
+                                            bgcolor="#333333",
+                                            border_radius=5,
+                                            height=12,
+                                            expand=True,
+                                        ),
+                                        ft.Container(
+                                            bgcolor=bar_color,
+                                            border_radius=5,
+                                            height=12,
+                                            width=int(percent_used * 3.5),  # max ~350px
+                                        ),
+                                    ],
+                                ),
+                                width=350,
+                                height=12,
+                            ),
+                            ft.Container(height=10),
+                            ft.Row(
+                                controls=[
+                                    ft.Column(
+                                        controls=[
+                                            ft.Text("Занято", size=12, color=TEXT_GREY),
+                                            ft.Text(
+                                                f"{used_gb:.1f} ГБ",
+                                                size=14,
+                                                color=TEXT_WHITE,
+                                                weight=ft.FontWeight.W_500,
+                                            ),
+                                        ],
+                                        spacing=2,
+                                    ),
+                                    ft.Container(expand=True),
+                                    ft.Column(
+                                        controls=[
+                                            ft.Text("Свободно", size=12, color=TEXT_GREY),
+                                            ft.Text(
+                                                f"{free_gb:.1f} ГБ",
+                                                size=14,
+                                                color=ACCENT_BLUE,
+                                                weight=ft.FontWeight.W_500,
+                                            ),
+                                        ],
+                                        spacing=2,
+                                    ),
+                                    ft.Container(expand=True),
+                                    ft.Column(
+                                        controls=[
+                                            ft.Text("Всего", size=12, color=TEXT_GREY),
+                                            ft.Text(
+                                                f"{total_gb:.1f} ГБ",
+                                                size=14,
+                                                color=TEXT_WHITE,
+                                                weight=ft.FontWeight.W_500,
+                                            ),
+                                        ],
+                                        spacing=2,
+                                    ),
+                                ],
+                            ),
+                        ],
+                        spacing=5,
+                    ),
+                    bgcolor="#1E1E1E",
+                    padding=20,
+                    border_radius=15,
+                    border=ft.Border.all(1, "#333333"),
+                    width=400,
+                )
+                disk_cards.append(disk_card)
+            except (OSError, PermissionError):
+                # Пропускаем недоступные диски
+                continue
+
+        return ft.Container(
+            expand=True,
+            padding=40,
+            content=ft.Column(
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.STORAGE, color=ACCENT_BLUE, size=32),
+                            ft.Text(
+                                "Информация о дисках",
+                                size=28,
+                                weight=ft.FontWeight.BOLD,
+                                color=TEXT_WHITE,
+                            ),
+                        ],
+                        spacing=15,
+                    ),
+                    ft.Container(height=10),
+                    ft.Text(
+                        "Использование дискового пространства на вашем компьютере",
+                        size=14,
+                        color=TEXT_GREY,
+                    ),
+                    ft.Container(height=30),
+                    ft.Row(
+                        controls=disk_cards,
+                        wrap=True,
+                        spacing=20,
+                        run_spacing=20,
+                    ),
+                ],
+                scroll=ft.ScrollMode.AUTO,
+            ),
+        )
+
     def window_action(self, action: str):
         if action == "close":
             # Сворачиваем в трей вместо закрытия
@@ -1425,10 +1688,10 @@ class CyberLauncher:
     async def load_library(self):
         backend_logger.info("UI: load_library started")
         self.loading_overlay.show("Загрузка библиотеки...")
-        
+
         await self.game_manager.load_library()
         self._all_games_list = list(self.game_manager.get_all_games())
-        
+
         if not self._all_games_list:
              backend_logger.info("UI: Library empty, starting initial scan")
              self.loading_overlay.show("Первый запуск. Сканирование игр...")
@@ -1437,8 +1700,11 @@ class CyberLauncher:
              launchers = self.settings.get("enabled_launchers", {"Steam": True})
              await self.game_manager.scan_all_games(excluded_paths=excluded, additional_paths=extra_paths, enabled_launchers=launchers)
              self._all_games_list = list(self.game_manager.get_all_games())
+
+        # Загружаем коллекции в сайдбар
+        self.refresh_collections_sidebar()
         self.update_game_grid()
-    
+
         self.loading_overlay.hide()
         self.update_game_grid()
     
@@ -1480,6 +1746,10 @@ class CyberLauncher:
                 games = self.game_manager.get_games_by_platform(Platform.EPIC.value)
             elif self.current_filter == "system":
                 games = self.game_manager.get_games_by_platform(Platform.SYSTEM.value)
+            elif self.current_filter.startswith("collection_"):
+                # Фильтр по коллекции
+                collection_id = self.current_filter.replace("collection_", "")
+                games = self.game_manager.get_games_by_collection(collection_id)
             else:
                 games = self.game_manager.get_all_games()
             
@@ -1524,6 +1794,7 @@ class CyberLauncher:
                     on_favorite=self.on_favorite_click,
                     on_upload=self.show_upload_dialog,
                     on_exclude=self.exclude_game,
+                    on_collection=self.show_add_to_collection_dialog,
                     show_size=show_size,
                     enable_animations=enable_animations
                 )
@@ -1574,22 +1845,31 @@ class CyberLauncher:
         """Оптимизированная обработка переключения вкладок"""
         if filter_name == self.current_filter:
             return
-        
+
         # Batch update all buttons without individual updates
         for name, button in self.sidebar_buttons.items():
-            button.set_active(name == filter_name)
-        
+            if isinstance(button, SidebarButton):
+                button.set_active(name == filter_name)
+            elif isinstance(button, ft.Container) and name.startswith("collection_"):
+                # Для контейнеров коллекций меняем фон
+                button.bgcolor = "#33D500F9" if name == filter_name else "transparent"
+
         self.current_filter = filter_name
-        
+
         if filter_name == "settings":
             # Switch content and update once
             self.settings_view = self.build_settings_view()
             self.bg_container.content = self.settings_view
             self.page.update()  # Single update for everything
+        elif filter_name == "disk_info":
+            # Show disk info view
+            self.disk_info_view = self.build_disk_info_view()
+            self.bg_container.content = self.disk_info_view
+            self.page.update()
         else:
             self.bg_container.content = self.games_container
             self.update_game_grid()  # This already calls page.update()
-    
+
     def _get_custom_path_controls(self):
         return [
             ft.Container(
@@ -2059,6 +2339,343 @@ class CyberLauncher:
             self.show_snackbar("❌ Не удалось найти обложку", bgcolor="#F44336")
 
     # ========== End Cover Upload Methods ==========
+
+    # ========== Collections Methods ==========
+
+    def refresh_collections_sidebar(self):
+        """Обновить список коллекций в сайдбаре"""
+        collections = self.game_manager.get_collections()
+        controls = []
+
+        for col in collections:
+            col_id = col["id"]
+            col_name = col["name"]
+            col_color = col.get("color", ACCENT_PURPLE)
+
+            # Создаём кнопку коллекции с кнопками редактирования и удаления
+            btn = ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Container(
+                            width=8,
+                            height=8,
+                            border_radius=4,
+                            bgcolor=col_color,
+                        ),
+                        ft.Text(col_name, color=TEXT_GREY, size=13, expand=True),
+                        ft.Text(
+                            str(len(self.game_manager.get_games_by_collection(col_id))),
+                            color=TEXT_GREY,
+                            size=11,
+                        ),
+                        # Кнопка редактирования
+                        ft.IconButton(
+                            icon=ft.Icons.EDIT,
+                            icon_size=14,
+                            icon_color=TEXT_GREY,
+                            tooltip="Редактировать",
+                            on_click=lambda e, cid=col_id, cname=col_name, ccolor=col_color: self.show_edit_collection_dialog(cid, cname, ccolor),
+                            style=ft.ButtonStyle(padding=0),
+                        ),
+                        # Кнопка удаления
+                        ft.IconButton(
+                            icon=ft.Icons.DELETE_OUTLINE,
+                            icon_size=14,
+                            icon_color="#F44336",
+                            tooltip="Удалить",
+                            on_click=lambda e, cid=col_id, cname=col_name: self.confirm_delete_collection(cid, cname),
+                            style=ft.ButtonStyle(padding=0),
+                        ),
+                    ],
+                    spacing=5,
+                ),
+                padding=ft.Padding(left=15, right=5, top=8, bottom=8),
+                border_radius=10,
+                on_click=lambda e, cid=col_id: self.on_collection_click(cid),
+                ink=True,
+                data=col_id,
+            )
+            # Добавляем в sidebar_buttons для управления активным состоянием
+            self.sidebar_buttons[f"collection_{col_id}"] = btn
+            controls.append(btn)
+
+        self.collections_column.controls = controls
+        if self.page:
+            self.collections_column.update()
+
+    def confirm_delete_collection(self, collection_id: str, collection_name: str):
+        """Подтверждение удаления коллекции"""
+        def on_confirm(e):
+            self.game_manager.delete_collection(collection_id)
+            self.page.run_task(self._save_and_refresh_collections)
+            dialog.open = False
+            # Если мы были в этой коллекции - переключаемся на "Все игры"
+            if self.current_filter == f"collection_{collection_id}":
+                self.on_filter_click("all")
+            self.page.update()
+            self.show_snackbar(f"Коллекция '{collection_name}' удалена", bgcolor="#FF9800")
+
+        def on_cancel(e):
+            dialog.open = False
+            self.page.update()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Удалить коллекцию?"),
+            content=ft.Text(f"Коллекция '{collection_name}' будет удалена.\nИгры останутся в библиотеке."),
+            actions=[
+                ft.TextButton("Отмена", on_click=on_cancel),
+                ft.TextButton("Удалить", on_click=on_confirm, style=ft.ButtonStyle(color="#F44336")),
+            ],
+        )
+        self.page.overlay.append(dialog)
+        dialog.open = True
+        self.page.update()
+
+    def on_collection_click(self, collection_id: str):
+        """Обработчик клика по коллекции"""
+        self.current_filter = f"collection_{collection_id}"
+
+        # Обновляем активное состояние кнопок
+        for name, button in self.sidebar_buttons.items():
+            if isinstance(button, SidebarButton):
+                button.set_active(False)
+            elif isinstance(button, ft.Container) and name.startswith("collection_"):
+                # Для контейнеров коллекций меняем фон
+                if name == f"collection_{collection_id}":
+                    button.bgcolor = "#33D500F9"
+                else:
+                    button.bgcolor = "transparent"
+
+        self.bg_container.content = self.games_container
+        self.update_game_grid()
+
+    def show_add_collection_dialog(self, e=None):
+        """Показать диалог создания коллекции"""
+        name_field = ft.TextField(
+            label="Название коллекции",
+            hint_text="Например: RPG, Инди, На потом...",
+            autofocus=True,
+            text_size=14,
+        )
+
+        color_options = ["#D500F9", "#00E5FF", "#FF4081", "#4CAF50", "#FF9800", "#2196F3", "#9C27B0", "#F44336"]
+        selected_color = {"value": color_options[0]}
+
+        def make_color_btn(color):
+            return ft.Container(
+                width=32,
+                height=32,
+                border_radius=16,
+                bgcolor=color,
+                border=ft.Border.all(3, "#FFFFFF" if color == selected_color["value"] else "transparent"),
+                on_click=lambda e, c=color: select_color(c),
+                animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+            )
+
+        def select_color(color):
+            selected_color["value"] = color
+            # Обновляем визуал кнопок
+            for i, c in enumerate(color_options):
+                color_row.controls[i].border = ft.Border.all(3, "#FFFFFF" if c == color else "transparent")
+            color_row.update()
+
+        color_row = ft.Row(
+            controls=[make_color_btn(c) for c in color_options],
+            spacing=8,
+        )
+
+        def on_create(e):
+            name = name_field.value.strip()
+            if name:
+                col = self.game_manager.add_collection(name, selected_color["value"])
+                self.page.run_task(self._save_and_refresh_collections)
+                dialog.open = False
+                self.page.update()
+                self.show_snackbar(f"Коллекция '{name}' создана!", bgcolor="#4CAF50")
+
+        def on_cancel(e):
+            dialog.open = False
+            self.page.update()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Новая коллекция", weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                width=350,
+                content=ft.Column(
+                    controls=[
+                        name_field,
+                        ft.Container(height=15),
+                        ft.Text("Цвет:", size=13, color=TEXT_GREY),
+                        ft.Container(height=5),
+                        color_row,
+                    ],
+                    tight=True,
+                ),
+            ),
+            actions=[
+                ft.TextButton("Отмена", on_click=on_cancel),
+                ft.ElevatedButton("Создать", on_click=on_create, bgcolor=ACCENT_PURPLE, color="#FFFFFF"),
+            ],
+        )
+
+        self.page.overlay.append(dialog)
+        dialog.open = True
+        self.page.update()
+
+    def show_edit_collection_dialog(self, collection_id: str, current_name: str, current_color: str):
+        """Показать диалог редактирования/удаления коллекции"""
+        name_field = ft.TextField(
+            label="Название коллекции",
+            value=current_name,
+            autofocus=True,
+            text_size=14,
+        )
+
+        color_options = ["#D500F9", "#00E5FF", "#FF4081", "#4CAF50", "#FF9800", "#2196F3", "#9C27B0", "#F44336"]
+        selected_color = {"value": current_color if current_color in color_options else color_options[0]}
+
+        def make_color_btn(color):
+            return ft.Container(
+                width=32,
+                height=32,
+                border_radius=16,
+                bgcolor=color,
+                border=ft.Border.all(3, "#FFFFFF" if color == selected_color["value"] else "transparent"),
+                on_click=lambda e, c=color: select_color(c),
+            )
+
+        def select_color(color):
+            selected_color["value"] = color
+            for i, c in enumerate(color_options):
+                color_row.controls[i].border = ft.Border.all(3, "#FFFFFF" if c == color else "transparent")
+            color_row.update()
+
+        color_row = ft.Row(
+            controls=[make_color_btn(c) for c in color_options],
+            spacing=8,
+        )
+
+        def on_save(e):
+            name = name_field.value.strip()
+            if name:
+                self.game_manager.update_collection(collection_id, name=name, color=selected_color["value"])
+                self.page.run_task(self._save_and_refresh_collections)
+                dialog.open = False
+                self.page.update()
+                self.show_snackbar(f"Коллекция обновлена!", bgcolor="#4CAF50")
+
+        def on_cancel(e):
+            dialog.open = False
+            self.page.update()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Редактировать коллекцию", weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                width=350,
+                content=ft.Column(
+                    controls=[
+                        name_field,
+                        ft.Container(height=15),
+                        ft.Text("Цвет:", size=13, color=TEXT_GREY),
+                        ft.Container(height=5),
+                        color_row,
+                    ],
+                    tight=True,
+                ),
+            ),
+            actions=[
+                ft.TextButton("Отмена", on_click=on_cancel),
+                ft.ElevatedButton("Сохранить", on_click=on_save, bgcolor=ACCENT_PURPLE, color="#FFFFFF"),
+            ],
+        )
+
+        self.page.overlay.append(dialog)
+        dialog.open = True
+        self.page.update()
+
+    async def _save_and_refresh_collections(self):
+        """Сохранить библиотеку и обновить UI коллекций"""
+        await self.game_manager.save_library()
+        self.refresh_collections_sidebar()
+
+    def show_add_to_collection_dialog(self, game: GameModel):
+        """Показать диалог добавления игры в коллекцию"""
+        collections = self.game_manager.get_collections()
+
+        if not collections:
+            self.show_snackbar("Сначала создайте коллекцию", bgcolor="#FF9800")
+            return
+
+        def toggle_collection(e, col_id):
+            if col_id in game.collections:
+                self.page.run_task(self.game_manager.remove_game_from_collection, game.uid, col_id)
+                game.collections.remove(col_id)
+            else:
+                self.page.run_task(self.game_manager.add_game_to_collection, game.uid, col_id)
+                game.collections.append(col_id)
+            # Обновляем чекбоксы
+            rebuild_checkboxes()
+            checkboxes.update()
+
+        def rebuild_checkboxes():
+            checkboxes.controls.clear()
+            for col in collections:
+                is_in = col["id"] in game.collections
+                cb = ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Checkbox(value=is_in, on_change=lambda e, cid=col["id"]: toggle_collection(e, cid)),
+                            ft.Container(width=10, height=10, border_radius=5, bgcolor=col.get("color", ACCENT_PURPLE)),
+                            ft.Text(col["name"], size=14, color=TEXT_WHITE, expand=True),
+                        ],
+                        spacing=10,
+                    ),
+                    padding=ft.Padding(left=5, right=5, top=8, bottom=8),
+                    border_radius=8,
+                    bgcolor="#1E1E1E",
+                )
+                checkboxes.controls.append(cb)
+
+        checkboxes = ft.ListView(controls=[], spacing=5, height=150, padding=5)
+        rebuild_checkboxes()
+
+        def on_close(e):
+            dialog.open = False
+            self.page.update()
+            self.refresh_collections_sidebar()
+            # Инвалидируем кеш карточки
+            if game.uid in self._card_cache:
+                del self._card_cache[game.uid]
+            self.update_game_grid(reset_page=False)
+
+        # Обрезаем название игры для заголовка
+        short_title = game.title[:25] + "..." if len(game.title) > 25 else game.title
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Добавить в коллекцию", weight=ft.FontWeight.BOLD, size=16),
+            content=ft.Container(
+                width=280,
+                content=ft.Column(
+                    controls=[
+                        ft.Text(short_title, size=12, color=TEXT_GREY, italic=True),
+                        ft.Container(height=10),
+                        checkboxes,
+                    ],
+                    spacing=0,
+                    tight=True,
+                ),
+            ),
+            actions=[
+                ft.ElevatedButton("Готово", on_click=on_close, bgcolor=ACCENT_BLUE, color="#FFFFFF"),
+            ],
+            actions_alignment=ft.MainAxisAlignment.CENTER,
+        )
+
+        self.page.overlay.append(dialog)
+        dialog.open = True
+        self.page.update()
+
+    # ========== End Collections Methods ==========
 
     def change_theme(self, theme_id: str):
         if theme_id not in GRADIENT_THEMES:

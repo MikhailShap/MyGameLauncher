@@ -6,11 +6,138 @@ import re
 import logging
 import threading
 import webbrowser
+import os
 from pathlib import Path
 from tkinter import Tk, filedialog
 
+# Windows-specific imports for tray and single instance
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+# System tray support
+try:
+    import pystray
+    from PIL import Image
+    HAS_TRAY = True
+except ImportError:
+    HAS_TRAY = False
+
 # Импорт backend
 from game_manager import GameManager, GameModel, Platform, Category, logger as backend_logger
+
+# --- SINGLE INSTANCE LOCK ---
+LOCK_FILE = None
+LOCK_HANDLE = None
+
+def acquire_single_instance_lock():
+    """Проверяет, запущен ли уже экземпляр приложения (Windows)"""
+    global LOCK_FILE, LOCK_HANDLE
+
+    if sys.platform != "win32":
+        return True
+
+    # Используем именованный мьютекс Windows
+    mutex_name = "CyberLauncher_SingleInstance_Mutex"
+
+    kernel32 = ctypes.windll.kernel32
+    LOCK_HANDLE = kernel32.CreateMutexW(None, True, mutex_name)
+
+    ERROR_ALREADY_EXISTS = 183
+    if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        # Приложение уже запущено - попробуем активировать его окно
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+            if hwnd:
+                SW_RESTORE = 9
+                user32.ShowWindow(hwnd, SW_RESTORE)
+                user32.SetForegroundWindow(hwnd)
+        except:
+            pass
+        return False
+
+    return True
+
+def release_single_instance_lock():
+    """Освобождает блокировку при закрытии"""
+    global LOCK_HANDLE
+    if LOCK_HANDLE and sys.platform == "win32":
+        ctypes.windll.kernel32.ReleaseMutex(LOCK_HANDLE)
+        ctypes.windll.kernel32.CloseHandle(LOCK_HANDLE)
+
+# --- SYSTEM TRAY ---
+TRAY_ICON = None
+TRAY_APP_INSTANCE = None
+
+def create_tray_icon():
+    """Создает иконку в системном трее"""
+    global TRAY_ICON
+
+    if not HAS_TRAY:
+        return None
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base_dir, "icon.ico")
+
+    try:
+        if os.path.exists(icon_path):
+            image = Image.open(icon_path)
+        else:
+            # Fallback: создаем простую иконку
+            image = Image.new('RGB', (64, 64), color='#D500F9')
+    except Exception:
+        image = Image.new('RGB', (64, 64), color='#D500F9')
+
+    def on_show(icon, item):
+        """Показать окно"""
+        global TRAY_APP_INSTANCE
+        if TRAY_APP_INSTANCE and TRAY_APP_INSTANCE.page:
+            try:
+                page = TRAY_APP_INSTANCE.page
+                page.window.visible = True
+                page.window.minimized = False
+                page.update()
+
+                # Выводим окно на передний план через WinAPI
+                if sys.platform == "win32":
+                    try:
+                        user32 = ctypes.windll.user32
+                        hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+                        if hwnd:
+                            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                            user32.SetForegroundWindow(hwnd)
+                    except:
+                        pass
+            except Exception as e:
+                print(f"Error showing window: {e}")
+
+    def on_exit(icon, item):
+        """Выход из приложения"""
+        icon.stop()
+        release_single_instance_lock()
+        os._exit(0)
+
+    menu = pystray.Menu(
+        pystray.MenuItem("Показать", on_show, default=True),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Выход", on_exit)
+    )
+
+    TRAY_ICON = pystray.Icon("CyberLauncher", image, "CyberLauncher", menu)
+    return TRAY_ICON
+
+def run_tray_icon():
+    """Запускает иконку трея в отдельном потоке"""
+    global TRAY_ICON
+    if TRAY_ICON:
+        TRAY_ICON.run()
+
+def stop_tray_icon():
+    """Останавливает иконку трея"""
+    global TRAY_ICON
+    if TRAY_ICON:
+        TRAY_ICON.stop()
 
 logger = logging.getLogger("MainUI")
 
@@ -492,15 +619,9 @@ class CyberLauncher:
         rawg_key = api_keys.get("rawg") or None
 
         # Initialize GameManager with API keys
-        # Default game paths
-        default_paths = [r"C:\Games", r"D:\Games", r"D:\Install Games"]
-        game_paths = self.settings.get("game_paths", default_paths)
-
-        # Initialize GameManager with API keys and paths
         self.game_manager = GameManager(
             sgdb_key=sgdb_key,
-            rawg_key=rawg_key,
-            game_paths=game_paths
+            rawg_key=rawg_key
         )
 
         self.current_filter = "all"
@@ -584,6 +705,13 @@ class CyberLauncher:
             self.show_snackbar(f"{service.upper()}: {message}", bgcolor=bgcolor)
         
         self.page.run_task(do_validate)
+
+    def save_launcher_setting(self, launcher: str, value: bool):
+        if "enabled_launchers" not in self.settings:
+            self.settings["enabled_launchers"] = {"Steam": True}
+        
+        self.settings["enabled_launchers"][launcher] = value
+        self.save_settings()
 
     def exclude_game(self, game: GameModel):
         """Show confirmation dialog to exclude game"""
@@ -728,7 +856,13 @@ class CyberLauncher:
         self.page.window.min_height = 600
         self.page.window.title_bar_hidden = True
         self.page.window.title_bar_buttons_hidden = True
-        self.page.window.icon = "icon.ico"
+
+        # Устанавливаем иконку с абсолютным путём для панели задач Windows
+        import os
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(base_dir, "icon.ico")
+        if os.path.exists(icon_path):
+            self.page.window.icon = icon_path
         
         self.page.fonts = {
             "Cyber": "Segoe UI Variable Display, Roboto, sans-serif"
@@ -966,6 +1100,11 @@ class CyberLauncher:
         
         theme_cards = [create_theme_card(tid, td) for tid, td in GRADIENT_THEMES.items()]
         
+        self.custom_paths_column = ft.Column(
+            controls=self._get_custom_path_controls(),
+            spacing=10
+        )
+
         return ft.Container(
             expand=True,
             padding=40,
@@ -1130,6 +1269,68 @@ class CyberLauncher:
                     ft.Container(height=40),
                     ft.Divider(color="#333333"),
                     ft.Container(height=30),
+
+                    # --- Launcher Libraries Section ---
+                    ft.Text("Библиотеки Лаунчеров", size=18, weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
+                    ft.Text("Выберите, игры из каких лаунчеров сканировать", size=14, color=TEXT_GREY),
+                    ft.Container(height=20),
+                    
+                    ft.Container(
+                        content=ft.Column(
+                            controls=[
+                                ft.Switch(
+                                    label="Steam",
+                                    value=self.settings.get("enabled_launchers", {}).get("Steam", True),
+                                    on_change=lambda e: self.save_launcher_setting("Steam", e.control.value),
+                                    active_color=ACCENT_BLUE,
+                                ),
+                                ft.Switch(
+                                    label="Epic Games",
+                                    value=self.settings.get("enabled_launchers", {}).get("Epic Games", False),
+                                    on_change=lambda e: self.save_launcher_setting("Epic Games", e.control.value),
+                                    active_color=ACCENT_BLUE,
+                                ),
+                                ft.Switch(
+                                    label="Ubisoft Connect",
+                                    value=self.settings.get("enabled_launchers", {}).get("Ubisoft", False),
+                                    on_change=lambda e: self.save_launcher_setting("Ubisoft", e.control.value),
+                                    active_color=ACCENT_BLUE,
+                                ),
+                                ft.Switch(
+                                    label="GOG Galaxy",
+                                    value=self.settings.get("enabled_launchers", {}).get("GOG", False),
+                                    on_change=lambda e: self.save_launcher_setting("GOG", e.control.value),
+                                    active_color=ACCENT_BLUE,
+                                ),
+                                ft.Switch(
+                                    label="Battle.net",
+                                    value=self.settings.get("enabled_launchers", {}).get("Battle.net", False),
+                                    on_change=lambda e: self.save_launcher_setting("Battle.net", e.control.value),
+                                    active_color=ACCENT_BLUE,
+                                ),
+                            ],
+                            spacing=10,
+                        ),
+                        bgcolor="#1E1E1E",
+                        padding=15,
+                        border_radius=10,
+                    ),
+
+
+                    ft.Container(height=40),
+                    ft.Divider(color="#333333"),
+                    ft.Container(height=30),
+                    
+                    # --- Custom Paths Section ---
+                    ft.Text("Папки для сканирования", size=18, weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
+                    ft.Text("Добавьте папки, в которых нужно искать игры", size=14, color=TEXT_GREY),
+                    ft.Container(height=20),
+                    
+                    self.custom_paths_column,
+
+                    ft.Container(height=40),
+                    ft.Divider(color="#333333"),
+                    ft.Container(height=30),
                     
                     # Exclusions Section
                     ft.Text("Исключённые программы", size=18, weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
@@ -1178,7 +1379,14 @@ class CyberLauncher:
     
     def window_action(self, action: str):
         if action == "close":
-            sys.exit(0)
+            # Сворачиваем в трей вместо закрытия
+            if HAS_TRAY and TRAY_ICON:
+                self.page.window.visible = False
+                self.page.update()
+            else:
+                # Если трей недоступен - закрываем приложение
+                release_single_instance_lock()
+                sys.exit(0)
         elif action == "min":
             self.page.window.minimized = True
             self.page.update()
@@ -1186,6 +1394,11 @@ class CyberLauncher:
             self.is_maximized = not self.is_maximized
             self.page.window.maximized = self.is_maximized
             self.page.update()
+        elif action == "exit":
+            # Полный выход (из меню трея)
+            stop_tray_icon()
+            release_single_instance_lock()
+            sys.exit(0)
     
     async def on_refresh_click(self, e):
         """Обработчик нажатия кнопки обновления"""
@@ -1214,14 +1427,18 @@ class CyberLauncher:
         self.loading_overlay.show("Загрузка библиотеки...")
         
         await self.game_manager.load_library()
+        self._all_games_list = list(self.game_manager.get_all_games())
         
-        if self.game_manager.games_count == 0:
-            backend_logger.info("UI: Library empty, starting initial scan")
-            self.loading_overlay.show("Первый запуск. Сканирование игр...")
-            self.game_manager.set_progress_callback(self.on_scan_progress)
-            excluded = self.settings.get("excluded_paths", [])
-            await self.game_manager.scan_all_games(excluded)
-        
+        if not self._all_games_list:
+             backend_logger.info("UI: Library empty, starting initial scan")
+             self.loading_overlay.show("Первый запуск. Сканирование игр...")
+             excluded = self.settings.get("excluded_paths", [])
+             extra_paths = self.settings.get("extra_game_paths", [])
+             launchers = self.settings.get("enabled_launchers", {"Steam": True})
+             await self.game_manager.scan_all_games(excluded_paths=excluded, additional_paths=extra_paths, enabled_launchers=launchers)
+             self._all_games_list = list(self.game_manager.get_all_games())
+        self.update_game_grid()
+    
         self.loading_overlay.hide()
         self.update_game_grid()
     
@@ -1229,10 +1446,15 @@ class CyberLauncher:
         backend_logger.info("UI: refresh_library async task started")
         self.loading_overlay.show("Сканирование игр...")
         self.page.update()  # ВАЖНО: показать оверлей СРАЗУ
-        await asyncio.sleep(0.1)  # Даём UI время отрендериться
-        self.game_manager.set_progress_callback(self.on_scan_progress)
-        excluded = self.settings.get("excluded_paths", [])
-        await self.game_manager.scan_all_games(excluded)
+        await asyncio.sleep(0.1) # Give UI time to render
+        async def process():
+            self.game_manager.set_progress_callback(self.on_scan_progress)
+            excluded = self.settings.get("excluded_paths", [])
+            extra_paths = self.settings.get("extra_game_paths", [])
+            launchers = self.settings.get("enabled_launchers", {"Steam": True})
+            await self.game_manager.scan_all_games(excluded_paths=excluded, additional_paths=extra_paths, enabled_launchers=launchers)
+            self._all_games_list = list(self.game_manager.get_all_games())
+        await process() # Call the async process function
         self.loading_overlay.hide()
         self.page.update()  # Скрыть оверлей
         self.update_game_grid()
@@ -1368,6 +1590,44 @@ class CyberLauncher:
             self.bg_container.content = self.games_container
             self.update_game_grid()  # This already calls page.update()
     
+    def _get_custom_path_controls(self):
+        return [
+            ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.FOLDER_OPEN, color=TEXT_GREY),
+                        ft.Text(path, color=TEXT_WHITE, size=13, expand=True),
+                        ft.IconButton(
+                            ft.Icons.DELETE_OUTLINE, 
+                            icon_color="#FF5252", 
+                            tooltip="Удалить папку",
+                            on_click=lambda _, p=path: self.remove_custom_path(p)
+                        )
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                ),
+                bgcolor="#252525",
+                padding=10,
+                border_radius=8,
+            ) for path in self.settings.get("extra_game_paths", []) if path
+        ] + [
+            ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.ADD, color=ACCENT_BLUE),
+                        ft.Text("Добавить папку", color=ACCENT_BLUE, weight=ft.FontWeight.BOLD)
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER
+                ),
+                bgcolor="#1E1E1E",
+                padding=12,
+                border_radius=8,
+                border=ft.Border.all(1, ACCENT_BLUE),
+                on_click=self.add_custom_path_click,
+                ink=True,
+            )
+        ]
+
     def show_settings_view(self):
         self.settings_view = self.build_settings_view()
         self.bg_container.content = self.settings_view
@@ -1406,6 +1666,63 @@ class CyberLauncher:
         # ИСПРАВЛЕНИЕ: Не сбрасываем страницу при изменении избранного
         self.update_game_grid(reset_page=False)
 
+
+    # ========== Custom Path Methods ==========
+
+    def add_custom_path_click(self, e):
+        """Open folder picker to add custom scan path"""
+        def pick_folder_thread():
+            try:
+                root = Tk()
+                root.withdraw()
+                root.attributes('-topmost', True)
+                
+                path = filedialog.askdirectory(
+                    title="Выберите папку с играми"
+                )
+                
+                root.destroy()
+                
+                if path:
+                    self.page.run_task(self._add_custom_path, path)
+            except Exception as ex:
+                print(f"[ERROR] Folder picker error: {ex}")
+        
+        threading.Thread(target=pick_folder_thread, daemon=True).start()
+
+    async def _add_custom_path(self, path: str):
+        path = str(Path(path).resolve())
+        if "extra_game_paths" not in self.settings:
+            self.settings["extra_game_paths"] = []
+        
+        if path not in self.settings["extra_game_paths"]:
+            self.settings["extra_game_paths"].append(path)
+            self.save_settings()
+            self.show_snackbar(f"Папка добавлена: {path}", bgcolor="#4CAF50")
+            
+            # Update only the custom paths UI
+            if hasattr(self, 'custom_paths_column'):
+                self.custom_paths_column.controls = self._get_custom_path_controls()
+                self.custom_paths_column.update()
+            else:
+                self.show_settings_view() # Fallback
+        else:
+            self.show_snackbar("Эта папка уже добавлена", bgcolor="#FF9800")
+
+    def remove_custom_path(self, path: str):
+        if "extra_game_paths" in self.settings:
+            if path in self.settings["extra_game_paths"]:
+                self.settings["extra_game_paths"].remove(path)
+                self.save_settings()
+                
+                # Update only the custom paths UI
+                if hasattr(self, 'custom_paths_column'):
+                    self.custom_paths_column.controls = self._get_custom_path_controls()
+                    self.custom_paths_column.update()
+                else:
+                    self.show_settings_view() # Fallback
+                
+                self.show_snackbar("Папка удалена из списка сканирования", bgcolor="#FF9800")
 
     # ========== Cover Upload Methods ==========
 
@@ -1768,8 +2085,28 @@ class CyberLauncher:
 
 
 def main(page: ft.Page):
+    global TRAY_APP_INSTANCE
     app = CyberLauncher(page)
+    TRAY_APP_INSTANCE = app
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    # Проверяем, не запущено ли уже приложение
+    if not acquire_single_instance_lock():
+        # Приложение уже запущено - выходим
+        sys.exit(0)
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Создаем и запускаем иконку в трее
+    if HAS_TRAY:
+        tray_icon = create_tray_icon()
+        if tray_icon:
+            tray_thread = threading.Thread(target=run_tray_icon, daemon=True)
+            tray_thread.start()
+
+    try:
+        ft.run(main, assets_dir=base_dir)
+    finally:
+        stop_tray_icon()
+        release_single_instance_lock()

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+debug_*.txt
+
+# Cache
+cache/
+
+# Data (user-specific)
+data/library.json
+data/settings.json
+
+# Temporary
+*.tmp
+*.bak
+nul
+
+# Claude settings (local)
+.claude/settings.local.json
+
+# Compiled exe in root
+CyberLauncher.exe

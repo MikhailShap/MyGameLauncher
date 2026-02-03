@@ -783,6 +783,9 @@ class CoverUploader:
 
 class SteamScanner:
     async def scan(self, cover_manager: 'CoverAPIManager', excluded_paths: List[str] = None) -> List[GameModel]:
+        return await asyncio.to_thread(self.scan_sync, cover_manager, excluded_paths)
+
+    def scan_sync(self, cover_manager: 'CoverAPIManager', excluded_paths: List[str] = None) -> List[GameModel]:
         logger.info("Starting Steam scan...")
         games = []
         excluded = set(str(Path(p).resolve()).lower() for p in (excluded_paths or []))
@@ -861,14 +864,14 @@ class SteamScanner:
 
 
 class DiskScanner:
-    """Сканирование папок на диске для поиска игр"""
-    
+    """Сканирование папок на диске для поиска игр (System games)"""
+
     # Игнорируемые папки и файлы (lower case)
     IGNORE_DIRS = {'windows', 'window.old', 'program data', 'users', '$recycle.bin', 'system volume information', 'common files', 'microsoft', 'drivers', 'directx', 'vcredist', 'support', 'redist', 'prerequisites'}
     IGNORE_FILES = {'unins', 'setup', 'update', 'config', 'crash', 'unitycrashhandler', 'dxsetup', 'vcredist', 'redist', 'console', 'terminal', 'server', 'launcher'}
-    
-    def __init__(self, search_paths: List[str] = None):
-        self.search_paths = search_paths or [r"C:\Games"]
+
+    def __init__(self):
+        pass
 
     def _is_game_exe(self, path: Path) -> bool:
         """Эвристика: является ли файл игровым исполняемым файлом"""
@@ -895,48 +898,82 @@ class DiskScanner:
         """Находит главный exe в папке игры"""
         exes = []
         try:
-            # Ищем exe только на верхнем уровне папки игры (depth=1)
-            # чтобы не цеплять вложенные bin/ tools/ и т.д. слишком глубоко
-            for item in folder.glob("*.exe"):
-                if self._is_game_exe(item):
-                    exes.append(item)
+            # Ищем exe на нескольких уровнях глубины (до 4 для UE/Unity игр)
+            # Приоритет: корень > 1 уровень > 2 уровня > 3 уровня
+            search_patterns = ["*.exe", "*/*.exe", "*/*/*.exe", "*/*/*/*.exe"]
+
+            for pattern in search_patterns:
+                for item in folder.glob(pattern):
+                    # Пропускаем папки с техническими именами (кроме Binaries для UE)
+                    parent_parts = [p.lower() for p in item.relative_to(folder).parts[:-1]]
+                    skip_dirs = {'bin', 'tools', 'redist', 'support', '_commonredist',
+                                 'directx', 'vcredist', 'prerequisites', '__installer',
+                                 'engine', 'plugins', 'update', 'patch'}
+                    if any(d in skip_dirs for d in parent_parts):
+                        continue
+
+                    if self._is_game_exe(item):
+                        exes.append(item)
         except:
             return None
             
         if not exes:
             return None
-            
+
         # Если exe один - это он
         if len(exes) == 1:
             return exes[0]
-            
+
         # Если несколько, пробуем выбрать лучший
         folder_name = folder.name.lower()
-        
-        # 1. Точное совпадение имени папки и exe
+
+        # Сортируем по глубине вложенности (предпочитаем ближе к корню)
+        exes.sort(key=lambda x: len(x.relative_to(folder).parts))
+
+        # 1. Точное совпадение имени папки и exe (с учётом всех родительских папок)
         for exe in exes:
             if exe.stem.lower() == folder_name:
                 return exe
-                
+            # Также проверяем совпадение с именем родительской папки exe
+            if exe.parent.name.lower() == exe.stem.lower():
+                return exe
+
         # 2. Совпадение с удалением пробелов/символов
         clean_folder = re.sub(r'[^a-z0-9]', '', folder_name)
         for exe in exes:
             clean_name = re.sub(r'[^a-z0-9]', '', exe.stem.lower())
             if clean_name == clean_folder:
                 return exe
-                
-        # 3. Самый большой файл
+            # Также проверяем имя родительской папки
+            clean_parent = re.sub(r'[^a-z0-9]', '', exe.parent.name.lower())
+            if clean_parent and clean_name == clean_parent:
+                return exe
+
+        # 3. Предпочитаем exe в корне, затем по размеру
+        root_exes = [e for e in exes if e.parent == folder]
+        if root_exes:
+            root_exes.sort(key=lambda x: x.stat().st_size, reverse=True)
+            return root_exes[0]
+
+        # 4. Самый большой файл из всех
         exes.sort(key=lambda x: x.stat().st_size, reverse=True)
         return exes[0]
 
-    async def scan(self, cover_manager: 'CoverAPIManager', excluded_paths: List[str] = None) -> List[GameModel]:
+    async def scan(self, cover_manager: 'CoverAPIManager', excluded_paths: List[str] = None, additional_paths: List[str] = None) -> List[GameModel]:
+        return await asyncio.to_thread(self.scan_sync, cover_manager, excluded_paths, additional_paths)
+
+    def scan_sync(self, cover_manager: 'CoverAPIManager', excluded_paths: List[str] = None, additional_paths: List[str] = None) -> List[GameModel]:
         games = []
-        logger.info(f"Начинаем сканирование папок: {self.search_paths}")
+        all_paths = additional_paths or []
+        if not all_paths:
+            logger.info("Нет папок для сканирования системных игр")
+            return games
+        logger.info(f"Сканирование системных игр в папках: {all_paths}")
         
         excluded = set(str(Path(p).resolve()).lower() for p in (excluded_paths or []))
         scanned_folders = set()
         
-        for root_path_str in self.search_paths:
+        for root_path_str in all_paths:
             root_path = Path(root_path_str)
             if not root_path.exists():
                 continue
@@ -1001,7 +1038,7 @@ class DiskScanner:
 
 class GameManager:
     def __init__(self, data_dir: str = "./data", cache_dir: str = "./cache",
-                 sgdb_key: str = None, rawg_key: str = None, game_paths: List[str] = None):
+                 sgdb_key: str = None, rawg_key: str = None):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.library_file = self.data_dir / "library.json"
@@ -1019,12 +1056,12 @@ class GameManager:
         self.icon_extractor = self.cover_api_manager.icon_extractor
 
         self.steam_scanner = SteamScanner()
-        self.disk_scanner = DiskScanner(search_paths=game_paths)
+        self.disk_scanner = DiskScanner()
         self._games: Dict[str, GameModel] = {}
         self._on_progress = None
 
     def reinitialize_api_clients(self, sgdb_key: str = None, rawg_key: str = None):
-        """Reinitialize API clients with new keys. Note: game_paths not updated here."""
+        """Reinitialize API clients with new keys."""
         cache_icons = self.cover_api_manager.cache_dir
         self.cover_api_manager = CoverAPIManager(cache_icons, sgdb_key, rawg_key)
         self.icon_extractor = self.cover_api_manager.icon_extractor
@@ -1064,26 +1101,43 @@ class GameManager:
         data = {'games': [g.to_dict() for g in self._games.values()]}
         with open(self.library_file, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
 
-    async def scan_all_games(self, excluded_paths: List[str] = None):
+    
+    # Standard paths for launchers
+    LAUNCHER_PATHS = {
+        "Epic Games": [r"C:\Program Files\Epic Games", r"D:\Epic Games", r"E:\Epic Games"],
+        "Ubisoft": [r"C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\games"],
+        "GOG": [r"C:\GOG Games", r"C:\Program Files (x86)\GOG Galaxy\Games", r"D:\GOG Games"],
+        "Battle.net": [r"C:\Program Files (x86)\Battle.net\Games", r"C:\Program Files\Battle.net\Games"]
+    }
+
+    async def scan_all_games(self, excluded_paths: List[str] = None, additional_paths: List[str] = None, enabled_launchers: dict = None):
         logger.info("scan_all_games called")
         if self._on_progress:
             self._on_progress("Проверка удалённых игр...", 0, 100)
         
+        # Default enabled launchers if not provided
+        if enabled_launchers is None:
+            enabled_launchers = {"Steam": True} # Only Steam by default for safety
+
         # ИСПРАВЛЕНИЕ: Удаляем игры, которых больше нет на диске
-        games_to_remove = []
-        for uid, game in self._games.items():
-            # Для Steam игр проверяем install_path (папку установки)
-            # потому что exe_path содержит steam:// URL
-            if game.exe_path.startswith("steam://"):
-                # Проверяем существует ли папка установки
-                if game.install_path and not Path(game.install_path).exists():
-                    games_to_remove.append(uid)
-                    logger.info(f"Steam игра удалена с диска: {game.title} ({game.install_path})")
-            else:
-                # Для системных игр проверяем exe файл
-                if not Path(game.exe_path).exists():
-                    games_to_remove.append(uid)
-                    logger.info(f"Игра удалена с диска: {game.title}")
+        # Выполняем синхронные проверки IO в отдельном потоке, чтобы не блокировать UI
+        def _check_removed_games_sync():
+            to_remove = []
+            for uid, game in self._games.items():
+                # Для Steam игр проверяем install_path (папку установки)
+                if game.exe_path.startswith("steam://"):
+                    # Проверяем существует ли папка установки
+                    if game.install_path and not Path(game.install_path).exists():
+                        to_remove.append(uid)
+                        logger.info(f"Steam игра удалена с диска: {game.title} ({game.install_path})")
+                else:
+                    # Для системных игр проверяем exe файл
+                    if not Path(game.exe_path).exists():
+                        to_remove.append(uid)
+                        logger.info(f"Игра удалена с диска: {game.title}")
+            return to_remove
+
+        games_to_remove = await asyncio.to_thread(_check_removed_games_sync)
         
         # Удаляем из библиотеки
         for uid in games_to_remove:
@@ -1092,29 +1146,63 @@ class GameManager:
         if games_to_remove:
             logger.info(f"Удалено {len(games_to_remove)} игр из библиотеки")
         
-        if self._on_progress:
-            self._on_progress("Сканирование Steam...", 20, 100)
-        # Use new CoverAPIManager for 8-tier fallback
-        logger.info("Invoking steam_scanner.scan")
-        steam_games = await self.steam_scanner.scan(self.cover_api_manager, excluded_paths)
-        logger.info(f"Steam scan finished. Found {len(steam_games)} games.")
+        steam_games = []
+        if enabled_launchers.get("Steam", True):
+            if self._on_progress:
+                self._on_progress("Сканирование Steam...", 20, 100)
+            # Use new CoverAPIManager for 8-tier fallback
+            logger.info("Invoking steam_scanner.scan")
+            steam_games = await self.steam_scanner.scan(self.cover_api_manager, excluded_paths)
+            logger.info(f"Steam scan finished. Found {len(steam_games)} games.")
 
         if self._on_progress:
             self._on_progress("Сканирование дисков...", 60, 100)
-        logger.info("Invoking disk_scanner.scan")
-        system_games = await self.disk_scanner.scan(self.cover_api_manager, excluded_paths)
-        logger.info(f"Disk scan finished. Found {len(system_games)} games.")
 
-        new_games = {g.uid: g for g in steam_games + system_games}
-        for uid, game in new_games.items():
-            if uid in self._games:
-                old = self._games[uid]
-                game.is_favorite = old.is_favorite
-                game.category = old.category
-                # Если у нас уже есть файл иконки и он валиден - не перезаписываем
-                if old.icon_path and self.cover_validator.validate_cache_file(old.icon_path):
-                    game.icon_path = old.icon_path
-            self._games[uid] = game
+        # Собираем все пути для сканирования
+        system_games = []
+        all_scan_paths = []
+
+        # 1. Стандартные пути лаунчеров (если включены в настройках)
+        for launcher, paths in self.LAUNCHER_PATHS.items():
+            if enabled_launchers.get(launcher, False):
+                existing_paths = [p for p in paths if Path(p).exists()]
+                if existing_paths:
+                    logger.info(f"Scanning launcher {launcher}: {existing_paths}")
+                    all_scan_paths.extend(existing_paths)
+
+        # 2. Дополнительные пользовательские папки (extra_game_paths)
+        if additional_paths:
+            logger.info(f"Scanning custom paths: {additional_paths}")
+            all_scan_paths.extend(additional_paths)
+
+        # Сканируем все собранные пути
+        if all_scan_paths:
+            system_games = await self.disk_scanner.scan(self.cover_api_manager, excluded_paths, additional_paths=all_scan_paths)
+
+        logger.info(f"Disk scan finished. Found {len(system_games)} system games.")
+
+        # Создаём новый словарь игр, полностью заменяя старый (чтобы удалить игры из отключенных лаунчеров)
+        # Но при этом сохраняем метаданные (избранное, категории, кастомные иконки) для игр, которые снова нашлись.
+        new_games_dict = {}
+        
+        all_found_games = steam_games + system_games
+        
+        for game in all_found_games:
+            # Если игра была в старой базе - восстанавливаем метаданные
+            if game.uid in self._games:
+                old_game = self._games[game.uid]
+                game.is_favorite = old_game.is_favorite
+                game.category = old_game.category
+                
+                # Восстанавливаем кастомную иконку, если она валидна
+                if old_game.icon_path and self.cover_validator.validate_cache_file(old_game.icon_path):
+                    game.icon_path = old_game.icon_path
+                    
+            new_games_dict[game.uid] = game
+
+        # Заменяем библиотеку
+        self._games = new_games_dict
+        logger.info(f"Library updated. Total games: {len(self._games)}")
 
         await self.save_library()
         if self._on_progress:

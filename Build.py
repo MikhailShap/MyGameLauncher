@@ -18,9 +18,9 @@ def build():
     # Проверяем PyInstaller
     try:
         import PyInstaller
-        print("✓ PyInstaller найден")
+        print("[OK] PyInstaller found")
     except ImportError:
-        print("Устанавливаю PyInstaller...")
+        print("Installing PyInstaller...")
         subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"])
     
     # Параметры сборки
@@ -37,7 +37,7 @@ def build():
     # Скрытые импорты (модули которые PyInstaller может не найти)
     hidden_imports = [
         "win32gui",
-        "win32ui", 
+        "win32ui",
         "win32con",
         "win32api",
         "pefile",
@@ -49,6 +49,8 @@ def build():
         "duckduckgo_search",
         "curl_cffi",
         "primp",
+        "pystray",
+        "pystray._win32",
     ]
     
     # Формируем команду
@@ -81,11 +83,11 @@ def build():
     
     if result.returncode == 0:
         print("\n" + "=" * 50)
-        print(f"✓ Сборка завершена успешно!")
-        print(f"✓ Файл: dist/{app_name}.exe")
+        print(f"[OK] Build completed successfully!")
+        print(f"[OK] File: dist/{app_name}.exe")
         print("=" * 50)
     else:
-        print("\n✗ Ошибка сборки!")
+        print("\n[ERROR] Build failed!")
         sys.exit(1)
 
 if __name__ == "__main__":

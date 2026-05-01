@@ -104,13 +104,21 @@ class GameModel:
 
 class IconExtractor:
     """Умный загрузчик изображений с защитой от банов"""
-    
+
     def __init__(self, cache_dir: str = "./cache/icons"):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        # Снижаем кол-во потоков до 1, чтобы запросы шли последовательно и не банились
-        self._executor = ThreadPoolExecutor(max_workers=1) 
+        # 2 потока даёт x2 ускорение при первом сканировании, при этом
+        # rate-limit и time.sleep между внутренними запросами всё ещё работают
+        self._executor = ThreadPoolExecutor(max_workers=2)
         self._search_cache = {}
+
+    def shutdown(self, wait: bool = False):
+        """Корректно останавливает thread pool. Вызывается при выходе из приложения."""
+        try:
+            self._executor.shutdown(wait=wait, cancel_futures=True)
+        except Exception as e:
+            logger.warning(f"IconExtractor shutdown error: {e}")
 
     def _get_cache_path(self, identifier: str) -> Path:
         uid = hashlib.md5(identifier.lower().encode()).hexdigest()[:12]
@@ -1062,6 +1070,14 @@ class GameManager:
         self._collections: List[Dict[str, Any]] = []  # Пользовательские коллекции
         self._on_progress = None
 
+        # --- Persistence: atomic save + lock + debounce ---
+        # Защищает от параллельной записи library.json и от частичной записи при kill
+        self._save_lock: Optional[asyncio.Lock] = None  # ленивый, на первом use
+        self._save_dirty: bool = False
+        self._pending_save_task: Optional[asyncio.Task] = None
+        self._debounce_seconds: float = 1.0
+        self._shutdown_called: bool = False
+
     def reinitialize_api_clients(self, sgdb_key: str = None, rawg_key: str = None):
         """Reinitialize API clients with new keys."""
         cache_icons = self.cover_api_manager.cache_dir
@@ -1073,18 +1089,30 @@ class GameManager:
         self._on_progress = cb
 
     async def load_library(self):
+        # Подчищаем хвост от прерванной записи
+        tmp_path = self.library_file.with_suffix('.json.tmp')
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+                logger.info("Removed stale library.json.tmp")
+            except OSError:
+                pass
+
         if self.library_file.exists():
             try:
-                with open(self.library_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    for g in data.get('games', []):
-                        # Ensure collections field exists for backward compatibility
-                        if 'collections' not in g:
-                            g['collections'] = []
-                        self._games[g['uid']] = GameModel.from_dict(g)
+                # IO в отдельном потоке — не блокируем UI на больших библиотеках
+                def _read_sync():
+                    with open(self.library_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
 
-                    # Загрузка коллекций
-                    self._collections = data.get('collections', [])
+                data = await asyncio.to_thread(_read_sync)
+
+                for g in data.get('games', []):
+                    if 'collections' not in g:
+                        g['collections'] = []
+                    self._games[g['uid']] = GameModel.from_dict(g)
+
+                self._collections = data.get('collections', [])
 
                 # Validate and repair cache references
                 games_list = list(self._games.values())
@@ -1092,7 +1120,6 @@ class GameManager:
 
                 if repaired > 0:
                     logger.info(f"Repaired {repaired} invalid cache references")
-                    # Update games dict with repaired models
                     for game in games_list:
                         self._games[game.uid] = game
                     await self.save_library()
@@ -1105,15 +1132,117 @@ class GameManager:
             except Exception as e:
                 logger.error(f"Load library error: {e}")
 
-    async def save_library(self):
-        data = {
-            'games': [g.to_dict() for g in self._games.values()],
-            'collections': self._collections
-        }
-        with open(self.library_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+    def _get_save_lock(self) -> asyncio.Lock:
+        """Lazy-init lock в текущем event loop (создаётся при первом save)."""
+        if self._save_lock is None:
+            self._save_lock = asyncio.Lock()
+        return self._save_lock
 
-    
+    async def save_library(self):
+        """Атомарная запись library.json. tmp + os.replace гарантирует
+        целостность файла при kill процесса в любой момент."""
+        async with self._get_save_lock():
+            data = {
+                'games': [g.to_dict() for g in self._games.values()],
+                'collections': self._collections
+            }
+
+            def _write_sync():
+                tmp_path = self.library_file.with_suffix('.json.tmp')
+                with open(tmp_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except OSError:
+                        pass
+                os.replace(tmp_path, self.library_file)
+
+            await asyncio.to_thread(_write_sync)
+            self._save_dirty = False
+
+    def request_save(self):
+        """Помечает библиотеку грязной и шедулит debounce-сохранение через
+        _debounce_seconds. Множественные быстрые toggle сворачиваются в один write."""
+        self._save_dirty = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # нет event loop — save выполнится в shutdown через asyncio.run
+
+        if self._pending_save_task is None or self._pending_save_task.done():
+            self._pending_save_task = loop.create_task(self._debounced_save())
+
+    async def _debounced_save(self):
+        try:
+            await asyncio.sleep(self._debounce_seconds)
+        except asyncio.CancelledError:
+            return
+        if self._save_dirty and not self._shutdown_called:
+            try:
+                await self.save_library()
+            except Exception as e:
+                logger.error(f"Debounced save error: {e}")
+
+    async def flush_save(self):
+        """Гарантирует, что любые незаписанные изменения попадут на диск.
+        Вызывается перед закрытием приложения и из критичных диалогов."""
+        if self._pending_save_task and not self._pending_save_task.done():
+            self._pending_save_task.cancel()
+            try:
+                await self._pending_save_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if self._save_dirty:
+            try:
+                await self.save_library()
+            except Exception as e:
+                logger.error(f"Flush save error: {e}")
+
+    async def shutdown(self):
+        """Корректное завершение: финальный flush + остановка thread pools."""
+        if self._shutdown_called:
+            return
+        self._shutdown_called = True
+        logger.info("GameManager shutdown started")
+        try:
+            await self.flush_save()
+        except Exception as e:
+            logger.error(f"Shutdown flush error: {e}")
+        try:
+            if hasattr(self.cover_api_manager, 'icon_extractor'):
+                self.cover_api_manager.icon_extractor.shutdown(wait=False)
+        except Exception as e:
+            logger.warning(f"IconExtractor shutdown error: {e}")
+        logger.info("GameManager shutdown completed")
+
+    def emergency_sync_save(self):
+        """Синхронный save без asyncio loop. Для atexit, SIGTERM и подобных
+        путей, где event loop уже закрыт. Использует ту же атомарную запись."""
+        if not self._save_dirty:
+            return False
+        try:
+            data = {
+                'games': [g.to_dict() for g in self._games.values()],
+                'collections': self._collections,
+            }
+            tmp_path = self.library_file.with_suffix('.json.tmp')
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp_path, self.library_file)
+            self._save_dirty = False
+            logger.info("Emergency sync save completed")
+            return True
+        except Exception as e:
+            logger.error(f"Emergency sync save error: {e}")
+            return False
+
+
     # Standard paths for launchers
     LAUNCHER_PATHS = {
         "Epic Games": [r"C:\Program Files\Epic Games", r"D:\Epic Games", r"E:\Epic Games"],
@@ -1237,19 +1366,20 @@ class GameManager:
     async def toggle_favorite(self, uid):
         if uid in self._games:
             self._games[uid].is_favorite = not self._games[uid].is_favorite
-            await self.save_library()
+            self.request_save()
 
     @property
     def games_count(self) -> int:
         return len(self._games)
 
     async def exclude_game(self, uid: str) -> Optional[str]:
-        """Remove game from library and return its path for exclusion list"""
+        """Remove game from library and return its path for exclusion list.
+        Коллекции игры остаются на месте у других игр — удаляется только этот uid."""
         if uid in self._games:
             game = self._games[uid]
             path = game.exe_path or game.install_path
             del self._games[uid]
-            await self.save_library()
+            await self.save_library()  # критично: подтверждённое удаление
             logger.info(f"Excluded game: {game.title} (path: {path})")
             return path
         return None
@@ -1289,35 +1419,54 @@ class GameManager:
         return False
 
     def delete_collection(self, collection_id: str) -> bool:
-        """Удалить коллекцию и убрать её из всех игр"""
-        # Убираем коллекцию из всех игр
+        """Удалить коллекцию и убрать её из всех игр. Сохранение через debounce."""
         for game in self._games.values():
             if collection_id in game.collections:
                 game.collections.remove(collection_id)
-
-        # Удаляем саму коллекцию
         self._collections = [c for c in self._collections if c["id"] != collection_id]
+        self.request_save()
         logger.info(f"Deleted collection: {collection_id}")
         return True
 
+    def toggle_collection_sync(self, game_uid: str, collection_id: str) -> Optional[bool]:
+        """Идемпотентный toggle игры в/из коллекции. Возвращает True (добавлена),
+        False (убрана) или None (игра не найдена). Сохранение — через debounce.
+
+        Идемпотентность критична: UI может звать это в разных местах, не зная
+        текущего состояния. Здесь нет race с UI-копией collections, как было
+        в старом async-варианте."""
+        if game_uid not in self._games:
+            return None
+        game = self._games[game_uid]
+        if collection_id in game.collections:
+            game.collections.remove(collection_id)
+            self.request_save()
+            logger.info(f"Removed game {game.title} from collection {collection_id}")
+            return False
+        else:
+            game.collections.append(collection_id)
+            self.request_save()
+            logger.info(f"Added game {game.title} to collection {collection_id}")
+            return True
+
     async def add_game_to_collection(self, game_uid: str, collection_id: str) -> bool:
-        """Добавить игру в коллекцию"""
+        """Async-обёртка над sync-логикой. Сохранение через debounce."""
         if game_uid in self._games:
             game = self._games[game_uid]
             if collection_id not in game.collections:
                 game.collections.append(collection_id)
-                await self.save_library()
+                self.request_save()
                 logger.info(f"Added game {game.title} to collection {collection_id}")
                 return True
         return False
 
     async def remove_game_from_collection(self, game_uid: str, collection_id: str) -> bool:
-        """Убрать игру из коллекции"""
+        """Async-обёртка над sync-логикой. Сохранение через debounce."""
         if game_uid in self._games:
             game = self._games[game_uid]
             if collection_id in game.collections:
                 game.collections.remove(collection_id)
-                await self.save_library()
+                self.request_save()
                 logger.info(f"Removed game {game.title} from collection {collection_id}")
                 return True
         return False

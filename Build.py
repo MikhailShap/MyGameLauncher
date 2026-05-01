@@ -30,10 +30,12 @@ def build():
     
     # Дополнительные файлы для включения
     add_data = [
-        f"game_manager.py;.",  # Копируем game_manager.py
-        f"{icon_file};.",      # Копируем иконку
+        f"game_manager.py;.",      # Копируем game_manager.py
+        f"gamepad_manager.py;.",   # Менеджер геймпада
+        f"bigpicture_view.py;.",   # PS-стиль режим
+        f"{icon_file};.",          # Копируем иконку
     ]
-    
+
     # Скрытые импорты (модули которые PyInstaller может не найти)
     hidden_imports = [
         "win32gui",
@@ -51,17 +53,24 @@ def build():
         "primp",
         "pystray",
         "pystray._win32",
+        "pygame",
+        "pygame.joystick",
+        "pygame._sdl2",
+        "pygame._sdl2.controller",
+        "gamepad_manager",
+        "bigpicture_view",
     ]
     
     # Формируем команду
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name", app_name,
-        "--onefile",           # Один exe файл
+        "--onedir",            # Папка вместо одного exe — быстрый старт, без распаковки в TEMP
         "--windowed",          # Без консоли (GUI приложение)
         "--icon", icon_file,   # Иконка exe
         "--clean",             # Очистить кэш перед сборкой
         "--noconfirm",         # Не спрашивать подтверждение
+        "--noupx",             # БЕЗ UPX — иначе медленный старт и анимации
     ]
     
     # Добавляем данные

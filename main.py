@@ -7,6 +7,7 @@ import logging
 import threading
 import webbrowser
 import os
+import atexit
 from pathlib import Path
 from tkinter import Tk, filedialog
 
@@ -25,6 +26,19 @@ except ImportError:
 
 # Импорт backend
 from game_manager import GameManager, GameModel, Platform, Category, logger as backend_logger
+
+# Опциональные модули геймпада и BigPicture
+try:
+    from gamepad_manager import GamepadManager
+    HAS_GAMEPAD = True
+except Exception as _e:
+    GamepadManager = None
+    HAS_GAMEPAD = False
+
+try:
+    from bigpicture_view import BigPictureView
+except Exception as _e:
+    BigPictureView = None
 
 # --- SINGLE INSTANCE LOCK ---
 LOCK_FILE = None
@@ -113,8 +127,59 @@ def create_tray_icon():
                 print(f"Error showing window: {e}")
 
     def on_exit(icon, item):
-        """Выход из приложения"""
-        icon.stop()
+        """Выход из приложения через трей-меню.
+
+        Порядок важен:
+        1) Sync cleanup (gamepad/save) — безопасно из tray-thread
+        2) page.window.destroy() — сообщаем Flutter Engine что окно закрывается
+           ИНТЕНЦИОНАЛЬНО. Без этого engine видит обрыв TCP при os._exit() и
+           показывает встроенный "Working..." (ждёт reconnect Python).
+        3) icon.stop() + os._exit
+        """
+        global TRAY_APP_INSTANCE
+        try:
+            if TRAY_APP_INSTANCE is not None:
+                # 1a. Геймпад
+                if getattr(TRAY_APP_INSTANCE, "gamepad_manager", None) is not None:
+                    try:
+                        TRAY_APP_INSTANCE.gamepad_manager.shutdown()
+                    except Exception:
+                        pass
+                # 1b. Финальный flush библиотеки + остановка IconExtractor
+                gm = getattr(TRAY_APP_INSTANCE, "game_manager", None)
+                if gm is not None:
+                    try:
+                        gm.emergency_sync_save()
+                    except Exception:
+                        pass
+                    try:
+                        if hasattr(gm, "cover_api_manager") and hasattr(gm.cover_api_manager, "icon_extractor"):
+                            gm.cover_api_manager.icon_extractor.shutdown(wait=False)
+                    except Exception:
+                        pass
+
+                # 2. Корректно закрываем Flutter-окно ДО убийства Python.
+                # destroy() — async корутина в Flet event loop'е. Запускаем
+                # threadsafe из tray-thread'а и ждём чуть-чуть пока команда
+                # доедет до engine. Без этого "Working..." висит навсегда.
+                page = getattr(TRAY_APP_INSTANCE, "page", None)
+                if page is not None:
+                    try:
+                        future = page.run_task(page.window.destroy)
+                        try:
+                            future.result(timeout=1.0)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"Error during tray exit: {e}")
+
+        # 3. Останавливаем pystray и завершаем процесс
+        try:
+            icon.stop()
+        except Exception:
+            pass
         release_single_instance_lock()
         os._exit(0)
 
@@ -265,6 +330,11 @@ class GameCard(ft.Container):
     # Class-level cache for icon existence checks
     _icon_exists_cache = {}
 
+    # Кешируем Border'ы один раз на класс, чтобы не аллоцировать новый объект
+    # на каждый hover (12+ карточек × hover-events = заметная GC-нагрузка)
+    _BORDER_NORMAL = ft.Border.all(1, "#333333")
+    _BORDER_HOVER = ft.Border.all(2, ACCENT_BLUE)
+
     def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, on_collection=None, show_size=False, enable_animations=False):
         super().__init__()
         self.game = game
@@ -275,22 +345,22 @@ class GameCard(ft.Container):
         self._on_collection = on_collection
         self._enable_animations = enable_animations
         self._is_hovered = False  # Track hover state to avoid redundant updates
-        
+
         self.border_radius = 15
         self.padding = 0
         self.bgcolor = CARD_BG
         self.expand = True
         self.clip_behavior = ft.ClipBehavior.HARD_EDGE
-        
-        # Only set up animations if enabled
+
+        # Анимация hover. animate_scale — точечная анимация только scale
+        # (GPU compositor effect, самое дешёвое во Flutter).
         if enable_animations:
-            self.animate_scale = ft.Animation(150, ft.AnimationCurve.EASE_OUT)
-            self.animate = ft.Animation(150, ft.AnimationCurve.EASE_OUT)
+            self.animate_scale = ft.Animation(120, ft.AnimationCurve.EASE_OUT)
             self.on_hover = self.on_card_hover
-        
+
         self.shadow = None
         self.scale = 1.0
-        self.border = ft.Border.all(1, "#333333")
+        self.border = GameCard._BORDER_NORMAL
         
         # Cache icon existence check
         icon_src = None
@@ -437,59 +507,11 @@ class GameCard(ft.Container):
                 ink=True,
             ),
 
-            # 6. Кнопка загрузки обложки - ПРОСТОЙ Container с on_click
-            ft.Container(
-                content=ft.Icon(
-                    ft.Icons.IMAGE_SEARCH,
-                    color="#FFFFFF",
-                    size=18,
-                ),
-                width=36,
-                height=36,
-                border_radius=18,
-                bgcolor="#8000E5FF",
-                alignment=ft.Alignment(0, 0),
-                right=8,
-                top=52,
-                on_click=self.on_upload_click,
-                ink=True,
-            ),
-
-            # 7. Кнопка коллекции - добавить в коллекцию
-            ft.Container(
-                content=ft.Icon(
-                    ft.Icons.FOLDER_SPECIAL if game.collections else ft.Icons.FOLDER_OUTLINED,
-                    color="#FFFFFF" if not game.collections else "#FFD54F",
-                    size=18,
-                ),
-                width=36,
-                height=36,
-                border_radius=18,
-                bgcolor="#80D500F9",
-                alignment=ft.Alignment(0, 0),
-                right=8,
-                top=96,
-                on_click=self.on_collection_click,
-                ink=True,
-            ),
-
-            # 8. Кнопка исключения - скрыть программу из библиотеки
-            ft.Container(
-                content=ft.Icon(
-                    ft.Icons.BLOCK,
-                    color="#FFFFFF",
-                    size=18,
-                ),
-                width=36,
-                height=36,
-                border_radius=18,
-                bgcolor="#80F44336",
-                alignment=ft.Alignment(0, 0),
-                right=8,
-                top=140,
-                on_click=self.on_exclude_click,
-                ink=True,
-            ),
+            # 6-8. Дополнительные кнопки (Upload / Collection / Exclude).
+            # Скрыты по умолчанию, показываются на hover. Это режет ~3 widget'а
+            # × количество карточек из payload каждого page.update() — заметный
+            # выигрыш на сетке 12+ карточек.
+            self._build_secondary_actions(game),
         ]
         
         if size_badge:
@@ -506,6 +528,49 @@ class GameCard(ft.Container):
             expand=True,
         )
     
+    def _build_secondary_actions(self, game: GameModel) -> ft.Container:
+        """Контейнер со второстепенными кнопками (Upload / Collection / Exclude).
+        Видимы всегда — пробовали скрывать на hover, но layout-pass при показе
+        блокировал hover-чейн при быстром движении мыши через несколько карточек."""
+        upload_btn = ft.Container(
+            content=ft.Icon(ft.Icons.IMAGE_SEARCH, color="#FFFFFF", size=18),
+            width=36, height=36, border_radius=18,
+            bgcolor="#8000E5FF",
+            alignment=ft.Alignment(0, 0),
+            on_click=self.on_upload_click,
+            ink=True,
+        )
+        collection_btn = ft.Container(
+            content=ft.Icon(
+                ft.Icons.FOLDER_SPECIAL if game.collections else ft.Icons.FOLDER_OUTLINED,
+                color="#FFD54F" if game.collections else "#FFFFFF",
+                size=18,
+            ),
+            width=36, height=36, border_radius=18,
+            bgcolor="#80D500F9",
+            alignment=ft.Alignment(0, 0),
+            on_click=self.on_collection_click,
+            ink=True,
+        )
+        exclude_btn = ft.Container(
+            content=ft.Icon(ft.Icons.BLOCK, color="#FFFFFF", size=18),
+            width=36, height=36, border_radius=18,
+            bgcolor="#80F44336",
+            alignment=ft.Alignment(0, 0),
+            on_click=self.on_exclude_click,
+            ink=True,
+        )
+
+        self._secondary_actions = ft.Container(
+            right=8,
+            top=52,
+            content=ft.Column(
+                controls=[upload_btn, collection_btn, exclude_btn],
+                spacing=8,
+            ),
+        )
+        return self._secondary_actions
+
     def _clean_title(self, title: str) -> str:
         """Очистка названия от тегов репаков"""
         if not title:
@@ -523,26 +588,28 @@ class GameCard(ft.Container):
         return None
 
     def on_card_hover(self, e):
-        # Skip if animations disabled
-        if not self._enable_animations:
-            return
-        
         is_hovering = e.data == True or e.data == "true"
-        
-        # Skip if state hasn't changed
+
+        # Skip if state hasn't changed (защита от дублирующихся событий)
         if is_hovering == self._is_hovered:
             return
-        
+
         self._is_hovered = is_hovering
-        
+
+        # Меняем сразу scale + border. animate_scale настроен в __init__,
+        # так что scale поедет плавно за 120мс. border меняется мгновенно.
+        # Используем закешированные Border'ы (нет аллокации на каждый hover).
         if is_hovering:
             self.scale = 1.03
-            self.border = ft.Border.all(2, ACCENT_BLUE)
+            self.border = GameCard._BORDER_HOVER
         else:
             self.scale = 1.0
-            self.border = ft.Border.all(1, "#333333")
-        
-        self.update()
+            self.border = GameCard._BORDER_NORMAL
+
+        try:
+            self.update()
+        except Exception:
+            pass
     
     def on_card_click(self, e):
         if self._on_click:
@@ -666,6 +733,13 @@ class CyberLauncher:
         
         # Для загрузки обложек (tkinter file dialog)
         self.upload_target_game = None
+
+        # Shutdown / BigPicture / Gamepad — заглушки, реальные значения позже
+        self._shutdown_done: bool = False
+        self._bigpicture_view = None
+        self._bigpicture_active: bool = False
+        self._pre_bigpicture_state: dict = {}
+        self.gamepad_manager = None  # инициализируется в build_ui
 
         self.setup_page()
         self.build_ui()
@@ -873,13 +947,19 @@ class CyberLauncher:
         self.page.bgcolor = BG_COLOR
         self.page.padding = 0
         self.page.theme_mode = ft.ThemeMode.DARK
-        
+
         self.page.window.width = 1200
         self.page.window.height = 750
         self.page.window.min_width = 900
         self.page.window.min_height = 600
         self.page.window.title_bar_hidden = True
         self.page.window.title_bar_buttons_hidden = True
+
+        # NB: НЕ выставляем prevent_close=True — в Flet 0.80 это вызывает
+        # автоматический оверлей "Working..." на каждый close-event и блокирует UI.
+        # Кастомная кнопка X в title bar ловится напрямую через window_action,
+        # а Alt+F4 / системное закрытие подхватывается через atexit (см. main).
+        self.page.window.on_event = self._on_window_event
 
         # Устанавливаем иконку с абсолютным путём для панели задач Windows
         import os
@@ -895,7 +975,7 @@ class CyberLauncher:
     
     def build_ui(self):
         self.is_maximized = False
-        
+
         # Title bar
         title_bar = ft.Container(
             height=40,
@@ -906,6 +986,7 @@ class CyberLauncher:
                     ft.Icon(ft.Icons.GAMEPAD_OUTLINED, color=ACCENT_BLUE, size=18),
                     ft.Text("CYBER LAUNCHER", size=12, color="#B3FFFFFF", weight=ft.FontWeight.BOLD),
                     ft.WindowDragArea(ft.Container(bgcolor="transparent"), expand=True),
+                    ft.IconButton(ft.Icons.TV, icon_size=16, on_click=lambda _: self.toggle_bigpicture(), icon_color=ACCENT_BLUE, tooltip="Big Picture (F11)"),
                     ft.IconButton(ft.Icons.REMOVE, icon_size=16, on_click=lambda _: self.window_action("min"), icon_color=TEXT_GREY, tooltip="Свернуть"),
                     ft.IconButton(ft.Icons.CROP_SQUARE_OUTLINED, icon_size=16, on_click=lambda _: self.window_action("max"), icon_color=TEXT_GREY, tooltip="Развернуть"),
                     ft.IconButton(ft.Icons.CLOSE, icon_size=16, on_click=lambda _: self.window_action("close"), icon_color=TEXT_GREY, tooltip="Закрыть"),
@@ -914,6 +995,7 @@ class CyberLauncher:
                 spacing=0
             )
         )
+        self._title_bar = title_bar
         
         # Sidebar buttons
         self.sidebar_buttons["all"] = SidebarButton(ft.Icons.GRID_VIEW_ROUNDED, "Все игры", is_active=True, on_click=self.on_filter_click, data="all")
@@ -1082,7 +1164,7 @@ class CyberLauncher:
             run_spacing=15,
             padding=ft.Padding(left=20, right=20, top=10, bottom=20),
         )
-        
+
         self.games_container = ft.Column(
             controls=[self.sort_panel, self.game_grid],
             spacing=0,
@@ -1109,17 +1191,25 @@ class CyberLauncher:
             expand=True,
         )
         
+        self._main_row = ft.Row(expand=True, spacing=0, controls=[self.sidebar, self.content_stack])
+
         layout = ft.Column(
             spacing=0,
             expand=True,
             controls=[
                 title_bar,
-                ft.Row(expand=True, spacing=0, controls=[self.sidebar, self.content_stack])
+                self._main_row,
             ]
         )
-        
+
         self.page.add(layout)
         self.page.run_task(self.load_library)
+
+        # Hotkey F11 для toggle BigPicture (помимо кнопки геймпада)
+        self.page.on_keyboard_event = self._on_keyboard_event
+
+        # Запуск геймпада (опционально)
+        self._init_gamepad()
     
     def build_settings_view(self):
         def create_theme_card(theme_id: str, theme_data: dict):
@@ -1642,14 +1732,15 @@ class CyberLauncher:
 
     def window_action(self, action: str):
         if action == "close":
-            # Сворачиваем в трей вместо закрытия
+            # NB: НЕ вызываем page.run_task из этого sync-хендлера — Flet 0.80
+            # покажет встроенный модал "Working..." и заблокирует UI.
+            # Сохранение покрыто debounced save (1 сек) + atexit emergency_sync_save.
             if HAS_TRAY and TRAY_ICON:
                 self.page.window.visible = False
                 self.page.update()
             else:
-                # Если трей недоступен - закрываем приложение
-                release_single_instance_lock()
-                sys.exit(0)
+                # Трея нет — полный выход через async помощник
+                self.page.run_task(self._async_full_exit)
         elif action == "min":
             self.page.window.minimized = True
             self.page.update()
@@ -1658,10 +1749,308 @@ class CyberLauncher:
             self.page.window.maximized = self.is_maximized
             self.page.update()
         elif action == "exit":
-            # Полный выход (из меню трея)
+            # Полный выход (из меню трея или Alt+F4 без трея)
+            self.page.run_task(self._async_full_exit)
+
+    async def _async_full_exit(self):
+        """Запускает корректную последовательность завершения и выходит."""
+        try:
+            await self.shutdown()
+        finally:
             stop_tray_icon()
             release_single_instance_lock()
-            sys.exit(0)
+            backend_logger.info("App shutdown completed (full exit)")
+            os._exit(0)  # после shutdown корректно — все данные на диске, threads закрыты
+
+    def _on_window_event(self, e):
+        """Перехват системных событий окна. Главное — `close` (Alt+F4 / системная X)."""
+        try:
+            data = getattr(e, 'data', None) or getattr(e, 'event', None)
+        except Exception:
+            data = None
+        if data == "close":
+            # Поведение идентично кастомному крестику
+            self.window_action("close")
+
+    async def shutdown(self):
+        """Корректная остановка приложения: gamepad → bigpicture → game_manager."""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+        backend_logger.info("CyberLauncher shutdown started")
+        try:
+            if self.gamepad_manager is not None:
+                self.gamepad_manager.shutdown()
+        except Exception as ex:
+            backend_logger.warning(f"Gamepad shutdown error: {ex}")
+        try:
+            await self.game_manager.shutdown()
+        except Exception as ex:
+            backend_logger.error(f"GameManager shutdown error: {ex}")
+        backend_logger.info("CyberLauncher shutdown finished")
+
+    # ========== Gamepad + BigPicture ==========
+
+    def _init_gamepad(self):
+        """Лениво инициализирует GamepadManager. Безопасно если pygame не установлен."""
+        if not HAS_GAMEPAD or GamepadManager is None:
+            backend_logger.info("Gamepad support unavailable (pygame missing)")
+            return
+        try:
+            self.gamepad_manager = GamepadManager()
+            if not self.gamepad_manager.available:
+                self.gamepad_manager = None
+                return
+            self.gamepad_manager.on_button = self._gp_dispatch_button
+            self.gamepad_manager.on_dpad = self._gp_dispatch_dpad
+            self.gamepad_manager.on_axis = self._gp_dispatch_axis
+            self.gamepad_manager.on_guide = self._gp_on_guide
+            self.gamepad_manager.on_connected = self._gp_on_connected
+            self.gamepad_manager.on_disconnected = lambda: backend_logger.info("Gamepad: disconnected")
+            self.gamepad_manager.start()
+        except Exception as e:
+            backend_logger.error(f"Gamepad init error: {e}")
+            self.gamepad_manager = None
+
+    def _gp_on_connected(self, name: str = "", num_buttons: int = 0, is_xinput: bool = False):
+        """Callback подключения геймпада. Логирует и показывает snackbar
+        с диагностикой если контроллер не в XInput."""
+        backend_logger.info(f"Gamepad: connected ({name}, buttons={num_buttons}, xinput={is_xinput})")
+        try:
+            if not is_xinput or num_buttons == 0:
+                msg = (
+                    f"Геймпад '{name}' определён без XInput. "
+                    "Переключите донгл/контроллер в режим X (XInput), "
+                    "иначе кнопки не работают."
+                )
+                self.page.run_task(self._gp_show_warning, msg)
+            else:
+                self.page.run_task(self._gp_show_info, f"Геймпад готов: {name}")
+        except Exception:
+            pass
+
+    async def _gp_show_warning(self, msg: str):
+        try:
+            self.show_snackbar(msg, bgcolor="#FF9800", duration=8000)
+        except Exception:
+            pass
+
+    async def _gp_show_info(self, msg: str):
+        try:
+            self.show_snackbar(msg, bgcolor="#00C853", duration=3000)
+        except Exception:
+            pass
+
+    def _gp_dispatch_button(self, name: str, pressed: bool):
+        # Колбэк вызывается из gamepad-thread'а — пересылаем в UI loop
+        if self._bigpicture_view is not None and self._bigpicture_active:
+            self.page.run_task(self._gp_async_button, name, pressed)
+
+    def _gp_dispatch_dpad(self, name: str, pressed: bool):
+        if self._bigpicture_view is not None and self._bigpicture_active:
+            self.page.run_task(self._gp_async_dpad, name, pressed)
+
+    def _gp_dispatch_axis(self, name: str, value: float):
+        if self._bigpicture_view is not None and self._bigpicture_active:
+            self.page.run_task(self._gp_async_axis, name, value)
+
+    def _gp_on_guide(self):
+        # Guide — глобальная кнопка, всегда переключает BigPicture
+        self.page.run_task(self._gp_async_toggle_bp)
+
+    async def _gp_async_button(self, name: str, pressed: bool):
+        try:
+            self._bigpicture_view.handle_button(name, pressed)
+        except Exception as e:
+            backend_logger.error(f"BigPicture button error: {e}")
+
+    async def _gp_async_dpad(self, name: str, pressed: bool):
+        try:
+            self._bigpicture_view.handle_dpad(name, pressed)
+        except Exception as e:
+            backend_logger.error(f"BigPicture dpad error: {e}")
+
+    async def _gp_async_axis(self, name: str, value: float):
+        try:
+            self._bigpicture_view.handle_axis(name, value)
+        except Exception as e:
+            backend_logger.error(f"BigPicture axis error: {e}")
+
+    async def _gp_async_toggle_bp(self):
+        self.toggle_bigpicture()
+
+    def _on_keyboard_event(self, e):
+        """Глобальные хоткеи + клавиатурная навигация в BigPicture-режиме
+        (на случай если геймпад не определился)."""
+        try:
+            key = getattr(e, "key", None)
+            if key is None:
+                return
+            # F11 — toggle BigPicture
+            if key == "F11":
+                self.toggle_bigpicture()
+                return
+            # ESC — выход из BigPicture (в обычном режиме игнорируется)
+            if key == "Escape" and self._bigpicture_active:
+                self._exit_bigpicture()
+                return
+            # Если в BigPicture — клавиатура работает как геймпад
+            if self._bigpicture_active and self._bigpicture_view is not None:
+                bp = self._bigpicture_view
+                if key == "Arrow Left":
+                    bp.handle_dpad("DPAD_LEFT", True)
+                elif key == "Arrow Right":
+                    bp.handle_dpad("DPAD_RIGHT", True)
+                elif key == "Arrow Up":
+                    bp.handle_dpad("DPAD_UP", True)
+                elif key == "Arrow Down":
+                    bp.handle_dpad("DPAD_DOWN", True)
+                elif key == "Enter":
+                    bp.handle_button("A", True)
+                elif key == "Backspace":
+                    bp.handle_button("B", True)
+                elif key == "F":  # F = favorite (Y)
+                    bp.handle_button("Y", True)
+                elif key == "C":  # C = collections (X)
+                    bp.handle_button("X", True)
+                elif key in ("Q", "Page Up"):
+                    bp.handle_button("LB", True)
+                elif key in ("E", "Page Down"):
+                    bp.handle_button("RB", True)
+        except Exception as ex:
+            backend_logger.warning(f"Keyboard event error: {ex}")
+
+    def toggle_bigpicture(self):
+        """Переключает BigPicture-режим. Сохраняет/восстанавливает window state."""
+        if BigPictureView is None:
+            self.show_snackbar("BigPicture модуль не доступен", bgcolor="#FF5252")
+            return
+
+        if not self._bigpicture_active:
+            self._enter_bigpicture()
+        else:
+            self._exit_bigpicture()
+
+    def _enter_bigpicture(self):
+        # Сохраняем текущее состояние окна
+        self._pre_bigpicture_state = {
+            "width": self.page.window.width,
+            "height": self.page.window.height,
+            "maximized": self.page.window.maximized,
+            "title_bar_hidden": self.page.window.title_bar_hidden,
+        }
+
+        # Создаём view только при первом входе, дальше переиспользуем
+        if self._bigpicture_view is None:
+            self._bigpicture_view = BigPictureView(
+                page=self.page,
+                game_manager=self.game_manager,
+                settings=self.settings,
+                on_exit=self._exit_bigpicture_from_view,
+                on_launch=self._bp_launch_game,
+                on_request_scan=self._bp_request_scan,
+                on_change_theme=self.change_theme,
+            )
+            self._bp_root = self._bigpicture_view.build()
+        else:
+            # При повторном входе — обновим коллекции и игры на случай изменений
+            self._bigpicture_view.refresh_after_external_change()
+
+        # Скрываем sidebar и titlebar, показываем bp_root
+        self._title_bar.visible = False
+        self.sidebar.visible = False
+        self.bg_container.content = self._bp_root
+
+        # Переход в fullscreen на Windows иногда сбрасывает focus / окно прячется.
+        # 1) Сбрасываем maximized и minimized — чтобы Windows не путалась
+        # 2) Включаем fullscreen
+        # 3) Принудительно поднимаем окно на передний план
+        try:
+            self.page.window.minimized = False
+            self.page.window.maximized = False
+            self.page.window.visible = True
+        except Exception:
+            pass
+
+        try:
+            self.page.window.full_screen = True
+        except Exception:
+            self.page.window.maximized = True
+
+        self._bigpicture_active = True
+        self.page.update()
+        # Принудительно поднимаем окно через WinAPI — иначе fullscreen может
+        # уйти на задний план если в этот момент был активен другой процесс.
+        self._force_window_to_front()
+        backend_logger.info("Entered BigPicture mode")
+
+    def _force_window_to_front(self):
+        """Поднимает окно на передний план через WinAPI. Используется после
+        перехода в fullscreen, потому что Flet/Flutter иногда теряет focus."""
+        if sys.platform != "win32":
+            return
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+            if hwnd:
+                SW_SHOW = 5
+                user32.ShowWindow(hwnd, SW_SHOW)
+                user32.SetForegroundWindow(hwnd)
+                user32.BringWindowToTop(hwnd)
+        except Exception as e:
+            backend_logger.warning(f"Force-to-front failed: {e}")
+
+    def _exit_bigpicture_from_view(self):
+        # Колбэк от BigPictureView (кнопка B на главном)
+        self._exit_bigpicture()
+
+    def _exit_bigpicture(self):
+        if not self._bigpicture_active:
+            return
+        try:
+            self.page.window.full_screen = False
+        except Exception:
+            pass
+        # Восстанавливаем layout
+        self._title_bar.visible = True
+        self.sidebar.visible = True
+        self.bg_container.content = self.games_container
+
+        st = self._pre_bigpicture_state or {}
+        if "maximized" in st:
+            self.page.window.maximized = st["maximized"]
+        if "width" in st and not st.get("maximized"):
+            self.page.window.width = st["width"]
+        if "height" in st and not st.get("maximized"):
+            self.page.window.height = st["height"]
+
+        self._bigpicture_active = False
+        self.page.update()
+        # Перерисуем сетку — могли изменить favorite/коллекции в BigPicture
+        try:
+            self.update_game_grid(reset_page=False)
+        except Exception:
+            pass
+        backend_logger.info("Exited BigPicture mode")
+
+    def _bp_launch_game(self, game: GameModel):
+        """Запуск игры из BigPicture. Используем существующий launch_game."""
+        self.page.run_task(self.launch_game, game)
+
+    def _bp_request_scan(self):
+        """Сканирование библиотеки из BigPicture."""
+        self.page.run_task(self.refresh_library)
+        # После скана обновим BigPicture view
+        async def _refresh_bp_after():
+            try:
+                while True:
+                    await asyncio.sleep(2)
+                    if self._bigpicture_view is not None:
+                        self._bigpicture_view.refresh_after_external_change()
+                    break
+            except Exception:
+                pass
+        self.page.run_task(_refresh_bp_after)
     
     async def on_refresh_click(self, e):
         """Обработчик нажатия кнопки обновления"""
@@ -1776,14 +2165,14 @@ class CyberLauncher:
         """Рендерит только видимые карточки с пагинацией - ОПТИМИЗИРОВАНО"""
         show_size = self.settings.get("show_game_size", False)
         enable_animations = self.settings.get("enable_animations", False)  # Default OFF for speed
-        
+
         # Количество карточек для отображения
         cards_to_show = (self._current_page + 1) * self._page_size
         visible_games = self._all_games_list[:cards_to_show]
-        
+
         # Build new controls list (faster than modifying in-place)
         new_controls = []
-        
+
         for game in visible_games:
             if game.uid in self._card_cache:
                 card = self._card_cache[game.uid]
@@ -1799,9 +2188,9 @@ class CyberLauncher:
                     enable_animations=enable_animations
                 )
                 self._card_cache[game.uid] = card
-            
+
             new_controls.append(card)
-        
+
         # Кнопка "Показать ещё" если есть ещё игры
         if cards_to_show < len(self._all_games_list):
             remaining = len(self._all_games_list) - cards_to_show
@@ -1822,20 +2211,20 @@ class CyberLauncher:
                 ink=True,
             )
             new_controls.append(load_more_btn)
-        
+
         # Single assignment instead of clear + append loop
         self.game_grid.controls = new_controls
-        
+
         total = self.game_manager.games_count
         shown = len(visible_games)
         if self.current_filter == "all":
             self.games_count_text.value = f"{shown}/{total} игр"
         else:
             self.games_count_text.value = f"{shown} из {len(self._all_games_list)}"
-        
+
         self.page.update()
 
-    
+
     def _load_more_games(self, e):
         """Загружает следующую страницу игр"""
         self._current_page += 1
@@ -2607,13 +2996,10 @@ class CyberLauncher:
             return
 
         def toggle_collection(e, col_id):
-            if col_id in game.collections:
-                self.page.run_task(self.game_manager.remove_game_from_collection, game.uid, col_id)
-                game.collections.remove(col_id)
-            else:
-                self.page.run_task(self.game_manager.add_game_to_collection, game.uid, col_id)
-                game.collections.append(col_id)
-            # Обновляем чекбоксы
+            # Единая точка истины — backend GameManager. UI читает game.collections,
+            # который и есть тот же объект. Нет двойной мутации, нет race с проверкой
+            # `if collection_id not in game.collections` в backend.
+            self.game_manager.toggle_collection_sync(game.uid, col_id)
             rebuild_checkboxes()
             checkboxes.update()
 
@@ -2642,11 +3028,18 @@ class CyberLauncher:
         def on_close(e):
             dialog.open = False
             self.page.update()
+            # Гарантированно сохраняем изменения коллекций перед тем как пользователь
+            # потенциально закроет программу — даже если debounce ещё не сработал
+            self.page.run_task(self.game_manager.flush_save)
             self.refresh_collections_sidebar()
-            # Инвалидируем кеш карточки
             if game.uid in self._card_cache:
                 del self._card_cache[game.uid]
-            self.update_game_grid(reset_page=False)
+            # Если активен фильтр по коллекции и игра больше не в этой коллекции,
+            # её нужно убрать из view — поэтому пересчитываем список
+            if self.current_filter.startswith("collection_"):
+                self.update_game_grid(reset_page=True)
+            else:
+                self.update_game_grid(reset_page=False)
 
         # Обрезаем название игры для заголовка
         short_title = game.title[:25] + "..." if len(game.title) > 25 else game.title
@@ -2722,8 +3115,31 @@ if __name__ == "__main__":
             tray_thread = threading.Thread(target=run_tray_icon, daemon=True)
             tray_thread.start()
 
+    # atexit-страховка: если процесс завершается через Alt+F4 / kill / любой
+    # путь без _async_full_exit, всё равно сохранить любые dirty изменения.
+    def _atexit_emergency_save():
+        try:
+            app = TRAY_APP_INSTANCE
+            if app is not None and getattr(app, "game_manager", None) is not None:
+                app.game_manager.emergency_sync_save()
+        except Exception as e:
+            try:
+                backend_logger.error(f"atexit save error: {e}")
+            except Exception:
+                pass
+    atexit.register(_atexit_emergency_save)
+
     try:
         ft.run(main, assets_dir=base_dir)
     finally:
-        stop_tray_icon()
-        release_single_instance_lock()
+        # Best-effort cleanup на случай если ft.run завершился аварийно
+        # (нормальный выход идёт через _async_full_exit и не доходит сюда).
+        try:
+            stop_tray_icon()
+        except Exception:
+            pass
+        try:
+            release_single_instance_lock()
+        except Exception:
+            pass
+        backend_logger.info("App process exiting (finally block)")

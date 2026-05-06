@@ -767,7 +767,7 @@ class CyberLauncher:
 
         # Screensaver: после N сек бездействия в BigPicture показывает фоны
         # игр поочерёдно. Cross-fade между двумя image-слоями.
-        self._idle_timeout_s: float = 5.0  # TODO: 300 (5 мин) для прода
+        self._idle_timeout_s: float = 300.0  # 5 минут
         self._screensaver_active: bool = False
         self._last_activity_ts: float = 0.0  # выставится в build_ui
         self._screensaver_idx: int = 0

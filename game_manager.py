@@ -508,6 +508,60 @@ class RAWGClient:
         self.session_cache[cache_key] = None
         return None
 
+    def get_screenshots_by_name(self, game_name: str, limit: int = 5) -> List[str]:
+        """Поиск игры по названию → загрузка её скриншотов. Возвращает URL'ы.
+        Используется в BigPicture для cycling-фона нон-Steam игр."""
+        if not self.api_key:
+            return []
+
+        cache_key = f"rawg_shots_{game_name.lower()}"
+        if cache_key in self.session_cache:
+            return self.session_cache[cache_key] or []
+
+        # 1) Найти id игры
+        self._wait_rate_limit()
+        params = urllib.parse.urlencode({
+            'key': self.api_key,
+            'search': game_name,
+            'search_precise': 'true',
+            'page_size': '1',
+        })
+        url = f"{self.BASE_URL}/games?{params}"
+        game_id = None
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'CyberLauncher/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    data = json.loads(response.read())
+                    if data and data.get('results'):
+                        game_id = data['results'][0].get('id')
+        except Exception as e:
+            logger.warning(f"RAWG screenshots search error: {e}")
+
+        if not game_id:
+            self.session_cache[cache_key] = []
+            return []
+
+        # 2) Скриншоты по id
+        self._wait_rate_limit()
+        params = urllib.parse.urlencode({'key': self.api_key, 'page_size': str(limit)})
+        url = f"{self.BASE_URL}/games/{game_id}/screenshots?{params}"
+        urls: List[str] = []
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'CyberLauncher/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    data = json.loads(response.read())
+                    for item in (data.get('results') or [])[:limit]:
+                        img = item.get('image')
+                        if img:
+                            urls.append(img)
+        except Exception as e:
+            logger.warning(f"RAWG screenshots fetch error: {e}")
+
+        self.session_cache[cache_key] = urls
+        return urls
+
 
 class CoverValidator:
     """Валидация и очистка кэша иконок"""
@@ -1055,6 +1109,9 @@ class GameManager:
         # Initialize cache directory
         cache_icons = Path(cache_dir) / "icons"
         cache_icons.mkdir(parents=True, exist_ok=True)
+        # Heroes cache — landscape арт для BigPicture-фона
+        self.cache_heroes = Path(cache_dir) / "heroes"
+        self.cache_heroes.mkdir(parents=True, exist_ok=True)
 
         # Initialize new cover art components
         self.cover_validator = CoverValidator(cache_icons, self.library_file)
@@ -1528,3 +1585,197 @@ class GameManager:
         await self.save_library()
         logger.info(f"Restored game: {game.title}")
         return game
+
+    # ========== Hero art (landscape) prefetch для BigPicture ==========
+
+    def get_hero_path(self, game: 'GameModel') -> Optional[str]:
+        """Возвращает абсолютный путь к закэшированному landscape-арту игры.
+        Приоритет: кастомный <uid>_<mtime>.jpg (загружен юзером, новейший по
+        mtime суффиксу), затем auto-fetched <uid>.jpg. None если ничего нет —
+        BigPicture покажет пустой градиент вместо плохой картинки."""
+        if game is None or not game.uid:
+            return None
+
+        # 1) Кастомный фон с timestamp-суффиксом (последний загруженный)
+        custom_files = sorted(
+            self.cache_heroes.glob(f"{game.uid}_*.jpg"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for cf in custom_files:
+            if cf.stat().st_size > 2048:
+                return str(cf.resolve())
+
+        # 2) Auto-fetched (Steam library_hero / RAWG background_image)
+        local = self.cache_heroes / f"{game.uid}.jpg"
+        if local.exists() and local.stat().st_size > 2048:
+            return str(local.resolve())
+        return None
+
+    def is_hero_known_missing(self, game: 'GameModel') -> bool:
+        """True если landscape-арт для этой игры не нашёлся ни в одном источнике
+        (помечен .miss-маркером — не дёргаем повторно)."""
+        if game is None or not game.uid:
+            return False
+        return (self.cache_heroes / f"{game.uid}.miss").exists()
+
+    def _try_download_hero_for_game(self, game: 'GameModel') -> bool:
+        """Скачивает ОДИН качественный landscape-арт для игры.
+        Источники: Steam library_hero (1920×620, всегда landscape) → RAWG
+        background_image (1280-1920px, официальный арт). Сохраняет в
+        cache/heroes/<uid>.jpg. Если ничего не нашлось — пишет .miss-маркер."""
+        local = self.cache_heroes / f"{game.uid}.jpg"
+        miss = self.cache_heroes / f"{game.uid}.miss"
+        if local.exists() or miss.exists():
+            return local.exists()
+
+        candidate_urls: List[str] = []
+
+        # 1) Steam library_hero — landscape 1920×620, идеально для fullscreen
+        if game.platform == Platform.STEAM.value and game.app_id:
+            candidate_urls.append(
+                f"https://cdn.cloudflare.steamstatic.com/steam/apps/{game.app_id}/library_hero.jpg"
+            )
+
+        # 2) RAWG background_image — landscape, официальный арт
+        rawg = self.cover_api_manager.rawg if self.cover_api_manager else None
+        if rawg:
+            try:
+                clean = self.cover_api_manager.icon_extractor._clean_name(game.title)
+                rawg_url = rawg.search_game(clean)
+                if rawg_url:
+                    candidate_urls.append(rawg_url)
+            except Exception:
+                pass
+
+        for url in candidate_urls:
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    if r.status == 200:
+                        data = r.read()
+                        # 8KB минимум — отсекает 404-страницы Steam (~1KB)
+                        if len(data) > 8192:
+                            with open(local, 'wb') as f:
+                                f.write(data)
+                            return True
+            except Exception:
+                continue
+
+        # Ни один источник не дал результат — маркируем
+        try:
+            miss.touch()
+        except Exception:
+            pass
+        return False
+
+    def set_custom_hero_art(self, game: 'GameModel', source_path: str) -> bool:
+        """Заменяет landscape-фон игры на пользовательскую картинку.
+        Конвертирует в JPEG, ресайзит до max 1920×1080, сохраняет в
+        cache/heroes/<uid>.jpg. Удаляет .miss-маркер если был.
+        Возвращает True при успехе."""
+        if game is None or not game.uid:
+            return False
+        try:
+            from PIL import Image
+        except ImportError:
+            logger.error("Pillow not available, cannot upload custom hero art")
+            return False
+
+        src = Path(source_path)
+        if not src.exists():
+            return False
+
+        # Валидация — это вообще картинка?
+        try:
+            with Image.open(src) as probe:
+                probe.verify()
+        except Exception as e:
+            logger.error(f"Invalid image for custom hero: {e}")
+            return False
+
+        try:
+            img = Image.open(src)
+            # RGBA / palette → RGB на чёрном фоне
+            if img.mode in ('RGBA', 'LA', 'P'):
+                bg = Image.new('RGB', img.size, (0, 0, 0))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                if img.mode in ('RGBA', 'LA'):
+                    bg.paste(img, mask=img.split()[-1])
+                else:
+                    bg.paste(img)
+                img = bg
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            # Ресайз — фон 1920×1080 это уже больше чем нужно
+            max_size = (1920, 1080)
+            if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
+                img.thumbnail(max_size, Image.Resampling.LANCZOS)
+
+            # Уникальное имя <uid>_<timestamp_ms>.jpg — Flutter ImageCache
+            # ключует по пути, поэтому без смены имени новый файл с тем же
+            # путём показывался бы из кэша как старый.
+            ts = int(time.time() * 1000)
+            target = self.cache_heroes / f"{game.uid}_{ts}.jpg"
+            img.save(target, 'JPEG', quality=88)
+
+            # Удаляем предыдущие кастомные файлы (тоже <uid>_*.jpg) чтобы
+            # не копились
+            for old in self.cache_heroes.glob(f"{game.uid}_*.jpg"):
+                if old != target:
+                    try:
+                        old.unlink()
+                    except Exception:
+                        pass
+
+            # Сбрасываем .miss-маркер если был
+            miss = self.cache_heroes / f"{game.uid}.miss"
+            if miss.exists():
+                try:
+                    miss.unlink()
+                except Exception:
+                    pass
+
+            logger.info(f"Custom hero art set for '{game.title}': {target}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save custom hero art: {e}")
+            return False
+
+    async def prefetch_hero_art(self):
+        """Скачивает по одному landscape-арту для каждой игры в библиотеке
+        (Steam library_hero ИЛИ RAWG background_image). Вызывается из main.py
+        после load_library — в фоне, не блокирует UI. К моменту F11 кэш прогрет."""
+        logger.info(f"prefetch_hero_art: библиотека содержит {len(self._games)} игр")
+        all_games = list(self._games.values())
+        if not all_games:
+            return
+
+        # Фильтруем уже закэшированные (включая кастомные) / known-missing
+        todo = []
+        for g in all_games:
+            if not g.uid:
+                continue
+            if self.get_hero_path(g):  # уже есть фон (auto или custom)
+                continue
+            miss = self.cache_heroes / f"{g.uid}.miss"
+            if miss.exists():
+                continue
+            todo.append(g)
+
+        if not todo:
+            logger.info("prefetch_hero_art: всё уже в кэше")
+            return
+
+        logger.info(f"prefetch_hero_art: качаем landscape-арт для {len(todo)} игр")
+
+        def _run_parallel():
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                results = list(ex.map(self._try_download_hero_for_game, todo))
+            ok = sum(1 for r in results if r)
+            logger.info(f"prefetch_hero_art: успех {ok}/{len(todo)}")
+
+        await asyncio.to_thread(_run_parallel)

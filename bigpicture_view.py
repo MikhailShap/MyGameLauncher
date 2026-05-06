@@ -84,6 +84,9 @@ class BigPictureView:
         on_launch: Callable[[GameModel], None],
         on_request_scan: Optional[Callable[[], None]] = None,
         on_change_theme: Optional[Callable[[str], None]] = None,
+        on_save_settings: Optional[Callable[[], None]] = None,
+        on_pick_custom_bg: Optional[Callable[[GameModel], None]] = None,
+        gamepad_manager=None,
     ):
         self.page = page
         self.gm = game_manager
@@ -92,9 +95,12 @@ class BigPictureView:
         self._on_launch = on_launch
         self._on_request_scan = on_request_scan
         self._on_change_theme = on_change_theme
+        self._on_save_settings = on_save_settings
+        self._on_pick_custom_bg = on_pick_custom_bg
+        self._gp = gamepad_manager  # для rumble
 
         # State
-        self._collections: List[dict] = []  # включая псевдо: All / Favorites / Steam
+        self._collections: List[dict] = []  # включая псевдо: All / Recent / Favorites / Steam
         self._current_collection_idx: int = 0
         self._games: List[GameModel] = []
         self._game_idx: int = 0
@@ -106,15 +112,23 @@ class BigPictureView:
 
         # UI references
         self._tabs_row: Optional[ft.Row] = None
-        self._hero_image: Optional[ft.Image] = None
+        # Hero — Container с DecorationImage, не ft.Image: иначе при src=None
+        # (пустая коллекция) Flet валится с 'Image must have "src" specified'.
+        self._hero_card: Optional[ft.Container] = None
         self._hero_title: Optional[ft.Text] = None
         self._hero_meta: Optional[ft.Text] = None
+        self._hero_counter: Optional[ft.Text] = None
         self._hero_favorite_icon: Optional[ft.Icon] = None
         self._carousel_row: Optional[ft.Row] = None
         self._hint_bar: Optional[ft.Container] = None
         self._settings_panel: Optional[ft.Container] = None
         self._collections_panel: Optional[ft.Container] = None
         self._root: Optional[ft.Container] = None
+
+        # Background art (фон во весь экран — landscape арт текущей игры).
+        # Используем Container с image=ft.DecorationImage: ft.Image даже с
+        # expand=True не растягивается во весь экран (рендерится на natural-size).
+        self._bg_art: Optional[ft.Container] = None
 
         self._refresh_collections()
         self._refresh_games()
@@ -126,10 +140,12 @@ class BigPictureView:
         self._tabs_row = ft.Row(controls=[], spacing=12, scroll=ft.ScrollMode.HIDDEN)
         self._build_tabs()
 
-        self._hero_image = ft.Image(
-            src=self._safe_icon_path(self._current_game()),
-            width=320, height=480, fit="cover",
-            border_radius=ft.BorderRadius(20, 20, 20, 20),
+        initial_hero_cover = self._safe_icon_path(self._current_game())
+        self._hero_card = ft.Container(
+            width=320, height=480,
+            border_radius=20,
+            bgcolor=CARD_BG if not initial_hero_cover else None,
+            image=ft.DecorationImage(src=initial_hero_cover, fit="cover") if initial_hero_cover else None,
         )
         self._hero_title = ft.Text("", size=44, weight=ft.FontWeight.BOLD, color=TEXT_WHITE)
         self._hero_meta = ft.Text("", size=18, color=TEXT_DIM)
@@ -164,7 +180,7 @@ class BigPictureView:
                 spacing=40,
                 alignment=ft.MainAxisAlignment.START,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[self._hero_image, hero_right],
+                controls=[self._hero_card, hero_right],
             ),
         )
 
@@ -172,7 +188,6 @@ class BigPictureView:
             controls=[],
             spacing=14,
             alignment=ft.MainAxisAlignment.CENTER,
-            scroll=ft.ScrollMode.HIDDEN,
         )
         self._build_carousel()
 
@@ -200,6 +215,28 @@ class BigPictureView:
         self._settings_panel = self._build_settings_panel()
         self._collections_panel = self._build_collections_panel()
 
+        # Background art layer — фоном на весь экран лежит обложка/скриншот.
+        # Container с image=DecorationImage растягивает картинку на весь
+        # contained box. В Stack используем абсолютные left/top/right/bottom=0
+        # вместо expand=True — Flet иначе на первом рендере даёт child'у
+        # loose constraints, и фон занимает только часть экрана до relayout.
+        initial_bg = self._initial_bg_url(self._current_game())
+        self._bg_art = ft.Container(
+            left=0, top=0, right=0, bottom=0,
+            image=ft.DecorationImage(src=initial_bg, fit="cover") if initial_bg else None,
+            opacity=0.55 if initial_bg else 0.0,
+            animate_opacity=ft.Animation(400, ft.AnimationCurve.EASE_OUT),
+        )
+        # Тёмная вуаль для читаемости UI поверх ярких изображений
+        bg_veil = ft.Container(
+            left=0, top=0, right=0, bottom=0,
+            gradient=ft.LinearGradient(
+                begin=ft.Alignment(0, -1),
+                end=ft.Alignment(0, 1),
+                colors=["#000000A0", "#00000060", "#000000B0"],
+            ),
+        )
+
         main_column = ft.Column(
             expand=True,
             spacing=0,
@@ -220,11 +257,19 @@ class BigPictureView:
             ),
             content=ft.Stack(
                 expand=True,
-                controls=[main_column, self._settings_panel, self._collections_panel],
+                controls=[
+                    self._bg_art,            # 1. background art (низший слой)
+                    bg_veil,                  # 2. тёмная вуаль для читаемости
+                    main_column,              # 3. основной UI
+                    self._settings_panel,     # 4. settings overlay
+                    self._collections_panel,  # 5. collections overlay
+                ],
             ),
         )
 
         self._refresh_hero()
+        # Инициируем загрузку фона для первой игры
+        self._schedule_bg_update()
         return self._root
 
     # ----- Gamepad input dispatch (вызывается из CyberLauncher) -----
@@ -284,12 +329,17 @@ class BigPictureView:
                 self._cycle_theme(1)
             elif name == "LB":
                 self._cycle_theme(-1)
+            elif name == "Y":
+                self._toggle_rumble_setting()
+            elif name == "X":
+                self._open_pick_custom_bg()
             return
 
         if name == "A":
             if self._section == _Section.CAROUSEL:
                 game = self._current_game()
                 if game:
+                    self._rumble_launch()  # сильная вибрация при запуске
                     self._on_launch(game)
             elif self._section == _Section.TABS:
                 self._section = _Section.CAROUSEL
@@ -341,14 +391,30 @@ class BigPictureView:
     # ----- Internal: collections / games refresh -----
 
     def _refresh_collections(self):
-        """Собирает виртуальные + пользовательские коллекции."""
+        """Собирает виртуальные + пользовательские коллекции.
+
+        При первой инициализации выбирает "Недавние" если там есть игры,
+        иначе "Все" — чтобы юзер не открыл BigPicture с пустым экраном."""
         virtual = [
+            {"id": "_recent", "name": "Недавние", "color": "#FF9800", "_virtual": True},
             {"id": "_all", "name": "Все", "color": ACCENT, "_virtual": True},
             {"id": "_favorites", "name": "Избранное", "color": ACCENT_GOLD, "_virtual": True},
             {"id": "_steam", "name": "Steam", "color": "#1B2838", "_virtual": True},
         ]
         user = self.gm.get_collections() if hasattr(self.gm, "get_collections") else []
         self._collections = virtual + list(user)
+
+        # Smart default: "Недавние" если там есть игры, иначе "Все"
+        if not getattr(self, "_initial_collection_set", False):
+            self._initial_collection_set = True
+            all_games = list(self.gm.get_all_games()) if hasattr(self.gm, "get_all_games") else []
+            has_recent = any(g.last_played for g in all_games)
+            if not has_recent:
+                for i, c in enumerate(self._collections):
+                    if c["id"] == "_all":
+                        self._current_collection_idx = i
+                        break
+
         if self._current_collection_idx >= len(self._collections):
             self._current_collection_idx = 0
 
@@ -358,6 +424,17 @@ class BigPictureView:
             return
         col = self._collections[self._current_collection_idx]
         cid = col["id"]
+        if cid == "_recent":
+            # Недавние — игры с last_played, отсортированные по последнему запуску
+            all_games = list(self.gm.get_all_games()) if hasattr(self.gm, "get_all_games") else []
+            games = [g for g in all_games if g.last_played]
+            games.sort(key=lambda g: g.last_played or "", reverse=True)
+            # Ограничим топ-30 (как обычно делают консоли в "Recent")
+            games = games[:30]
+            self._games = games
+            if self._game_idx >= len(self._games):
+                self._game_idx = max(0, len(self._games) - 1)
+            return
         if cid == "_all":
             games = list(self.gm.get_all_games()) if hasattr(self.gm, "get_all_games") else []
         elif cid == "_favorites":
@@ -387,8 +464,10 @@ class BigPictureView:
         if not self._games:
             return
         self._game_idx = (self._game_idx + delta) % len(self._games)
+        self._rumble_tick()  # лёгкая вибрация при смене карточки
         self._build_carousel()
         self._refresh_hero()
+        self._schedule_bg_update()
         self._safe_update()
 
     def _move_collection(self, delta: int):
@@ -396,11 +475,34 @@ class BigPictureView:
             return
         self._current_collection_idx = (self._current_collection_idx + delta) % len(self._collections)
         self._game_idx = 0
+        self._rumble_collection()  # средняя вибрация при смене коллекции
         self._refresh_games()
         self._build_tabs()
         self._build_carousel()
         self._refresh_hero()
+        self._schedule_bg_update()
         self._safe_update()
+
+    # ----- Rumble helpers -----
+
+    def _rumble_enabled(self) -> bool:
+        """Проверяет настройку gamepad_rumble. По умолчанию вибрация ВКЛ."""
+        return bool(self.settings.get("gamepad_rumble", True)) and self._gp is not None
+
+    def _rumble_tick(self):
+        """Очень короткая вибрация при перелистывании карточек."""
+        if self._rumble_enabled():
+            self._gp.rumble(low_frequency=0.0, high_frequency=0.25, duration_ms=40)
+
+    def _rumble_collection(self):
+        """Средняя — при смене коллекции (более значимое действие)."""
+        if self._rumble_enabled():
+            self._gp.rumble(low_frequency=0.15, high_frequency=0.35, duration_ms=80)
+
+    def _rumble_launch(self):
+        """Сильная — при запуске игры."""
+        if self._rumble_enabled():
+            self._gp.rumble(low_frequency=0.6, high_frequency=0.7, duration_ms=400)
 
     # ----- Internal: rendering -----
 
@@ -526,11 +628,19 @@ class BigPictureView:
                 self._hero_meta.value = "Переключите коллекцию (L1/R1) или запустите сканирование (Start)"
                 self._hero_favorite_icon.name = ft.Icons.STAR_BORDER
                 self._hero_favorite_icon.color = TEXT_DIM
-                self._hero_image.src = None
+            if self._hero_card is not None:
+                self._hero_card.image = None
+                self._hero_card.bgcolor = CARD_BG
             return
 
-        if self._hero_image is not None:
-            self._hero_image.src = self._safe_icon_path(game)
+        if self._hero_card is not None:
+            cover = self._safe_icon_path(game)
+            if cover:
+                self._hero_card.image = ft.DecorationImage(src=cover, fit="cover")
+                self._hero_card.bgcolor = None
+            else:
+                self._hero_card.image = None
+                self._hero_card.bgcolor = CARD_BG
         if self._hero_title is not None:
             self._hero_title.value = game.title
         if self._hero_meta is not None:
@@ -578,36 +688,81 @@ class BigPictureView:
     # ----- Settings panel -----
 
     def _build_settings_panel(self) -> ft.Container:
+        # Rumble chip — динамический, обновляется через _refresh_settings_panel
+        self._rumble_chip = self._build_rumble_chip()
+
         return ft.Container(
             visible=False,
             alignment=ft.Alignment(0, 0),
             bgcolor="#000000B3",
             content=ft.Container(
-                width=720,
+                width=760,
                 bgcolor="#0d1428",
                 border=ft.Border.all(2, ACCENT),
                 border_radius=20,
                 padding=40,
                 content=ft.Column(
-                    spacing=20,
+                    spacing=18,
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
                         ft.Text("Настройки", size=32, weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
-                        ft.Text("Отдельный экран в десктоп-режиме даёт больше опций", size=14, color=TEXT_DIM),
-                        ft.Container(height=10),
+                        ft.Text("Быстрые действия в Big Picture-режиме", size=14, color=TEXT_DIM),
+                        ft.Container(height=4),
                         ft.Row(
                             spacing=12,
                             alignment=ft.MainAxisAlignment.CENTER,
                             controls=[
                                 self._hint_chip("Ⓐ", "Сканировать библиотеку", ACCENT_GREEN),
                                 self._hint_chip("L1/R1", "Сменить тему", ACCENT),
-                                self._hint_chip("Ⓑ/Start", "Закрыть", "#FF5252"),
                             ],
                         ),
+                        # Динамический tobble — Y переключает вибрацию
+                        self._rumble_chip,
+                        ft.Container(height=4),
+                        self._hint_chip("Ⓧ", "Загрузить свой фон для текущей игры", "#80C0FF"),
+                        ft.Container(height=4),
+                        self._hint_chip("Ⓑ/Start", "Закрыть", "#FF5252"),
                     ],
                 ),
             ),
         )
+
+    def _build_rumble_chip(self) -> ft.Container:
+        """Чип с состоянием вибрации. Y переключает."""
+        on = bool(self.settings.get("gamepad_rumble", True))
+        color = ACCENT_GREEN if on else "#FF5252"
+        label = f"Вибрация геймпада: {'ВКЛ' if on else 'ВЫКЛ'}"
+        return ft.Container(
+            padding=ft.Padding(14, 10, 14, 10),
+            bgcolor="#0008",
+            border_radius=14,
+            border=ft.Border.all(2, color),
+            content=ft.Row(
+                spacing=10,
+                controls=[
+                    ft.Text("Ⓨ", size=16, weight=ft.FontWeight.BOLD, color=color),
+                    ft.Text(label, size=14, color=TEXT_WHITE),
+                ],
+            ),
+        )
+
+    def _refresh_settings_panel(self):
+        """Перерисовывает rumble-чип после toggle."""
+        if self._settings_panel is None:
+            return
+        # Заменяем содержимое чипа на месте, без полного перестроения панели
+        on = bool(self.settings.get("gamepad_rumble", True))
+        color = ACCENT_GREEN if on else "#FF5252"
+        label = f"Вибрация геймпада: {'ВКЛ' if on else 'ВЫКЛ'}"
+        try:
+            chip = self._rumble_chip
+            chip.border = ft.Border.all(2, color)
+            row = chip.content
+            row.controls[0].color = color
+            row.controls[1].value = label
+        except Exception:
+            pass
+        self._safe_update()
 
     def _open_settings(self):
         self._settings_open = True
@@ -642,6 +797,65 @@ class BigPictureView:
         new_id = ids[(cur + delta) % len(ids)]
         self.settings["theme"] = new_id
         self._on_change_theme(new_id)
+
+    def _toggle_rumble_setting(self):
+        """Переключает gamepad_rumble в settings, сохраняет, обновляет UI.
+        Также даёт короткий feedback-вибрацию (если включается) — чтобы юзер
+        сразу почувствовал что новое состояние применилось."""
+        new_value = not bool(self.settings.get("gamepad_rumble", True))
+        self.settings["gamepad_rumble"] = new_value
+        if self._on_save_settings:
+            try:
+                self._on_save_settings()
+            except Exception:
+                pass
+        self._refresh_settings_panel()
+        # Если включили — пульс для подтверждения
+        if new_value:
+            self._rumble_collection()
+
+    def _open_pick_custom_bg(self):
+        """Открывает диалог выбора файла для замены landscape-фона текущей
+        игры. Реальная работа делегируется CyberLauncher (живёт tk-цикл)."""
+        game = self._current_game()
+        if game is None or self._on_pick_custom_bg is None:
+            return
+        # Закрываем settings panel чтобы юзер видел изменение фона
+        self._close_settings()
+        try:
+            self._on_pick_custom_bg(game)
+        except Exception:
+            pass
+
+    def get_current_games_snapshot(self) -> tuple[list, int]:
+        """Возвращает (games_list, current_idx) для использования снаружи —
+        screensaver хочет начать слайдшоу с текущей фокусной игры и идти
+        дальше в том же порядке, что в BP-карусели."""
+        return list(self._games), self._game_idx
+
+    def apply_custom_bg(self, game_uid: str):
+        """Вызывается из CyberLauncher после успешной загрузки своего фона.
+        Если юзер всё ещё на этой игре — обновляем фон с диска.
+
+        Hack: Flutter кэширует декодированные изображения по пути. Файл
+        перезаписан, но путь тот же → Flutter отдаёт старый декод.
+        Решение — двухфазный апдейт: сначала image=None + page.update()
+        (Flutter дропает картинку), затем image=new + page.update() (новый
+        декод с диска). Между ними обязательно нужен явный page.update()."""
+        cur = self._current_game()
+        if cur is None or cur.uid != game_uid:
+            return
+        try:
+            if self._bg_art is not None:
+                self._bg_art.image = None
+                self._bg_art.opacity = 0.0
+                self._safe_update()
+        except Exception:
+            pass
+        # Теперь применяем с диска. _apply_bg_for_current_game сделает
+        # второй page.update() — Flutter увидит новый image как смену
+        # с None и заново прочитает файл.
+        self._apply_bg_for_current_game()
 
     # ----- Collections overlay -----
 
@@ -766,6 +980,40 @@ class BigPictureView:
             return game.icon_path if os.path.exists(game.icon_path) else None
         abs_path = os.path.abspath(game.icon_path)
         return abs_path if os.path.exists(abs_path) else None
+
+    def _initial_bg_url(self, game: Optional[GameModel]) -> Optional[str]:
+        """Landscape-арт для фона — ТОЛЬКО из локального кэша.
+        GameManager.prefetch_hero_art заранее скачал по одному качественному
+        арту на игру (Steam library_hero / RAWG background_image). Если
+        prefetch ещё не успел — None, BigPicture покажет тёмный градиент."""
+        return self.gm.get_hero_path(game)
+
+    # ----- Background art (single static landscape per game) -----
+
+    def _schedule_bg_update(self):
+        """Применяет фон текущей игры. Только из локального кэша
+        (GameManager.prefetch_hero_art скачал заранее). Никаких сетевых
+        запросов и cycling — один статичный качественный фон на игру."""
+        self._apply_bg_for_current_game()
+
+    def _apply_bg_for_current_game(self):
+        """Ставит ОДИН качественный landscape-арт текущей игры из кэша.
+        Если в кэше нет (prefetch не успел или арт не нашёлся) — фон
+        прозрачный (только тёмный градиент), без плохих fallback-картинок."""
+        try:
+            if self._bg_art is None:
+                return
+            game = self._current_game()
+            bg = self._initial_bg_url(game) if game else None
+            if bg:
+                self._bg_art.image = ft.DecorationImage(src=bg, fit="cover")
+                self._bg_art.opacity = 0.55
+            else:
+                self._bg_art.image = None
+                self._bg_art.opacity = 0.0
+            self._safe_update()
+        except Exception:
+            pass
 
     def _safe_update(self):
         try:

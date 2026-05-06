@@ -8,8 +8,11 @@ import threading
 import webbrowser
 import os
 import atexit
+import subprocess
+import time
 from pathlib import Path
 from tkinter import Tk, filedialog
+from typing import Optional
 
 # Windows-specific imports for tray and single instance
 if sys.platform == "win32":
@@ -45,31 +48,52 @@ LOCK_FILE = None
 LOCK_HANDLE = None
 
 def acquire_single_instance_lock():
-    """Проверяет, запущен ли уже экземпляр приложения (Windows)"""
+    """Проверяет, запущен ли уже экземпляр приложения (Windows).
+
+    ERROR_ALREADY_EXISTS говорит лишь о том что mutex кто-то держит — это
+    может быть и живой инстанс, и зомби (Flet-runner породил python.exe,
+    который умер аварийно, но handle ещё не освобождён OS, или powershell
+    shell держит). Поэтому верификация: если окна с нашим title нет —
+    значит это зомби, идём дальше и сами захватываем mutex; иначе передаём
+    фокус живому окну и выходим."""
     global LOCK_FILE, LOCK_HANDLE
 
     if sys.platform != "win32":
         return True
 
-    # Используем именованный мьютекс Windows
     mutex_name = "CyberLauncher_SingleInstance_Mutex"
-
     kernel32 = ctypes.windll.kernel32
+    user32 = ctypes.windll.user32
+
     LOCK_HANDLE = kernel32.CreateMutexW(None, True, mutex_name)
 
     ERROR_ALREADY_EXISTS = 183
     if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
-        # Приложение уже запущено - попробуем активировать его окно
+        hwnd = 0
         try:
-            user32 = ctypes.windll.user32
             hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
-            if hwnd:
+        except Exception:
+            hwnd = 0
+
+        if hwnd:
+            # Реальный живой инстанс — выводим его окно и выходим
+            try:
                 SW_RESTORE = 9
                 user32.ShowWindow(hwnd, SW_RESTORE)
                 user32.SetForegroundWindow(hwnd)
-        except:
+            except Exception:
+                pass
+            return False
+
+        # Окна нет = зомби-mutex. Закрываем handle и идём как обычный
+        # запуск. Системный mutex объект исчезнет когда последний хэндл
+        # на него закроется (наш и зомбиных) — либо Windows GC его
+        # подберёт. Для нас критично только не выйти молча.
+        try:
+            kernel32.CloseHandle(LOCK_HANDLE)
+        except Exception:
             pass
-        return False
+        LOCK_HANDLE = None
 
     return True
 
@@ -741,6 +765,16 @@ class CyberLauncher:
         self._pre_bigpicture_state: dict = {}
         self.gamepad_manager = None  # инициализируется в build_ui
 
+        # Screensaver: после N сек бездействия в BigPicture показывает фоны
+        # игр поочерёдно. Cross-fade между двумя image-слоями.
+        self._idle_timeout_s: float = 5.0  # TODO: 300 (5 мин) для прода
+        self._screensaver_active: bool = False
+        self._last_activity_ts: float = 0.0  # выставится в build_ui
+        self._screensaver_idx: int = 0
+        self._screensaver_overlay: Optional[ft.Container] = None
+        self._screensaver_layer_a: Optional[ft.Container] = None
+        self._screensaver_layer_b: Optional[ft.Container] = None
+
         self.setup_page()
         self.build_ui()
     
@@ -1210,6 +1244,11 @@ class CyberLauncher:
 
         # Запуск геймпада (опционально)
         self._init_gamepad()
+
+        # Screensaver overlay (поверх всего, изначально скрыт)
+        self._build_screensaver_overlay()
+        self._last_activity_ts = time.time()
+        self.page.run_task(self._idle_monitor_loop)
     
     def build_settings_view(self):
         def create_theme_card(theme_id: str, theme_data: dict):
@@ -1315,6 +1354,30 @@ class CyberLauncher:
                                     value=self.settings.get("enable_animations", True),
                                     active_color=ACCENT_BLUE,
                                     on_change=lambda e: self.toggle_animations(e.control.value),
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        padding=15,
+                        border_radius=10,
+                        bgcolor="#1E1E1E",
+                    ),
+
+                    ft.Container(height=15),
+
+                    # Переключатель вибрации геймпада в BigPicture
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[
+                                ft.Column(controls=[
+                                    ft.Text("Вибрация геймпада", size=14, color=TEXT_WHITE),
+                                    ft.Text("Тактильный отклик в Big Picture при навигации и запуске игр", size=12, color=TEXT_GREY),
+                                ], spacing=2),
+                                ft.Container(expand=True),
+                                ft.Switch(
+                                    value=self.settings.get("gamepad_rumble", True),
+                                    active_color=ACCENT_BLUE,
+                                    on_change=lambda e: self.toggle_gamepad_rumble(e.control.value),
                                 ),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -1561,6 +1624,17 @@ class CyberLauncher:
         self.disk_info_sidebar_button.visible = value
         self.disk_info_sidebar_button.update()
 
+    def toggle_gamepad_rumble(self, value: bool):
+        """Включить/выключить вибрацию геймпада в BigPicture-режиме."""
+        self.settings["gamepad_rumble"] = value
+        self.save_settings()
+        # BigPictureView читает self.settings["gamepad_rumble"] перед каждым
+        # rumble-вызовом, так что отдельно его уведомлять не нужно.
+        self.show_snackbar(
+            "Вибрация геймпада включена" if value else "Вибрация геймпада выключена",
+            bgcolor="#1E1E1E",
+        )
+
     def build_disk_info_view(self):
         """Создает представление с информацией о дисках"""
         import shutil
@@ -1752,6 +1826,184 @@ class CyberLauncher:
             # Полный выход (из меню трея или Alt+F4 без трея)
             self.page.run_task(self._async_full_exit)
 
+    # ========== Screensaver (idle slideshow of game heroes) ==========
+
+    SCREENSAVER_FADE_MS = 1500   # длительность cross-fade между картинками
+    SCREENSAVER_HOLD_S = 7.0     # сколько каждая картинка полностью видна
+
+    def _build_screensaver_overlay(self):
+        """Создаёт fullscreen overlay со слайдшоу. Cross-fade через два слоя:
+        пока A гаснет, B уже проявляется — нет паузы с чёрным экраном."""
+        self._screensaver_layer_a = ft.Container(
+            left=0, top=0, right=0, bottom=0,
+            opacity=0.0,
+            animate_opacity=ft.Animation(self.SCREENSAVER_FADE_MS, ft.AnimationCurve.EASE_IN_OUT),
+        )
+        self._screensaver_layer_b = ft.Container(
+            left=0, top=0, right=0, bottom=0,
+            opacity=0.0,
+            animate_opacity=ft.Animation(self.SCREENSAVER_FADE_MS, ft.AnimationCurve.EASE_IN_OUT),
+        )
+        self._screensaver_overlay = ft.Container(
+            expand=True,
+            visible=False,
+            bgcolor="#000000",
+            on_click=lambda e: self._exit_screensaver(),
+            content=ft.Stack(
+                expand=True,
+                controls=[
+                    self._screensaver_layer_a,
+                    self._screensaver_layer_b,
+                ],
+            ),
+        )
+        self.page.overlay.append(self._screensaver_overlay)
+
+    def mark_activity(self):
+        """Сбрасывает таймер бездействия. Вызывается из любых input-хендлеров.
+        Если screensaver активен — выходим из него."""
+        self._last_activity_ts = time.time()
+        if self._screensaver_active:
+            self._exit_screensaver()
+
+    async def _idle_monitor_loop(self):
+        """Раз в секунду проверяет idle-time. Слайдшоу запускается ТОЛЬКО
+        когда юзер в BigPicture-режиме — в обычной библиотеке скрин-сейвер
+        не появляется. Бесконечный цикл — ошибки на отдельной итерации
+        логируются, но цикл продолжает жить, иначе один сбой убьёт фичу
+        до перезапуска лаунчера."""
+        while True:
+            try:
+                await asyncio.sleep(1.0)
+                if self._screensaver_active:
+                    continue
+                if not self._bigpicture_active:
+                    continue  # screensaver только в BigPicture
+                if time.time() - self._last_activity_ts >= self._idle_timeout_s:
+                    self._enter_screensaver()
+            except asyncio.CancelledError:
+                backend_logger.info("Idle monitor loop cancelled")
+                return
+            except Exception as ex:
+                backend_logger.warning(f"Idle monitor tick error: {ex}")
+                # Маленькая пауза чтобы не спамить логи при перманентной ошибке
+                try:
+                    await asyncio.sleep(2.0)
+                except Exception:
+                    pass
+
+    def _enter_screensaver(self):
+        """Показывает overlay, запускает слайдшоу-цикл с текущей игры в BP."""
+        if not self._bigpicture_active:
+            return  # двойная защита — только в BP
+
+        # Берём список и индекс из BP (текущая коллекция, фокусная игра)
+        bp_games: list = []
+        bp_idx: int = 0
+        if self._bigpicture_view is not None:
+            try:
+                bp_games, bp_idx = self._bigpicture_view.get_current_games_snapshot()
+            except Exception:
+                bp_games, bp_idx = [], 0
+
+        # Фильтруем только игры с готовым landscape-фоном
+        games_with_art = [g for g in bp_games if self.game_manager.get_hero_path(g)]
+        # Если в текущей коллекции нет ни одной игры с фоном — fallback
+        # на всю библиотеку (всё равно показать что-то лучше, чем ничего)
+        if not games_with_art:
+            games_with_art = [g for g in self.game_manager.get_all_games()
+                              if self.game_manager.get_hero_path(g)]
+            if not games_with_art:
+                return
+            start_idx = 0
+        else:
+            # Найти стартовую позицию = текущая игра BP. Если её нет среди
+            # отфильтрованных (например, у неё нет арта) — берём ближайшую
+            # следующую с артом.
+            start_idx = 0
+            if bp_games and 0 <= bp_idx < len(bp_games):
+                cur_uid = bp_games[bp_idx].uid
+                for i, g in enumerate(games_with_art):
+                    if g.uid == cur_uid:
+                        start_idx = i
+                        break
+
+        self._screensaver_games = games_with_art
+        self._screensaver_idx = start_idx
+        self._screensaver_active = True
+        # Сбросим оба слоя — стартуем с чёрного, далее cycle сам сделает fade-in
+        self._screensaver_layer_a.image = None
+        self._screensaver_layer_a.opacity = 0.0
+        self._screensaver_layer_b.image = None
+        self._screensaver_layer_b.opacity = 0.0
+        self._screensaver_overlay.visible = True
+        self.page.update()
+        self.page.run_task(self._screensaver_cycle)
+        backend_logger.info(f"Screensaver: started ({len(games_with_art)} arts, idx={start_idx})")
+
+    def _exit_screensaver(self):
+        """Прячет overlay, сбрасывает activity-таймер."""
+        if not self._screensaver_active:
+            return
+        self._screensaver_active = False
+        self._screensaver_layer_a.opacity = 0.0
+        self._screensaver_layer_b.opacity = 0.0
+        self._screensaver_overlay.visible = False
+        self._last_activity_ts = time.time()
+        try:
+            self.page.update()
+        except Exception:
+            pass
+        backend_logger.info("Screensaver: exited")
+
+    async def _screensaver_cycle(self):
+        """Циклит фоны игр через cross-fade двух слоёв.
+        Каждая итерация ровно одинакова: fade-транзишн (1.5с) → hold (7с).
+        Первая картинка тоже идёт через fade-in (просто без fade-out
+        предыдущего слоя), поэтому ощущение длительности консистентное."""
+        try:
+            # on_back — слой куда будет загружаться следующая картинка,
+            # on_top — слой который сейчас показывает текущую. Стартуют оба
+            # с opacity=0 (выставлено в _enter_screensaver).
+            on_top = self._screensaver_layer_a
+            on_back = self._screensaver_layer_b
+            # Стартуем с _screensaver_idx — позиции выставленной в _enter_screensaver
+            # под текущую фокусную игру в BP
+            idx = self._screensaver_idx
+
+            while self._screensaver_active:
+                game = self._screensaver_games[idx % len(self._screensaver_games)]
+                hero = self.game_manager.get_hero_path(game)
+                idx += 1
+                if not hero:
+                    continue
+
+                # Cross-fade: новая картинка ставится в нижний слой (opacity 0)
+                # и одновременно on_back→1, on_top→1→0. Если on_top уже был 0
+                # (первая итерация), animate_opacity не сработает на нём — но
+                # время сна одинаковое, так что timing консистентен.
+                on_back.image = ft.DecorationImage(src=hero, fit="cover")
+                on_back.opacity = 1.0
+                on_top.opacity = 0.0
+                self.page.update()
+
+                # Ждём окончания fade-транзишна
+                await asyncio.sleep(self.SCREENSAVER_FADE_MS / 1000.0)
+                if not self._screensaver_active:
+                    break
+
+                # Меняем роли: то что фейдилось внутрь стало текущим топом
+                on_top, on_back = on_back, on_top
+
+                # Держим текущую картинку
+                await asyncio.sleep(self.SCREENSAVER_HOLD_S)
+                if not self._screensaver_active:
+                    break
+        except Exception as ex:
+            backend_logger.warning(f"Screensaver cycle ended: {ex}")
+
+    # ========== End Screensaver ==========
+
     async def _async_full_exit(self):
         """Запускает корректную последовательность завершения и выходит."""
         try:
@@ -1843,19 +2095,31 @@ class CyberLauncher:
 
     def _gp_dispatch_button(self, name: str, pressed: bool):
         # Колбэк вызывается из gamepad-thread'а — пересылаем в UI loop
+        if pressed:
+            self.page.run_task(self._async_mark_activity)
         if self._bigpicture_view is not None and self._bigpicture_active:
             self.page.run_task(self._gp_async_button, name, pressed)
 
     def _gp_dispatch_dpad(self, name: str, pressed: bool):
+        if pressed:
+            self.page.run_task(self._async_mark_activity)
         if self._bigpicture_view is not None and self._bigpicture_active:
             self.page.run_task(self._gp_async_dpad, name, pressed)
 
     def _gp_dispatch_axis(self, name: str, value: float):
+        # Только значимые движения стиков/триггеров
+        if abs(value) > 0.3:
+            self.page.run_task(self._async_mark_activity)
         if self._bigpicture_view is not None and self._bigpicture_active:
             self.page.run_task(self._gp_async_axis, name, value)
 
+    async def _async_mark_activity(self):
+        """Async-обёртка для mark_activity (gamepad коллбэки в другом thread'е)."""
+        self.mark_activity()
+
     def _gp_on_guide(self):
         # Guide — глобальная кнопка, всегда переключает BigPicture
+        self.page.run_task(self._async_mark_activity)  # снять screensaver
         self.page.run_task(self._gp_async_toggle_bp)
 
     async def _gp_async_button(self, name: str, pressed: bool):
@@ -1882,6 +2146,8 @@ class CyberLauncher:
     def _on_keyboard_event(self, e):
         """Глобальные хоткеи + клавиатурная навигация в BigPicture-режиме
         (на случай если геймпад не определился)."""
+        # Любая клавиша = активность пользователя
+        self.mark_activity()
         try:
             key = getattr(e, "key", None)
             if key is None:
@@ -1950,6 +2216,9 @@ class CyberLauncher:
                 on_launch=self._bp_launch_game,
                 on_request_scan=self._bp_request_scan,
                 on_change_theme=self.change_theme,
+                on_save_settings=self.save_settings,  # для toggle rumble из BP
+                on_pick_custom_bg=self._bp_pick_custom_bg,  # своя картинка-фон
+                gamepad_manager=self.gamepad_manager,  # для rumble
             )
             self._bp_root = self._bigpicture_view.build()
         else:
@@ -2007,6 +2276,10 @@ class CyberLauncher:
     def _exit_bigpicture(self):
         if not self._bigpicture_active:
             return
+        # Если screensaver был активен — обязательно гасим перед выходом из BP,
+        # иначе overlay останется висеть поверх обычной библиотеки
+        if self._screensaver_active:
+            self._exit_screensaver()
         try:
             self.page.window.full_screen = False
         except Exception:
@@ -2051,6 +2324,43 @@ class CyberLauncher:
             except Exception:
                 pass
         self.page.run_task(_refresh_bp_after)
+
+    def _bp_pick_custom_bg(self, game: GameModel):
+        """Открывает tkinter file picker для выбора картинки-фона.
+        Запускается в отдельном thread'е, чтобы не блокировать Flet/Flutter
+        event loop. После успеха — обновляем фон в BP."""
+        def pick_thread():
+            try:
+                root = Tk()
+                root.withdraw()
+                root.attributes('-topmost', True)
+                file_path = filedialog.askopenfilename(
+                    title=f"Свой фон для: {game.title}",
+                    filetypes=[
+                        ("Изображения", "*.jpg *.jpeg *.png *.webp *.bmp"),
+                        ("JPEG", "*.jpg *.jpeg"),
+                        ("PNG", "*.png"),
+                        ("WebP", "*.webp"),
+                        ("Все файлы", "*.*"),
+                    ],
+                )
+                root.destroy()
+                if not file_path:
+                    return  # Отмена
+                # Сохранение через Pillow — sync, поэтому в этом же потоке
+                ok = self.game_manager.set_custom_hero_art(game, file_path)
+                # Обновляем BP в UI-loop
+                if ok and self._bigpicture_view is not None:
+                    async def _refresh_bp():
+                        try:
+                            self._bigpicture_view.apply_custom_bg(game.uid)
+                        except Exception:
+                            pass
+                    self.page.run_task(_refresh_bp)
+            except Exception as ex:
+                backend_logger.error(f"Custom bg picker error: {ex}")
+
+        threading.Thread(target=pick_thread, daemon=True).start()
     
     async def on_refresh_click(self, e):
         """Обработчик нажатия кнопки обновления"""
@@ -2096,7 +2406,12 @@ class CyberLauncher:
 
         self.loading_overlay.hide()
         self.update_game_grid()
-    
+
+        # Прогреваем кэш landscape-арта для BigPicture-фона в фоне.
+        # Не блокирует UI — page.run_task шедулит coroutine и идёт дальше.
+        # К моменту F11 весь арт уже на диске.
+        self.page.run_task(self.game_manager.prefetch_hero_art)
+
     async def refresh_library(self):
         backend_logger.info("UI: refresh_library async task started")
         self.loading_overlay.show("Сканирование игр...")
@@ -2113,7 +2428,9 @@ class CyberLauncher:
         self.loading_overlay.hide()
         self.page.update()  # Скрыть оверлей
         self.update_game_grid()
-    
+        # Догружаем hero-арт для новых Steam-игр (если что-то добавилось)
+        self.page.run_task(self.game_manager.prefetch_hero_art)
+
     def on_scan_progress(self, message: str, current: int, total: int):
         self.loading_overlay.update_progress(message, current, total)
         self.page.update()  # Обновляем UI для отображения прогресса
@@ -3100,7 +3417,34 @@ def main(page: ft.Page):
     TRAY_APP_INSTANCE = app
 
 
+def _kill_orphan_flet_processes():
+    """Убивает зомби flet.exe / flet_view.exe процессы из предыдущих запусков.
+
+    Сценарий: python.exe умер аварийно (Ctrl+C, краш, taskkill), но Flutter
+    Desktop окно (flet.exe) осталось висеть как зомби с открытым TCP. На
+    следующем старте новый flet.exe может конфликтовать с зомби и тихо
+    умирать → лог обрывается на 'Flet View found' без 'App session started'.
+
+    Запускаем taskkill при старте чтобы гарантировать чистое состояние.
+    Безопасно: убиваем только процессы с именем flet.exe в рамках текущего
+    пользователя; других пользователей taskkill без админа не тронет."""
+    if sys.platform != "win32":
+        return
+    try:
+        # /F — force, /IM — by image name, /FI — filter (только нашего юзера)
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "flet.exe"],
+            capture_output=True, timeout=3,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW — не мигаем cmd-окном
+        )
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    # Очистка зомби flet.exe от предыдущих аварийных запусков
+    _kill_orphan_flet_processes()
+
     # Проверяем, не запущено ли уже приложение
     if not acquire_single_instance_lock():
         # Приложение уже запущено - выходим

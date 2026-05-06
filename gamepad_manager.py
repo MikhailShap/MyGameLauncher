@@ -133,6 +133,18 @@ class GamepadManager:
     def is_connected(self) -> bool:
         return self._controller is not None or self._joystick_fallback is not None
 
+    def rumble(self, low_frequency: float = 0.3, high_frequency: float = 0.3, duration_ms: int = 100):
+        """Запускает вибрацию контроллера. Безопасно если контроллер не подключён.
+
+        low_frequency / high_frequency — 0.0..1.0 (мощность двух моторов).
+        duration_ms — длительность в миллисекундах."""
+        try:
+            ctrl = self._controller
+            if ctrl is not None and hasattr(ctrl, "rumble"):
+                ctrl.rumble(low_frequency, high_frequency, duration_ms)
+        except Exception:
+            pass  # Не падаем если rumble не поддерживается контроллером
+
     # --- internals ---
 
     def _run(self):
@@ -167,6 +179,11 @@ class GamepadManager:
         if self._controller is None and self._joystick_fallback is None:
             # Перепробуем найти и подключиться
             now = time.time()
+            # Settling: после reinit SDL нужно ~200ms чтобы прочитать
+            # дескрипторы устройства. Пытаться сразу — поймаем ghost
+            # joystick (0 buttons / 0 axes), от которого толку ноль.
+            if now - self._last_reinit < 0.25:
+                return
             if count > 0:
                 # Пробуем через SDL Controller сначала
                 attached = False
@@ -198,12 +215,38 @@ class GamepadManager:
                     try:
                         joy_count = pygame.joystick.get_count()
                         if joy_count > 0:
-                            self._joystick_fallback = pygame.joystick.Joystick(0)
-                            self._joystick_fallback.init()
-                            name = self._joystick_fallback.get_name()
-                            nb = self._joystick_fallback.get_numbuttons()
-                            na = self._joystick_fallback.get_numaxes()
-                            nh = self._joystick_fallback.get_numhats()
+                            joy = pygame.joystick.Joystick(0)
+                            joy.init()
+                            name = joy.get_name()
+                            nb = joy.get_numbuttons()
+                            na = joy.get_numaxes()
+                            nh = joy.get_numhats()
+
+                            # Ghost-fallback: SDL зарегистрировал устройство,
+                            # но не успел прочитать дескрипторы. Отклоняем
+                            # такой joystick и форсим reinit — на следующем
+                            # тике SDL должен выдать настоящие значения.
+                            if nb == 0 and na == 0 and nh == 0:
+                                logger.warning(
+                                    f"Ghost joystick (0/0/0) detected: {name}. "
+                                    "Forcing reinit, retry on next tick."
+                                )
+                                try:
+                                    joy.quit()
+                                except Exception:
+                                    pass
+                                try:
+                                    sdl_controller.quit()
+                                    pygame.joystick.quit()
+                                    sdl_controller.init()
+                                    pygame.joystick.init()
+                                except Exception as e:
+                                    logger.warning(f"Ghost-reinit failed: {e}")
+                                self._last_reinit = time.time()
+                                # _joystick_fallback остаётся None, пробуем заново
+                                return
+
+                            self._joystick_fallback = joy
                             logger.warning(
                                 f"Fallback to raw joystick: {name} "
                                 f"(buttons={nb}, axes={na}, hats={nh}). "
@@ -213,8 +256,9 @@ class GamepadManager:
                     except Exception:
                         self._joystick_fallback = None
             else:
-                # Ничего не подключено — раз в 3 сек переинициализация
-                if now - self._last_reinit > 3.0:
+                # Ничего не подключено — раз в 1 сек переинициализация
+                # (раньше было 3с — слишком долго после reconnect геймпада)
+                if now - self._last_reinit > 1.0:
                     self._last_reinit = now
                     try:
                         sdl_controller.quit()
@@ -245,6 +289,18 @@ class GamepadManager:
                 pass
             self._controller = None
             self._reset_state()
+            # Полный reinit SDL controller subsystem при disconnect.
+            # Без этого SDL держит старый instance-id и не видит reconnect
+            # того же устройства (ghost). Reinit сразу — не ждём 1 сек.
+            try:
+                logger.info("Gamepad: reinit SDL after disconnect")
+                sdl_controller.quit()
+                pygame.joystick.quit()
+                sdl_controller.init()
+                pygame.joystick.init()
+            except Exception as e:
+                logger.warning(f"Reinit on disconnect failed: {e}")
+            self._last_reinit = time.time()
             self._safe_call(self.on_disconnected)
             return
 
@@ -360,6 +416,17 @@ class GamepadManager:
             num_buttons = joy.get_numbuttons()
         except Exception:
             self._joystick_fallback = None
+            self._reset_state()
+            # Reinit pygame.joystick subsystem чтобы reconnect был быстрым
+            try:
+                logger.info("Gamepad: reinit pygame.joystick after disconnect")
+                pygame.joystick.quit()
+                sdl_controller.quit()
+                sdl_controller.init()
+                pygame.joystick.init()
+            except Exception as e:
+                logger.warning(f"Reinit on raw-joystick disconnect failed: {e}")
+            self._last_reinit = time.time()
             self._safe_call(self.on_disconnected)
             return
 

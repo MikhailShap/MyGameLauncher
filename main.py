@@ -28,7 +28,7 @@ except ImportError:
     HAS_TRAY = False
 
 # Импорт backend
-from game_manager import GameManager, GameModel, Platform, Category, logger as backend_logger
+from game_manager import GameManager, GameModel, Platform, Category, logger as backend_logger, get_app_data_dir
 
 # Опциональные модули геймпада и BigPicture
 try:
@@ -718,11 +718,12 @@ class LoadingOverlay(ft.Container):
 
 class CyberLauncher:
     """Главный класс приложения"""
-    
-    SETTINGS_FILE = "data/settings.json"
-    
+
     def __init__(self, page: ft.Page):
         self.page = page
+        # Settings лежат в той же папке что log/data/cache — в frozen-режиме
+        # это %APPDATA%\\CyberLauncher\\, в dev — рядом с исходниками
+        self.SETTINGS_FILE = str(get_app_data_dir() / "data" / "settings.json")
 
         # Load settings first to get API keys
         self.settings = self.load_settings()
@@ -2366,7 +2367,7 @@ class CyberLauncher:
         """Обработчик нажатия кнопки обновления"""
         try:
             # Low-level debug write
-            with open("debug_click.txt", "a", encoding="utf-8") as f:
+            with open(get_app_data_dir() / "debug_click.txt", "a", encoding="utf-8") as f:
                 f.write("Button clicked!\n")
                 
             backend_logger.info("UI: Update Library button clicked")
@@ -2381,7 +2382,7 @@ class CyberLauncher:
             import traceback
             err = traceback.format_exc()
             backend_logger.error(f"Error in on_refresh_click: {err}")
-            with open("debug_click.txt", "a", encoding="utf-8") as f:
+            with open(get_app_data_dir() / "debug_click.txt", "a", encoding="utf-8") as f:
                 f.write(f"Error: {err}\n")
 
     async def load_library(self):
@@ -2953,7 +2954,7 @@ class CyberLauncher:
         """Обработчик кнопки авто-поиска в диалоге"""
         try:
             # Low-level debug
-            with open("debug_api_click.txt", "a", encoding="utf-8") as f:
+            with open(get_app_data_dir() / "debug_api_click.txt", "a", encoding="utf-8") as f:
                 f.write(f"API Search clicked for {self.upload_target_game.title}\n")
             
             backend_logger.info(f"UI: API Search clicked for {self.upload_target_game.title}")
@@ -2970,7 +2971,7 @@ class CyberLauncher:
             import traceback
             err = traceback.format_exc()
             backend_logger.error(f"Error in on_api_search_click: {err}")
-            with open("debug_api_click.txt", "a", encoding="utf-8") as f:
+            with open(get_app_data_dir() / "debug_api_click.txt", "a", encoding="utf-8") as f:
                 f.write(f"Error: {err}\n")
 
     async def upload_cover_from_url(self, game: GameModel, url: str):

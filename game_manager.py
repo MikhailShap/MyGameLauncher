@@ -8,6 +8,7 @@ VERSION 6.0 (ANTI-BAN & NEW API)
 """
 
 import os
+import sys
 import re
 import json
 import asyncio
@@ -29,8 +30,24 @@ import tempfile
 # Windows-specific imports
 import winreg
 
+
+def get_app_data_dir() -> Path:
+    """Папка для пользовательских данных (логи, кэш, библиотека, settings).
+
+    В PyInstaller-сборке (frozen) приложение устанавливается в Program Files
+    (read-only без UAC), поэтому писать туда нельзя — используем
+    %APPDATA%\\CyberLauncher\\. В dev-режиме (запуск python main.py) —
+    текущая рабочая папка, чтобы файлы лежали рядом с исходниками."""
+    if getattr(sys, 'frozen', False):
+        base = os.environ.get('APPDATA') or os.path.expanduser('~')
+        d = Path(base) / 'CyberLauncher'
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    return Path('.').resolve()
+
+
 # Настройка логирования (must be before any code that uses logger)
-log_file = "launcher.log"
+log_file = str(get_app_data_dir() / "launcher.log")
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -40,6 +57,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("GameManager")
+logger.info(f"App data dir: {get_app_data_dir()}")
 
 try:
     import win32com.client
@@ -1100,8 +1118,14 @@ class DiskScanner:
 
 
 class GameManager:
-    def __init__(self, data_dir: str = "./data", cache_dir: str = "./cache",
+    def __init__(self, data_dir: str = None, cache_dir: str = None,
                  sgdb_key: str = None, rawg_key: str = None):
+        # В frozen-сборке (Program Files read-only) пишем в %APPDATA%
+        app_dir = get_app_data_dir()
+        if data_dir is None:
+            data_dir = str(app_dir / "data")
+        if cache_dir is None:
+            cache_dir = str(app_dir / "cache")
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.library_file = self.data_dir / "library.json"

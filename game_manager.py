@@ -448,6 +448,40 @@ class SteamGridDBClient:
         self.session_cache[cache_key] = urls
         return urls
 
+    def get_heroes_by_steam_id(self, steam_app_id: str) -> List[str]:
+        """Heroes — landscape-арт SteamGridDB специально для фонов лаунчеров.
+        Возвращает URL-ы, отсортированные с приоритетом 1920x620."""
+        cache_key = f"sgdb_hero_steam_{steam_app_id}"
+        if cache_key in self.session_cache:
+            return self.session_cache[cache_key]
+        data = self._make_request(f"heroes/steam/{steam_app_id}")
+        urls = []
+        if data and data.get('success') and data.get('data'):
+            heroes = data['data']
+            # Предпочитаем 1920x620 (стандарт hero), иначе любые
+            preferred = [h['url'] for h in heroes
+                         if h.get('width') == 1920 and h.get('height') == 620]
+            others = [h['url'] for h in heroes if h.get('url') not in preferred]
+            urls = preferred + others[:3]
+        self.session_cache[cache_key] = urls
+        return urls
+
+    def get_heroes_by_game_id(self, game_id: str) -> List[str]:
+        """Heroes по SteamGridDB-id (для не-Steam игр через search_game)."""
+        cache_key = f"sgdb_hero_game_{game_id}"
+        if cache_key in self.session_cache:
+            return self.session_cache[cache_key]
+        data = self._make_request(f"heroes/game/{game_id}")
+        urls = []
+        if data and data.get('success') and data.get('data'):
+            heroes = data['data']
+            preferred = [h['url'] for h in heroes
+                         if h.get('width') == 1920 and h.get('height') == 620]
+            others = [h['url'] for h in heroes if h.get('url') not in preferred]
+            urls = preferred + others[:3]
+        self.session_cache[cache_key] = urls
+        return urls
+
 
 class RAWGClient:
     """RAWG.io API Client для метаданных игр"""
@@ -1415,16 +1449,41 @@ class GameManager:
                 old_game = self._games[game.uid]
                 game.is_favorite = old_game.is_favorite
                 game.category = old_game.category
-                
+                # КРИТИЧНО: collections иначе все принадлежности игр коллекциям
+                # обнуляются на каждый "Обновить библиотеку" — пользователь
+                # теряет все свои коллекции после rescan
+                game.collections = list(old_game.collections or [])
+                # Также сохраняем историю активности — иначе rescan стирает
+                # last_played/play_time и "Недавние" в BP сбрасываются
+                game.last_played = old_game.last_played
+                game.play_time = old_game.play_time
+                game.added_date = old_game.added_date
+
                 # Восстанавливаем кастомную иконку, если она валидна
                 if old_game.icon_path and self.cover_validator.validate_cache_file(old_game.icon_path):
                     game.icon_path = old_game.icon_path
-                    
+
             new_games_dict[game.uid] = game
 
         # Заменяем библиотеку
         self._games = new_games_dict
         logger.info(f"Library updated. Total games: {len(self._games)}")
+
+        # Сбрасываем .miss-маркеры hero-арта — даём шанс повторно подтянуть
+        # фоны через расширенный каскад (SteamGridDB Heroes) для игр, у
+        # которых раньше не нашлось фона.
+        try:
+            cleared = 0
+            for miss in self.cache_heroes.glob("*.miss"):
+                try:
+                    miss.unlink()
+                    cleared += 1
+                except Exception:
+                    pass
+            if cleared:
+                logger.info(f"Cleared {cleared} .miss markers — heroes will be retried")
+        except Exception:
+            pass
 
         await self.save_library()
         if self._on_progress:
@@ -1644,10 +1703,12 @@ class GameManager:
         return (self.cache_heroes / f"{game.uid}.miss").exists()
 
     def _try_download_hero_for_game(self, game: 'GameModel') -> bool:
-        """Скачивает ОДИН качественный landscape-арт для игры.
-        Источники: Steam library_hero (1920×620, всегда landscape) → RAWG
-        background_image (1280-1920px, официальный арт). Сохраняет в
-        cache/heroes/<uid>.jpg. Если ничего не нашлось — пишет .miss-маркер."""
+        """Скачивает ОДИН качественный landscape-арт для игры. Каскад:
+        1) Steam library_hero (1920×620)
+        2) SteamGridDB Heroes по Steam app_id (требует API key)
+        3) RAWG background_image
+        4) SteamGridDB Heroes поиск по названию
+        Сохраняет в cache/heroes/<uid>.jpg. Если ничего не нашлось — .miss."""
         local = self.cache_heroes / f"{game.uid}.jpg"
         miss = self.cache_heroes / f"{game.uid}.miss"
         if local.exists() or miss.exists():
@@ -1661,14 +1722,38 @@ class GameManager:
                 f"https://cdn.cloudflare.steamstatic.com/steam/apps/{game.app_id}/library_hero.jpg"
             )
 
-        # 2) RAWG background_image — landscape, официальный арт
+        sgdb = self.cover_api_manager.sgdb if self.cover_api_manager else None
         rawg = self.cover_api_manager.rawg if self.cover_api_manager else None
+
+        clean_name = ""
+        try:
+            clean_name = self.cover_api_manager.icon_extractor._clean_name(game.title)
+        except Exception:
+            clean_name = game.title
+
+        # 2) SteamGridDB Heroes по Steam ID — куратор-арт под фоны лаунчеров
+        if sgdb and game.platform == Platform.STEAM.value and game.app_id:
+            try:
+                candidate_urls.extend(sgdb.get_heroes_by_steam_id(game.app_id))
+            except Exception:
+                pass
+
+        # 3) RAWG background_image — официальный landscape арт
         if rawg:
             try:
-                clean = self.cover_api_manager.icon_extractor._clean_name(game.title)
-                rawg_url = rawg.search_game(clean)
+                rawg_url = rawg.search_game(clean_name)
                 if rawg_url:
                     candidate_urls.append(rawg_url)
+            except Exception:
+                pass
+
+        # 4) SteamGridDB Heroes поиск по названию (для не-Steam и для Steam
+        #    у которых первый каскад провалился)
+        if sgdb and clean_name:
+            try:
+                game_id = sgdb.search_game(clean_name)
+                if game_id:
+                    candidate_urls.extend(sgdb.get_heroes_by_game_id(game_id))
             except Exception:
                 pass
 

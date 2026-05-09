@@ -766,6 +766,12 @@ class CyberLauncher:
         self._pre_bigpicture_state: dict = {}
         self.gamepad_manager = None  # инициализируется в build_ui
 
+        # Window focus — нужен чтобы блокировать gamepad-события когда юзер
+        # играет в запущенную игру. SDL читает гейпад даже когда окно не в
+        # фокусе, поэтому без этой защиты A/B/D-pad из игры случайно
+        # запускают другие игры в нашем UI.
+        self._launcher_focused: bool = True
+
         # Screensaver: после N сек бездействия в BigPicture показывает фоны
         # игр поочерёдно. Cross-fade между двумя image-слоями.
         self._idle_timeout_s: float = 300.0  # 5 минут
@@ -1070,10 +1076,16 @@ class CyberLauncher:
             ink=True,
         )
 
+        # Sidebar: непрозрачный bg вместо backdrop blur — blur пересчитывается
+        # каждый кадр над фоном с карточками и сильно тормозит UI на средних
+        # библиотеках. Берём цвет темы и форсим непрозрачность ставя FF в alpha.
+        # Если в теме был полупрозрачный (#80xxxxxx) — превращаем в solid.
+        sidebar_solid = sidebar_color
+        if isinstance(sidebar_solid, str) and sidebar_solid.startswith("#") and len(sidebar_solid) == 9:
+            sidebar_solid = "#FF" + sidebar_solid[3:]  # alpha → FF
         self.sidebar = ft.Container(
             width=240,
-            bgcolor=sidebar_color,
-            blur=ft.Blur(10, 10, ft.BlurTileMode.MIRROR),
+            bgcolor=sidebar_solid,
             content=ft.Column(
                 controls=[
                     ft.Row(controls=[
@@ -1159,10 +1171,13 @@ class CyberLauncher:
             ],
         )
         
+        # Debounce поиска: на каждый keystroke не запускаем full grid rebuild,
+        # ждём 250 мс паузы. Печатать "spongebob" — 9 ребилдов было.
+        self._search_debounce_token: int = 0
         self.search_field = ft.TextField(
             hint_text="Поиск игр...",
             prefix_icon=ft.Icons.SEARCH,
-            on_change=lambda e: self.update_game_grid(reset_page=True),
+            on_change=lambda e: self._on_search_changed(),
             height=35,
             content_padding=10,
             text_size=13,
@@ -2016,14 +2031,31 @@ class CyberLauncher:
             os._exit(0)  # после shutdown корректно — все данные на диске, threads закрыты
 
     def _on_window_event(self, e):
-        """Перехват системных событий окна. Главное — `close` (Alt+F4 / системная X)."""
+        """Перехват системных событий окна. Главное — `close` (Alt+F4 / системная X).
+        Также: focus/blur для gamepad-гейтинга, restore для re-fullscreen в BP."""
         try:
             data = getattr(e, 'data', None) or getattr(e, 'event', None)
         except Exception:
             data = None
         if data == "close":
-            # Поведение идентично кастомному крестику
             self.window_action("close")
+            return
+        # Focus tracking — блокирует gamepad-события когда фокус не у нас
+        # (юзер играет в запущенную игру). SDL читает гейпад в фоне, поэтому
+        # без этой проверки кнопки из игры дёргают наш UI.
+        if data in ("focus", "show"):
+            self._launcher_focused = True
+        elif data in ("blur", "unfocus", "hide", "minimize"):
+            self._launcher_focused = False
+        # При возврате окна (alt-tab из игры) и активном BP — снова в fullscreen
+        if data in ("restore", "unminimize", "focus") and self._bigpicture_active:
+            try:
+                if not self.page.window.full_screen:
+                    self.page.window.full_screen = True
+                    self.page.update()
+                    self._force_window_to_front()
+            except Exception:
+                pass
 
     async def shutdown(self):
         """Корректная остановка приложения: gamepad → bigpicture → game_manager."""
@@ -2095,19 +2127,27 @@ class CyberLauncher:
             pass
 
     def _gp_dispatch_button(self, name: str, pressed: bool):
-        # Колбэк вызывается из gamepad-thread'а — пересылаем в UI loop
+        # Колбэк вызывается из gamepad-thread'а — пересылаем в UI loop.
+        # Если лаунчер не в фокусе (юзер играет в игру) — игнорируем,
+        # иначе кнопки из игры дёргают наш UI.
+        if not self._launcher_focused:
+            return
         if pressed:
             self.page.run_task(self._async_mark_activity)
         if self._bigpicture_view is not None and self._bigpicture_active:
             self.page.run_task(self._gp_async_button, name, pressed)
 
     def _gp_dispatch_dpad(self, name: str, pressed: bool):
+        if not self._launcher_focused:
+            return
         if pressed:
             self.page.run_task(self._async_mark_activity)
         if self._bigpicture_view is not None and self._bigpicture_active:
             self.page.run_task(self._gp_async_dpad, name, pressed)
 
     def _gp_dispatch_axis(self, name: str, value: float):
+        if not self._launcher_focused:
+            return
         # Только значимые движения стиков/триггеров
         if abs(value) > 0.3:
             self.page.run_task(self._async_mark_activity)
@@ -2119,7 +2159,11 @@ class CyberLauncher:
         self.mark_activity()
 
     def _gp_on_guide(self):
-        # Guide — глобальная кнопка, всегда переключает BigPicture
+        # Guide — глобальная кнопка, всегда переключает BigPicture.
+        # Гейтим тем же фокус-чеком — иначе Guide из игры может вызвать
+        # переключение режима лаунчера на заднем плане.
+        if not self._launcher_focused:
+            return
         self.page.run_task(self._async_mark_activity)  # снять screensaver
         self.page.run_task(self._gp_async_toggle_bp)
 
@@ -2308,8 +2352,31 @@ class CyberLauncher:
         backend_logger.info("Exited BigPicture mode")
 
     def _bp_launch_game(self, game: GameModel):
-        """Запуск игры из BigPicture. Используем существующий launch_game."""
-        self.page.run_task(self.launch_game, game)
+        """Запуск игры из BigPicture. Перед стартом сворачиваем лаунчер,
+        иначе fullscreen-окно перекрывает игру и она появляется свёрнутой
+        в трее (Windows не отдаёт foreground новому окну поверх fullscreen)."""
+        self.page.run_task(self._bp_async_launch, game)
+
+    async def _bp_async_launch(self, game: GameModel):
+        # 1. Выйти из fullscreen — это отпускает Z-order topmost-флаги
+        try:
+            self.page.window.full_screen = False
+            self.page.update()
+        except Exception:
+            pass
+        await asyncio.sleep(0.05)
+        # 2. Свернуть окно через WinAPI (надёжнее чем page.window.minimized)
+        try:
+            if sys.platform == "win32":
+                user32 = ctypes.windll.user32
+                hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+                if hwnd:
+                    SW_MINIMIZE = 6
+                    user32.ShowWindow(hwnd, SW_MINIMIZE)
+        except Exception:
+            pass
+        # 3. Запускаем игру — теперь её окно встанет поверх свободно
+        await self.launch_game(game)
 
     def _bp_request_scan(self):
         """Сканирование библиотеки из BigPicture."""
@@ -2547,6 +2614,20 @@ class CyberLauncher:
         """Загружает следующую страницу игр"""
         self._current_page += 1
         self._render_visible_cards()
+
+    def _on_search_changed(self):
+        """Debounced search: ждём 250 мс паузы перед rebuild сетки."""
+        self._search_debounce_token += 1
+        token = self._search_debounce_token
+
+        async def _delayed():
+            await asyncio.sleep(0.25)
+            # Если за это время был ещё один keystroke — этот вызов устарел
+            if token != self._search_debounce_token:
+                return
+            self.update_game_grid(reset_page=True)
+
+        self.page.run_task(_delayed)
     
     def on_filter_click(self, filter_name: str):
         """Оптимизированная обработка переключения вкладок"""

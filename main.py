@@ -773,6 +773,10 @@ class CyberLauncher:
         # GetForegroundWindow(), не Flet-события focus/blur — последние
         # ненадёжно срабатывают при WinAPI-сворачивании на Windows.
         self._launcher_hwnd: Optional[int] = None  # cached HWND
+        # После launch блокируем gamepad на 2 сек — пока окна перетасуются
+        # (у нас минимизация, у игры запуск). Защита от случайных нажатий
+        # которые могли пройти когда foreground state ещё не устаканился.
+        self._gamepad_silence_until: float = 0.0
 
         # Screensaver: после N сек бездействия в BigPicture показывает фоны
         # игр поочерёдно. Cross-fade между двумя image-слоями.
@@ -2124,11 +2128,19 @@ class CyberLauncher:
         except Exception:
             pass
 
-    def _gp_dispatch_button(self, name: str, pressed: bool):
-        # Колбэк вызывается из gamepad-thread'а — пересылаем в UI loop.
-        # Если лаунчер не на переднем плане (юзер играет в игру) —
-        # игнорируем, иначе кнопки из игры дёргают наш UI.
+    def _gp_should_skip(self) -> bool:
+        """Единая точка для всех gamepad-гейтов: silence-window после
+        launch + foreground-check. Возвращает True если событие надо
+        отбросить."""
+        if time.time() < self._gamepad_silence_until:
+            return True
         if not self._is_launcher_foreground():
+            return True
+        return False
+
+    def _gp_dispatch_button(self, name: str, pressed: bool):
+        # Колбэк из gamepad-thread'а — пересылаем в UI loop, если разрешено.
+        if self._gp_should_skip():
             return
         if pressed:
             self.page.run_task(self._async_mark_activity)
@@ -2136,7 +2148,7 @@ class CyberLauncher:
             self.page.run_task(self._gp_async_button, name, pressed)
 
     def _gp_dispatch_dpad(self, name: str, pressed: bool):
-        if not self._is_launcher_foreground():
+        if self._gp_should_skip():
             return
         if pressed:
             self.page.run_task(self._async_mark_activity)
@@ -2144,7 +2156,7 @@ class CyberLauncher:
             self.page.run_task(self._gp_async_dpad, name, pressed)
 
     def _gp_dispatch_axis(self, name: str, value: float):
-        if not self._is_launcher_foreground():
+        if self._gp_should_skip():
             return
         # Только значимые движения стиков/триггеров
         if abs(value) > 0.3:
@@ -2158,9 +2170,9 @@ class CyberLauncher:
 
     def _gp_on_guide(self):
         # Guide — глобальная кнопка, всегда переключает BigPicture.
-        # Гейтим тем же foreground-чеком — иначе Guide из игры может
-        # вызвать переключение режима лаунчера на заднем плане.
-        if not self._is_launcher_foreground():
+        # Гейтим тем же набором проверок — иначе Guide из игры может
+        # переключить наш режим на заднем плане.
+        if self._gp_should_skip():
             return
         self.page.run_task(self._async_mark_activity)  # снять screensaver
         self.page.run_task(self._gp_async_toggle_bp)
@@ -2313,38 +2325,80 @@ class CyberLauncher:
             backend_logger.warning(f"Force-to-front failed: {e}")
 
     def _get_launcher_hwnd(self):
-        """Lazy-cached HWND нашего окна. Кэшируется после первого успешного
-        FindWindow — в Windows HWND не меняется в рамках жизни окна."""
+        """Lazy-cached HWND нашего окна.
+        FindWindowW по точному заголовку иногда промахивается (Flet/Flutter
+        может добавить symbols или title менялся). Поэтому сначала строгий
+        FindWindow, затем fallback EnumWindows с поиском по подстроке."""
         if sys.platform != "win32":
             return None
         if self._launcher_hwnd:
-            return self._launcher_hwnd
+            # Verify cache still valid — handle could be invalidated
+            try:
+                if ctypes.windll.user32.IsWindow(self._launcher_hwnd):
+                    return self._launcher_hwnd
+            except Exception:
+                pass
+            self._launcher_hwnd = None
+
+        user32 = ctypes.windll.user32
         try:
-            user32 = ctypes.windll.user32
             hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
             if hwnd:
                 self._launcher_hwnd = hwnd
                 return hwnd
         except Exception:
             pass
+
+        # Fallback: enumerate visible windows, find one containing "CyberLauncher"
+        try:
+            from ctypes import wintypes
+            EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            found = [None]
+
+            def _cb(h, _lp):
+                try:
+                    if not user32.IsWindowVisible(h):
+                        return True
+                    length = user32.GetWindowTextLengthW(h)
+                    if length == 0:
+                        return True
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(h, buf, length + 1)
+                    if "CyberLauncher" in buf.value:
+                        found[0] = h
+                        return False  # stop enumeration
+                except Exception:
+                    pass
+                return True
+
+            user32.EnumWindows(EnumWindowsProc(_cb), 0)
+            if found[0]:
+                self._launcher_hwnd = found[0]
+                return found[0]
+        except Exception:
+            pass
         return None
 
     def _is_launcher_foreground(self) -> bool:
-        """True если наше окно сейчас активное (foreground). Безопасно
-        вызывается из gamepad-thread'а — WinAPI thread-safe.
-        Это критичный гейт: если игра в фокусе, gamepad-события из неё
-        не должны дёргать наш UI на заднем плане."""
+        """True если наше окно сейчас активное (foreground и НЕ свёрнуто).
+        Безопасно вызывается из gamepad-thread'а — WinAPI thread-safe.
+        Fail-CLOSED: если HWND не найден — возвращаем False (лучше упустить
+        одно нажатие гейпада в лаунчере чем стрелять кнопками в фоне когда
+        юзер играет)."""
         if sys.platform != "win32":
-            return True  # Linux/Mac пока без проверки — fail-open
+            return True  # Linux/Mac без гейтинга
         try:
             user32 = ctypes.windll.user32
             hwnd = self._get_launcher_hwnd()
             if not hwnd:
-                return True  # окно не нашлось — fail-open чтобы UI работал
+                return False  # fail-closed
+            # Свёрнуто? — точно не foreground
+            if user32.IsIconic(hwnd):
+                return False
             fg = user32.GetForegroundWindow()
             return fg == hwnd
         except Exception:
-            return True
+            return False
 
     def _exit_bigpicture_from_view(self):
         # Колбэк от BigPictureView (кнопка B на главном)
@@ -2390,6 +2444,9 @@ class CyberLauncher:
         self.page.run_task(self._bp_async_launch, game)
 
     async def _bp_async_launch(self, game: GameModel):
+        # Включаем gamepad silence ДО любых window-операций — гарантирует что
+        # ни одна кнопка не пройдёт пока окна перетасовываются
+        self._gamepad_silence_until = time.time() + 2.5
         # 1. Выйти из fullscreen — это отпускает Z-order topmost-флаги
         try:
             self.page.window.full_screen = False
@@ -2401,7 +2458,7 @@ class CyberLauncher:
         try:
             if sys.platform == "win32":
                 user32 = ctypes.windll.user32
-                hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+                hwnd = self._get_launcher_hwnd() or user32.FindWindowW(None, "CyberLauncher v1.0")
                 if hwnd:
                     SW_MINIMIZE = 6
                     user32.ShowWindow(hwnd, SW_MINIMIZE)

@@ -769,8 +769,10 @@ class CyberLauncher:
         # Window focus — нужен чтобы блокировать gamepad-события когда юзер
         # играет в запущенную игру. SDL читает гейпад даже когда окно не в
         # фокусе, поэтому без этой защиты A/B/D-pad из игры случайно
-        # запускают другие игры в нашем UI.
-        self._launcher_focused: bool = True
+        # запускают другие игры в нашем UI. Используем WinAPI
+        # GetForegroundWindow(), не Flet-события focus/blur — последние
+        # ненадёжно срабатывают при WinAPI-сворачивании на Windows.
+        self._launcher_hwnd: Optional[int] = None  # cached HWND
 
         # Screensaver: после N сек бездействия в BigPicture показывает фоны
         # игр поочерёдно. Cross-fade между двумя image-слоями.
@@ -2032,7 +2034,7 @@ class CyberLauncher:
 
     def _on_window_event(self, e):
         """Перехват системных событий окна. Главное — `close` (Alt+F4 / системная X).
-        Также: focus/blur для gamepad-гейтинга, restore для re-fullscreen в BP."""
+        Также: restore для re-fullscreen в BP при возврате из игры."""
         try:
             data = getattr(e, 'data', None) or getattr(e, 'event', None)
         except Exception:
@@ -2040,14 +2042,10 @@ class CyberLauncher:
         if data == "close":
             self.window_action("close")
             return
-        # Focus tracking — блокирует gamepad-события когда фокус не у нас
-        # (юзер играет в запущенную игру). SDL читает гейпад в фоне, поэтому
-        # без этой проверки кнопки из игры дёргают наш UI.
-        if data in ("focus", "show"):
-            self._launcher_focused = True
-        elif data in ("blur", "unfocus", "hide", "minimize"):
-            self._launcher_focused = False
-        # При возврате окна (alt-tab из игры) и активном BP — снова в fullscreen
+        # При возврате окна (alt-tab из игры) и активном BP — снова в fullscreen.
+        # NB: gamepad-гейтинг идёт через _is_launcher_foreground() (WinAPI),
+        # не через этот обработчик — Flet ненадёжно фаерит focus/blur при
+        # WinAPI-сворачивании.
         if data in ("restore", "unminimize", "focus") and self._bigpicture_active:
             try:
                 if not self.page.window.full_screen:
@@ -2128,9 +2126,9 @@ class CyberLauncher:
 
     def _gp_dispatch_button(self, name: str, pressed: bool):
         # Колбэк вызывается из gamepad-thread'а — пересылаем в UI loop.
-        # Если лаунчер не в фокусе (юзер играет в игру) — игнорируем,
-        # иначе кнопки из игры дёргают наш UI.
-        if not self._launcher_focused:
+        # Если лаунчер не на переднем плане (юзер играет в игру) —
+        # игнорируем, иначе кнопки из игры дёргают наш UI.
+        if not self._is_launcher_foreground():
             return
         if pressed:
             self.page.run_task(self._async_mark_activity)
@@ -2138,7 +2136,7 @@ class CyberLauncher:
             self.page.run_task(self._gp_async_button, name, pressed)
 
     def _gp_dispatch_dpad(self, name: str, pressed: bool):
-        if not self._launcher_focused:
+        if not self._is_launcher_foreground():
             return
         if pressed:
             self.page.run_task(self._async_mark_activity)
@@ -2146,7 +2144,7 @@ class CyberLauncher:
             self.page.run_task(self._gp_async_dpad, name, pressed)
 
     def _gp_dispatch_axis(self, name: str, value: float):
-        if not self._launcher_focused:
+        if not self._is_launcher_foreground():
             return
         # Только значимые движения стиков/триггеров
         if abs(value) > 0.3:
@@ -2160,9 +2158,9 @@ class CyberLauncher:
 
     def _gp_on_guide(self):
         # Guide — глобальная кнопка, всегда переключает BigPicture.
-        # Гейтим тем же фокус-чеком — иначе Guide из игры может вызвать
-        # переключение режима лаунчера на заднем плане.
-        if not self._launcher_focused:
+        # Гейтим тем же foreground-чеком — иначе Guide из игры может
+        # вызвать переключение режима лаунчера на заднем плане.
+        if not self._is_launcher_foreground():
             return
         self.page.run_task(self._async_mark_activity)  # снять screensaver
         self.page.run_task(self._gp_async_toggle_bp)
@@ -2305,7 +2303,7 @@ class CyberLauncher:
             return
         try:
             user32 = ctypes.windll.user32
-            hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+            hwnd = self._get_launcher_hwnd() or user32.FindWindowW(None, "CyberLauncher v1.0")
             if hwnd:
                 SW_SHOW = 5
                 user32.ShowWindow(hwnd, SW_SHOW)
@@ -2313,6 +2311,40 @@ class CyberLauncher:
                 user32.BringWindowToTop(hwnd)
         except Exception as e:
             backend_logger.warning(f"Force-to-front failed: {e}")
+
+    def _get_launcher_hwnd(self):
+        """Lazy-cached HWND нашего окна. Кэшируется после первого успешного
+        FindWindow — в Windows HWND не меняется в рамках жизни окна."""
+        if sys.platform != "win32":
+            return None
+        if self._launcher_hwnd:
+            return self._launcher_hwnd
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+            if hwnd:
+                self._launcher_hwnd = hwnd
+                return hwnd
+        except Exception:
+            pass
+        return None
+
+    def _is_launcher_foreground(self) -> bool:
+        """True если наше окно сейчас активное (foreground). Безопасно
+        вызывается из gamepad-thread'а — WinAPI thread-safe.
+        Это критичный гейт: если игра в фокусе, gamepad-события из неё
+        не должны дёргать наш UI на заднем плане."""
+        if sys.platform != "win32":
+            return True  # Linux/Mac пока без проверки — fail-open
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = self._get_launcher_hwnd()
+            if not hwnd:
+                return True  # окно не нашлось — fail-open чтобы UI работал
+            fg = user32.GetForegroundWindow()
+            return fg == hwnd
+        except Exception:
+            return True
 
     def _exit_bigpicture_from_view(self):
         # Колбэк от BigPictureView (кнопка B на главном)

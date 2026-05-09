@@ -2466,6 +2466,13 @@ class CyberLauncher:
             pass
         # 3. Запускаем игру — теперь её окно встанет поверх свободно
         await self.launch_game(game)
+        # 4. Обновим hero-карту BP — чтобы при возврате юзер сразу увидел
+        # свежий last_played (а не "никогда")
+        try:
+            if self._bigpicture_view is not None:
+                self._bigpicture_view.refresh_after_external_change()
+        except Exception:
+            pass
 
     def _bp_request_scan(self):
         """Сканирование библиотеки из BigPicture."""

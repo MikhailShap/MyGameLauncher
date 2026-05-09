@@ -1494,14 +1494,52 @@ class GameManager:
     def get_games_by_platform(self, plat): return [g for g in self._games.values() if g.platform == plat]
     
     async def launch_game(self, uid):
-        if uid in self._games:
-            game = self._games[uid]
+        if uid not in self._games:
+            return False
+        game = self._games[uid]
+        popen = None
+        try:
+            if game.exe_path.startswith("steam://"):
+                os.startfile(game.exe_path)
+            else:
+                popen = subprocess.Popen(game.exe_path, cwd=game.install_path, shell=True)
+        except Exception as e:
+            logger.error(f"Launch failed for {game.title}: {e}")
+            return False
+
+        # Обновляем last_played сразу — иначе hero-карта в BP показывает
+        # "никогда" даже после многократных запусков
+        game.last_played = datetime.now().isoformat()
+        self.request_save()
+
+        # Для system-игр у нас есть Popen — можем посчитать play_time когда
+        # игра завершится. Steam-игры запускаются через протокол, Popen нет.
+        if popen is not None:
+            self._track_play_time(uid, popen)
+
+        return True
+
+    def _track_play_time(self, uid: str, popen):
+        """Спавнит фоновый thread который ждёт завершения игры и добавляет
+        elapsed-время в play_time (в минутах)."""
+        def _waiter():
+            import threading as _t  # local — main module
+            start = time.time()
             try:
-                if game.exe_path.startswith("steam://"): os.startfile(game.exe_path)
-                else: subprocess.Popen(game.exe_path, cwd=game.install_path, shell=True)
-                return True
-            except: return False
-        return False
+                popen.wait()
+            except Exception:
+                pass
+            elapsed_min = int((time.time() - start) / 60)
+            if elapsed_min <= 0:
+                return
+            if uid in self._games:
+                game = self._games[uid]
+                game.play_time = (game.play_time or 0) + elapsed_min
+                self.request_save()
+                logger.info(f"Game '{game.title}' ran for {elapsed_min} min "
+                            f"(total: {game.play_time})")
+        import threading as _threading
+        _threading.Thread(target=_waiter, daemon=True).start()
 
     async def toggle_favorite(self, uid):
         if uid in self._games:

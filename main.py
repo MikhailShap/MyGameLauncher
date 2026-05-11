@@ -3672,7 +3672,7 @@ class CyberLauncher:
                 # центрирование и список выглядит "съехавшим" вниз.
                 width=760,
                 height=580,
-                alignment=ft.alignment.top_left,
+                alignment=ft.Alignment(-1, -1),  # top-left
                 content=ft.Column(
                     controls=[
                         ft.Text("Отметьте игры, которые должны входить в коллекцию.",

@@ -3589,21 +3589,30 @@ class CyberLauncher:
             )
 
         all_rows = [make_row(g) for g in all_games]
-        # Явная высота ListView вместо expand=True — Flet AlertDialog
-        # внутренне центрирует контент с expand-флагами, из-за чего список
-        # съезжал к низу с пустым полем сверху
-        list_view = ft.ListView(controls=list(all_rows), spacing=4, height=480,
-                                padding=5)
+        # ft.Column + scroll=AUTO внутри Container с явной height даёт
+        # детерминированный layout. ListView в AlertDialog иногда
+        # рендерится с пустотой сверху из-за intrinsic sizing —
+        # независимо от tight/expand флагов выше.
+        list_column = ft.Column(
+            controls=list(all_rows),
+            spacing=4,
+            scroll=ft.ScrollMode.AUTO,
+        )
+        list_view = ft.Container(
+            height=480,
+            content=list_column,
+            padding=ft.Padding(left=4, right=4, top=4, bottom=4),
+        )
 
         def apply_search(e):
             q = (search_field.value or "").lower().strip()
             search_state["query"] = q
             if not q:
-                list_view.controls = list(all_rows)
+                list_column.controls = list(all_rows)
             else:
-                list_view.controls = [r for r in all_rows
-                                       if q in r.data.title.lower()]
-            list_view.update()
+                list_column.controls = [r for r in all_rows
+                                         if q in r.data.title.lower()]
+            list_column.update()
 
         search_field = ft.TextField(
             hint_text="Поиск...",
@@ -3657,10 +3666,13 @@ class CyberLauncher:
                 spacing=10,
             ),
             content=ft.Container(
-                # Только ширина — высоту задаёт сумма явных высот контента
-                # (ListView=480 + остальное). Без expand/tight чтобы Flet
-                # AlertDialog не центрировал список и не было пустоты сверху.
+                # Явная ширина+высота + alignment.top_left на Container и
+                # MainAxisAlignment.START на Column гарантирует что content
+                # прибит к верху. Без этого Flet AlertDialog где-то применяет
+                # центрирование и список выглядит "съехавшим" вниз.
                 width=760,
+                height=580,
+                alignment=ft.alignment.top_left,
                 content=ft.Column(
                     controls=[
                         ft.Text("Отметьте игры, которые должны входить в коллекцию.",
@@ -3673,7 +3685,8 @@ class CyberLauncher:
                         counter_text,
                     ],
                     spacing=0,
-                    tight=True,
+                    alignment=ft.MainAxisAlignment.START,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
             ),
             actions=[

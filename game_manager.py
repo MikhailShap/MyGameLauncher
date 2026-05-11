@@ -31,6 +31,75 @@ import tempfile
 import winreg
 
 
+def _get_processes_with_exe_in_dir(dir_path: str) -> List[int]:
+    """Перечисляет процессы Windows и возвращает PID-ы тех, чьё .exe лежит
+    внутри указанной директории. Используется в watcher-е Steam-игр чтобы
+    определить когда игра завершилась.
+
+    Реализация через CreateToolhelp32Snapshot + Process32FirstW + OpenProcess
+    + QueryFullProcessImageNameW. Не требует прав админа, не зависит от psutil."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    TH32CS_SNAPPROCESS = 0x00000002
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ('dwSize', wintypes.DWORD),
+            ('cntUsage', wintypes.DWORD),
+            ('th32ProcessID', wintypes.DWORD),
+            ('th32DefaultHeapID', ctypes.c_void_p),
+            ('th32ModuleID', wintypes.DWORD),
+            ('cntThreads', wintypes.DWORD),
+            ('th32ParentProcessID', wintypes.DWORD),
+            ('pcPriClassBase', ctypes.c_long),
+            ('dwFlags', wintypes.DWORD),
+            ('szExeFile', wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
+    ]
+
+    target = os.path.normpath(dir_path).lower().rstrip('\\') + '\\'
+    matches: List[int] = []
+
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == INVALID_HANDLE_VALUE:
+        return []
+    try:
+        pe = PROCESSENTRY32W()
+        pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        if not kernel32.Process32FirstW(snapshot, ctypes.byref(pe)):
+            return []
+        while True:
+            pid = pe.th32ProcessID
+            if pid:
+                h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                if h:
+                    buf = ctypes.create_unicode_buffer(1024)
+                    size = wintypes.DWORD(1024)
+                    if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                        path = os.path.normpath(buf.value).lower()
+                        if path.startswith(target):
+                            matches.append(pid)
+                    kernel32.CloseHandle(h)
+            if not kernel32.Process32NextW(snapshot, ctypes.byref(pe)):
+                break
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return matches
+
+
 def get_app_data_dir() -> Path:
     """Папка для пользовательских данных (логи, кэш, библиотека, settings).
 
@@ -1228,6 +1297,8 @@ class GameManager:
                     self._games[g['uid']] = GameModel.from_dict(g)
 
                 self._collections = data.get('collections', [])
+                logger.info(f"Loaded library: {len(self._games)} games, "
+                            f"{len(self._collections)} collections")
 
                 # Validate and repair cache references
                 games_list = list(self._games.values())
@@ -1336,6 +1407,12 @@ class GameManager:
         путей, где event loop уже закрыт. Использует ту же атомарную запись."""
         if not self._save_dirty:
             return False
+        return self.save_library_sync()
+
+    def save_library_sync(self) -> bool:
+        """Синхронная атомарная запись библиотеки. Для критических операций
+        (collections, favorite) — пишет НЕМЕДЛЕННО, не через debounce.
+        Безопасно вызывается из любого потока, не зависит от event loop."""
         try:
             data = {
                 'games': [g.to_dict() for g in self._games.values()],
@@ -1351,10 +1428,10 @@ class GameManager:
                     pass
             os.replace(tmp_path, self.library_file)
             self._save_dirty = False
-            logger.info("Emergency sync save completed")
+            logger.info(f"Sync save: {len(self._games)} games, {len(self._collections)} collections")
             return True
         except Exception as e:
-            logger.error(f"Emergency sync save error: {e}")
+            logger.error(f"Sync save error: {e}")
             return False
 
 
@@ -1512,33 +1589,78 @@ class GameManager:
         game.last_played = datetime.now().isoformat()
         self.request_save()
 
-        # Для system-игр у нас есть Popen — можем посчитать play_time когда
-        # игра завершится. Steam-игры запускаются через протокол, Popen нет.
+        # Спавним watcher — он будет ждать окончания игры и:
+        # 1) добавит elapsed-время к play_time
+        # 2) дёрнет on_game_exited callback (main.py поднимает лаунчер обратно)
         if popen is not None:
-            self._track_play_time(uid, popen)
+            # System-игра: ждём через Popen.wait() — точно и быстро
+            self._watch_game_via_popen(uid, popen)
+        elif game.install_path:
+            # Steam-игра: процесс не наш, поллим энумерацию по install_path
+            self._watch_game_via_process_scan(uid, game.install_path)
 
         return True
 
-    def _track_play_time(self, uid: str, popen):
-        """Спавнит фоновый thread который ждёт завершения игры и добавляет
-        elapsed-время в play_time (в минутах)."""
+    def _notify_game_exited(self, uid: str):
+        """Уведомляет main.py что игра завершилась — лаунчер должен подняться."""
+        cb = getattr(self, 'on_game_exited', None)
+        if cb is None:
+            return
+        try:
+            cb(uid)
+        except Exception as e:
+            logger.warning(f"on_game_exited callback failed: {e}")
+
+    def _watch_game_via_popen(self, uid: str, popen):
+        """Watcher для system-игр: Popen.wait() блокирует до выхода процесса."""
+        import threading as _threading
         def _waiter():
-            import threading as _t  # local — main module
             start = time.time()
             try:
                 popen.wait()
             except Exception:
                 pass
             elapsed_min = int((time.time() - start) / 60)
-            if elapsed_min <= 0:
-                return
-            if uid in self._games:
-                game = self._games[uid]
-                game.play_time = (game.play_time or 0) + elapsed_min
+            if uid in self._games and elapsed_min > 0:
+                self._games[uid].play_time = (self._games[uid].play_time or 0) + elapsed_min
                 self.request_save()
-                logger.info(f"Game '{game.title}' ran for {elapsed_min} min "
-                            f"(total: {game.play_time})")
+                logger.info(f"Game '{self._games[uid].title}' ran {elapsed_min} min")
+            self._notify_game_exited(uid)
+        _threading.Thread(target=_waiter, daemon=True).start()
+
+    def _watch_game_via_process_scan(self, uid: str, install_path: str):
+        """Watcher для Steam-игр: периодически смотрим список процессов и
+        ищем процесс с .exe внутри install_path. Сначала ждём появления
+        (Steam-launch не моментальный), потом ждём исчезновения."""
         import threading as _threading
+        def _waiter():
+            target_dir = os.path.normpath(install_path).lower()
+            # Этап 1: ждём появления (Steam может загружать игру до 60 сек)
+            appeared = False
+            for _ in range(45):  # 90 сек
+                time.sleep(2)
+                if _get_processes_with_exe_in_dir(target_dir):
+                    appeared = True
+                    break
+            if not appeared:
+                logger.info(f"Steam game '{self._games.get(uid, GameModel(uid='',title='?',exe_path='')).title}' "
+                            f"never appeared in {target_dir}")
+                # Всё равно дёрнем callback — лаунчер должен подняться через
+                # минуту-полторы если игра так и не запустилась (пиратка / Steam down)
+                self._notify_game_exited(uid)
+                return
+            # Этап 2: ждём исчезновения
+            start = time.time()
+            while True:
+                time.sleep(3)
+                if not _get_processes_with_exe_in_dir(target_dir):
+                    break
+            elapsed_min = int((time.time() - start) / 60)
+            if uid in self._games and elapsed_min > 0:
+                self._games[uid].play_time = (self._games[uid].play_time or 0) + elapsed_min
+                self.request_save()
+                logger.info(f"Steam game '{self._games[uid].title}' ran {elapsed_min} min")
+            self._notify_game_exited(uid)
         _threading.Thread(target=_waiter, daemon=True).start()
 
     async def toggle_favorite(self, uid):
@@ -1569,7 +1691,9 @@ class GameManager:
         return self._collections
 
     def add_collection(self, name: str, color: str = "#D500F9", icon: str = "folder") -> Dict[str, Any]:
-        """Создать новую коллекцию"""
+        """Создать новую коллекцию. Сохраняется НЕМЕДЛЕННО синхронно —
+        чтобы коллекция гарантированно сохранилась, даже если приложение
+        упадёт в следующую секунду."""
         collection_id = hashlib.md5(f"{name}_{datetime.now().isoformat()}".encode()).hexdigest()[:8]
         collection = {
             "id": collection_id,
@@ -1579,11 +1703,12 @@ class GameManager:
             "created": datetime.now().isoformat()
         }
         self._collections.append(collection)
-        logger.info(f"Created collection: {name} (id: {collection_id})")
+        logger.info(f"Created collection: '{name}' (id: {collection_id}), total: {len(self._collections)}")
+        self.save_library_sync()
         return collection
 
     def update_collection(self, collection_id: str, name: str = None, color: str = None, icon: str = None) -> bool:
-        """Обновить коллекцию"""
+        """Обновить коллекцию. Sync save немедленно."""
         for col in self._collections:
             if col["id"] == collection_id:
                 if name is not None:
@@ -1592,18 +1717,21 @@ class GameManager:
                     col["color"] = color
                 if icon is not None:
                     col["icon"] = icon
-                logger.info(f"Updated collection: {collection_id}")
+                logger.info(f"Updated collection: {collection_id} ('{col.get('name')}')")
+                self.save_library_sync()
                 return True
         return False
 
     def delete_collection(self, collection_id: str) -> bool:
-        """Удалить коллекцию и убрать её из всех игр. Сохранение через debounce."""
+        """Удалить коллекцию и убрать её из всех игр. Sync save немедленно."""
+        # Найдём имя для лога перед удалением
+        col_name = next((c.get("name", "?") for c in self._collections if c["id"] == collection_id), "?")
         for game in self._games.values():
             if collection_id in game.collections:
                 game.collections.remove(collection_id)
         self._collections = [c for c in self._collections if c["id"] != collection_id]
-        self.request_save()
-        logger.info(f"Deleted collection: {collection_id}")
+        logger.info(f"Deleted collection: '{col_name}' (id: {collection_id}), remaining: {len(self._collections)}")
+        self.save_library_sync()
         return True
 
     def toggle_collection_sync(self, game_uid: str, collection_id: str) -> Optional[bool]:

@@ -739,6 +739,9 @@ class CyberLauncher:
             sgdb_key=sgdb_key,
             rawg_key=rawg_key
         )
+        # Watcher: когда игра завершится, GameManager позовёт нас обратно
+        # и мы поднимем окно лаунчера на передний план
+        self.game_manager.on_game_exited = self._on_game_exited
 
         self.current_filter = "all"
         self.sidebar_buttons: dict[str, SidebarButton] = {}
@@ -2473,6 +2476,45 @@ class CyberLauncher:
                 self._bigpicture_view.refresh_after_external_change()
         except Exception:
             pass
+
+    def _on_game_exited(self, uid: str):
+        """Callback из GameManager-watcher'а: игра завершилась, поднимаем
+        окно лаунчера. Вызывается из watcher-thread'а, не UI-thread'а —
+        WinAPI безопасен из любого потока, page.run_task для Flet-операций."""
+        backend_logger.info(f"Game exited (uid={uid}) — restoring launcher")
+        # Сбрасываем silence-window заранее — игра не запущена больше
+        self._gamepad_silence_until = 0.0
+        if sys.platform != "win32":
+            return
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = self._get_launcher_hwnd()
+            if hwnd:
+                SW_RESTORE = 9
+                user32.ShowWindow(hwnd, SW_RESTORE)
+                user32.SetForegroundWindow(hwnd)
+                user32.BringWindowToTop(hwnd)
+        except Exception as e:
+            backend_logger.warning(f"Restore-after-game WinAPI failed: {e}")
+        # Если был BP — снова в fullscreen. Делаем через UI-loop потому что
+        # это меняет page state, не только окно.
+        if self._bigpicture_active:
+            try:
+                self.page.run_task(self._async_refullscreen_after_game)
+            except Exception:
+                pass
+
+    async def _async_refullscreen_after_game(self):
+        try:
+            if not self.page.window.full_screen:
+                self.page.window.full_screen = True
+                self.page.update()
+                self._force_window_to_front()
+            # Обновим hero — last_played / play_time изменились
+            if self._bigpicture_view is not None:
+                self._bigpicture_view.refresh_after_external_change()
+        except Exception as e:
+            backend_logger.warning(f"Re-fullscreen after game failed: {e}")
 
     def _bp_request_scan(self):
         """Сканирование библиотеки из BigPicture."""

@@ -3559,8 +3559,8 @@ class CyberLauncher:
         def make_row(game):
             thumb_src = game.icon_path if (game.icon_path and Path(game.icon_path).exists()) else None
             thumb = ft.Container(
-                width=40, height=56,
-                border_radius=4,
+                width=66, height=92,
+                border_radius=6,
                 bgcolor=None if thumb_src else CARD_BG,
                 image=ft.DecorationImage(src=thumb_src, fit="cover") if thumb_src else None,
             )
@@ -3575,19 +3575,23 @@ class CyberLauncher:
                     controls=[
                         cb,
                         thumb,
-                        ft.Text(game.title, size=14, color=TEXT_WHITE, expand=True,
-                                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                        ft.Text(game.title, size=16, color=TEXT_WHITE, expand=True,
+                                max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                                weight=ft.FontWeight.W_500),
                     ],
-                    spacing=12,
+                    spacing=14,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                padding=ft.Padding(left=10, right=10, top=4, bottom=4),
-                border_radius=6,
+                padding=ft.Padding(left=12, right=12, top=6, bottom=6),
+                border_radius=8,
+                bgcolor="#15FFFFFF",  # лёгкая подложка для разделения строк
                 data=game,  # для фильтрации по поиску
             )
 
         all_rows = [make_row(g) for g in all_games]
-        list_view = ft.ListView(controls=list(all_rows), spacing=2, height=420,
+        # expand=True вместо фиксированной высоты — ListView заполняет
+        # оставшееся пространство в Column и нет странного gap'а вверху
+        list_view = ft.ListView(controls=list(all_rows), spacing=4, expand=True,
                                 padding=5)
 
         def apply_search(e):
@@ -3652,20 +3656,23 @@ class CyberLauncher:
                 spacing=10,
             ),
             content=ft.Container(
-                width=520,
+                # Шире и явная высота: ListView с expand=True корректно
+                # заполняет оставшееся место без пустого зазора
+                width=760,
+                height=620,
                 content=ft.Column(
                     controls=[
                         ft.Text("Отметьте игры, которые должны входить в коллекцию.",
-                                size=12, color=TEXT_GREY),
-                        ft.Container(height=8),
+                                size=13, color=TEXT_GREY),
+                        ft.Container(height=10),
                         search_field,
-                        ft.Container(height=8),
+                        ft.Container(height=10),
                         list_view,
                         ft.Container(height=8),
                         counter_text,
                     ],
                     spacing=0,
-                    tight=True,
+                    expand=True,
                 ),
             ),
             actions=[

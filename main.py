@@ -3589,9 +3589,10 @@ class CyberLauncher:
             )
 
         all_rows = [make_row(g) for g in all_games]
-        # expand=True вместо фиксированной высоты — ListView заполняет
-        # оставшееся пространство в Column и нет странного gap'а вверху
-        list_view = ft.ListView(controls=list(all_rows), spacing=4, expand=True,
+        # Явная высота ListView вместо expand=True — Flet AlertDialog
+        # внутренне центрирует контент с expand-флагами, из-за чего список
+        # съезжал к низу с пустым полем сверху
+        list_view = ft.ListView(controls=list(all_rows), spacing=4, height=480,
                                 padding=5)
 
         def apply_search(e):
@@ -3656,10 +3657,10 @@ class CyberLauncher:
                 spacing=10,
             ),
             content=ft.Container(
-                # Шире и явная высота: ListView с expand=True корректно
-                # заполняет оставшееся место без пустого зазора
+                # Только ширина — высоту задаёт сумма явных высот контента
+                # (ListView=480 + остальное). Без expand/tight чтобы Flet
+                # AlertDialog не центрировал список и не было пустоты сверху.
                 width=760,
-                height=620,
                 content=ft.Column(
                     controls=[
                         ft.Text("Отметьте игры, которые должны входить в коллекцию.",
@@ -3672,7 +3673,7 @@ class CyberLauncher:
                         counter_text,
                     ],
                     spacing=0,
-                    expand=True,
+                    tight=True,
                 ),
             ),
             actions=[

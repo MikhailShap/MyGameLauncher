@@ -359,13 +359,14 @@ class GameCard(ft.Container):
     _BORDER_NORMAL = ft.Border.all(1, "#333333")
     _BORDER_HOVER = ft.Border.all(2, ACCENT_BLUE)
 
-    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, show_size=False, enable_animations=False):
+    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, on_properties=None, show_size=False, enable_animations=False):
         super().__init__()
         self.game = game
         self._on_click = on_click
         self._on_favorite = on_favorite
         self._on_upload = on_upload
         self._on_exclude = on_exclude
+        self._on_properties = on_properties
         self._enable_animations = enable_animations
         self._is_hovered = False  # Track hover state to avoid redundant updates
 
@@ -552,7 +553,7 @@ class GameCard(ft.Container):
         )
     
     def _build_secondary_actions(self, game: GameModel) -> ft.Container:
-        """Контейнер со второстепенными кнопками (Upload / Exclude).
+        """Контейнер со второстепенными кнопками (Upload / Properties / Exclude).
         Добавление в коллекции перенесено на страницу самой коллекции —
         кнопка "Добавить игры" над сеткой, мульти-селект диалог."""
         upload_btn = ft.Container(
@@ -562,6 +563,22 @@ class GameCard(ft.Container):
             alignment=ft.Alignment(0, 0),
             on_click=self.on_upload_click,
             ink=True,
+        )
+        # Шестерёнка → диалог свойств игры (включая "запускать от админа").
+        # Если у игры включён run_as_admin — подсвечиваем жёлтым щитом.
+        is_admin = bool(getattr(game, "run_as_admin", False))
+        properties_btn = ft.Container(
+            content=ft.Icon(
+                ft.Icons.SHIELD if is_admin else ft.Icons.SETTINGS,
+                color="#FFD54F" if is_admin else "#FFFFFF",
+                size=18,
+            ),
+            width=36, height=36, border_radius=18,
+            bgcolor="#80FFB300" if is_admin else "#809E9E9E",
+            alignment=ft.Alignment(0, 0),
+            on_click=self.on_properties_click,
+            ink=True,
+            tooltip="Запуск от админа: ВКЛ" if is_admin else "Свойства игры",
         )
         exclude_btn = ft.Container(
             content=ft.Icon(ft.Icons.BLOCK, color="#FFFFFF", size=18),
@@ -576,7 +593,7 @@ class GameCard(ft.Container):
             right=8,
             top=52,
             content=ft.Column(
-                controls=[upload_btn, exclude_btn],
+                controls=[upload_btn, properties_btn, exclude_btn],
                 spacing=8,
             ),
         )
@@ -643,6 +660,10 @@ class GameCard(ft.Container):
         print(f"[DEBUG] Exclude button clicked for: {self.game.title}")
         if self._on_exclude:
             self._on_exclude(self.game)
+
+    def on_properties_click(self, e):
+        if self._on_properties:
+            self._on_properties(self.game)
 
 
 class LoadingOverlay(ft.Container):
@@ -2712,6 +2733,7 @@ class CyberLauncher:
                     on_favorite=self.on_favorite_click,
                     on_upload=self.show_upload_dialog,
                     on_exclude=self.exclude_game,
+                    on_properties=self.show_game_properties_dialog,
                     show_size=show_size,
                     enable_animations=enable_animations
                 )
@@ -3539,6 +3561,103 @@ class CyberLauncher:
             return
         collection_id = self.current_filter.replace("collection_", "")
         self.show_manage_collection_games_dialog(collection_id)
+
+    def show_game_properties_dialog(self, game: GameModel):
+        """Диалог свойств игры. Сейчас один тоггл — "Запускать от админа".
+        Steam-игры через протокол управляются Steam-клиентом, для них тоггл
+        не имеет эффекта, поэтому отключаем его и поясняем."""
+        is_steam = game.exe_path and game.exe_path.startswith("steam://")
+
+        def on_admin_toggle(e):
+            new_val = bool(e.control.value)
+            game.run_as_admin = new_val
+            self.game_manager._games[game.uid] = game
+            # Sync save — изменение критично, не теряем при крэше
+            self.game_manager.save_library_sync()
+            # Инвалидируем карточку чтобы шестерёнка → щит обновился
+            if game.uid in self._card_cache:
+                del self._card_cache[game.uid]
+            self._render_visible_cards()
+            self.show_snackbar(
+                f"'{game.title}': запуск от админа {'ВКЛ' if new_val else 'ВЫКЛ'}",
+                bgcolor="#4CAF50" if new_val else "#FF9800",
+            )
+
+        def on_close(e):
+            dialog.open = False
+            self.page.update()
+
+        admin_switch = ft.Switch(
+            value=bool(getattr(game, "run_as_admin", False)),
+            active_color=ACCENT_PURPLE,
+            on_change=on_admin_toggle,
+            disabled=is_steam,
+        )
+
+        admin_row = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.SHIELD, color="#FFD54F", size=22),
+                    ft.Column(
+                        controls=[
+                            ft.Text("Запускать от имени администратора",
+                                    size=14, color=TEXT_WHITE,
+                                    weight=ft.FontWeight.W_500),
+                            ft.Text(
+                                "Подходит для игр, требующих UAC (Crash Bandicoot 4 и др.)."
+                                if not is_steam
+                                else "Для Steam-игр не применимо — Steam управляет процессом.",
+                                size=11, color=TEXT_GREY,
+                                max_lines=2,
+                            ),
+                        ],
+                        spacing=2,
+                        expand=True,
+                    ),
+                    admin_switch,
+                ],
+                spacing=12,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=15,
+            border_radius=10,
+            bgcolor="#1E1E1E",
+        )
+
+        # Усечь длинный заголовок
+        short = game.title[:40] + "..." if len(game.title) > 40 else game.title
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.SETTINGS, color=ACCENT_BLUE),
+                    ft.Text(f"Свойства: {short}", weight=ft.FontWeight.BOLD),
+                ],
+                spacing=10,
+            ),
+            content=ft.Container(
+                width=520,
+                content=ft.Column(
+                    controls=[
+                        ft.Text("Платформа: " + (game.platform or "—"),
+                                size=12, color=TEXT_GREY),
+                        ft.Container(height=12),
+                        admin_row,
+                    ],
+                    spacing=0,
+                    tight=True,
+                ),
+            ),
+            actions=[
+                ft.ElevatedButton("Закрыть", on_click=on_close,
+                                  bgcolor=ACCENT_BLUE, color=TEXT_WHITE),
+            ],
+        )
+
+        self.page.overlay.append(dialog)
+        dialog.open = True
+        self.page.update()
 
     def show_manage_collection_games_dialog(self, collection_id: str):
         """Мульти-селект диалог: показать ВСЕ игры с чекбоксами, отмеченные —

@@ -12,6 +12,7 @@ import sys
 import re
 import json
 import asyncio
+import ctypes
 import hashlib
 import logging
 import subprocess
@@ -176,17 +177,24 @@ class GameModel:
     is_favorite: bool = False
     added_date: str = field(default_factory=lambda: datetime.now().isoformat())
     collections: List[str] = field(default_factory=list)  # Список ID коллекций
-    
+    # Запускать с правами администратора (через UAC). Нужно некоторым играм
+    # вроде Crash Bandicoot 4 — иначе DXGI_ERROR_INVALID_CALL при старте.
+    run_as_admin: bool = False
+
     @staticmethod
     def generate_uid(path: str) -> str:
         return hashlib.md5(path.lower().encode()).hexdigest()[:12]
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'GameModel':
-        return cls(**data)
+        # Игнорируем неизвестные поля — на случай если в старой library.json
+        # есть поля которые мы убрали; и наоборот, новые поля получают defaults
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered)
 
 
 class IconExtractor:
@@ -1559,6 +1567,8 @@ class GameManager:
                 game.last_played = old_game.last_played
                 game.play_time = old_game.play_time
                 game.added_date = old_game.added_date
+                # Per-game settings — сохраняем через rescan
+                game.run_as_admin = old_game.run_as_admin
 
                 # Восстанавливаем кастомную иконку, если она валидна
                 if old_game.icon_path and self.cover_validator.validate_cache_file(old_game.icon_path):
@@ -1601,8 +1611,30 @@ class GameManager:
         popen = None
         try:
             if game.exe_path.startswith("steam://"):
+                # Steam — запускаем через протокол, Popen не получим
                 os.startfile(game.exe_path)
+            elif game.run_as_admin and sys.platform == "win32":
+                # Запуск с правами админа: ShellExecuteW + verb "runas" →
+                # стандартный диалог UAC Windows. Нужно для некоторых игр
+                # (Crash Bandicoot 4 и т.п.) — иначе DXGI_ERROR_INVALID_CALL.
+                # subprocess.Popen с CreateProcess игнорирует UAC-флаги.
+                SW_SHOWNORMAL = 1
+                result = ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", game.exe_path, None,
+                    game.install_path or None, SW_SHOWNORMAL,
+                )
+                # Returncode: > 32 = success (HINSTANCE), <= 32 = ошибка
+                # 5 = ACCESS_DENIED (юзер нажал "Нет" в UAC)
+                # 2 = FILE_NOT_FOUND
+                if result <= 32:
+                    if result == 5:
+                        logger.info(f"User declined UAC for '{game.title}'")
+                    else:
+                        logger.error(f"ShellExecute runas failed for '{game.title}', code={result}")
+                    return False
+                logger.info(f"Launched '{game.title}' as admin via ShellExecuteW")
             else:
+                # Обычный системный запуск — через subprocess.Popen
                 popen = subprocess.Popen(game.exe_path, cwd=game.install_path, shell=True)
         except Exception as e:
             logger.error(f"Launch failed for {game.title}: {e}")
@@ -1617,10 +1649,11 @@ class GameManager:
         # 1) добавит elapsed-время к play_time
         # 2) дёрнет on_game_exited callback (main.py поднимает лаунчер обратно)
         if popen is not None:
-            # System-игра: ждём через Popen.wait() — точно и быстро
+            # System-игра без admin: ждём через Popen.wait()
             self._watch_game_via_popen(uid, popen)
         elif game.install_path:
-            # Steam-игра: процесс не наш, поллим энумерацию по install_path
+            # Steam-игра ИЛИ запуск через runas — Popen нет, мониторим через
+            # энумерацию процессов внутри install_path
             self._watch_game_via_process_scan(uid, game.install_path)
 
         return True

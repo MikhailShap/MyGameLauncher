@@ -359,14 +359,13 @@ class GameCard(ft.Container):
     _BORDER_NORMAL = ft.Border.all(1, "#333333")
     _BORDER_HOVER = ft.Border.all(2, ACCENT_BLUE)
 
-    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, on_collection=None, show_size=False, enable_animations=False):
+    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, show_size=False, enable_animations=False):
         super().__init__()
         self.game = game
         self._on_click = on_click
         self._on_favorite = on_favorite
         self._on_upload = on_upload
         self._on_exclude = on_exclude
-        self._on_collection = on_collection
         self._enable_animations = enable_animations
         self._is_hovered = False  # Track hover state to avoid redundant updates
 
@@ -553,27 +552,15 @@ class GameCard(ft.Container):
         )
     
     def _build_secondary_actions(self, game: GameModel) -> ft.Container:
-        """Контейнер со второстепенными кнопками (Upload / Collection / Exclude).
-        Видимы всегда — пробовали скрывать на hover, но layout-pass при показе
-        блокировал hover-чейн при быстром движении мыши через несколько карточек."""
+        """Контейнер со второстепенными кнопками (Upload / Exclude).
+        Добавление в коллекции перенесено на страницу самой коллекции —
+        кнопка "Добавить игры" над сеткой, мульти-селект диалог."""
         upload_btn = ft.Container(
             content=ft.Icon(ft.Icons.IMAGE_SEARCH, color="#FFFFFF", size=18),
             width=36, height=36, border_radius=18,
             bgcolor="#8000E5FF",
             alignment=ft.Alignment(0, 0),
             on_click=self.on_upload_click,
-            ink=True,
-        )
-        collection_btn = ft.Container(
-            content=ft.Icon(
-                ft.Icons.FOLDER_SPECIAL if game.collections else ft.Icons.FOLDER_OUTLINED,
-                color="#FFD54F" if game.collections else "#FFFFFF",
-                size=18,
-            ),
-            width=36, height=36, border_radius=18,
-            bgcolor="#80D500F9",
-            alignment=ft.Alignment(0, 0),
-            on_click=self.on_collection_click,
             ink=True,
         )
         exclude_btn = ft.Container(
@@ -589,7 +576,7 @@ class GameCard(ft.Container):
             right=8,
             top=52,
             content=ft.Column(
-                controls=[upload_btn, collection_btn, exclude_btn],
+                controls=[upload_btn, exclude_btn],
                 spacing=8,
             ),
         )
@@ -656,11 +643,6 @@ class GameCard(ft.Container):
         print(f"[DEBUG] Exclude button clicked for: {self.game.title}")
         if self._on_exclude:
             self._on_exclude(self.game)
-
-    def on_collection_click(self, e):
-        print(f"[DEBUG] Collection button clicked for: {self.game.title}")
-        if self._on_collection:
-            self._on_collection(self.game)
 
 
 class LoadingOverlay(ft.Container):
@@ -1224,8 +1206,26 @@ class CyberLauncher:
             padding=ft.Padding(left=20, right=20, top=10, bottom=20),
         )
 
+        # Панель действий для коллекции — видна только когда фильтр = коллекция.
+        # Содержит кнопку "Управление играми" → мульти-селект диалог.
+        self.collection_actions_panel = ft.Container(
+            visible=False,
+            padding=ft.Padding(left=20, right=20, top=0, bottom=8),
+            content=ft.Row(
+                controls=[
+                    ft.ElevatedButton(
+                        "Управление играми коллекции",
+                        icon=ft.Icons.PLAYLIST_ADD_CHECK,
+                        on_click=self._on_manage_collection_click,
+                        bgcolor=ACCENT_PURPLE,
+                        color=TEXT_WHITE,
+                    ),
+                ],
+            ),
+        )
+
         self.games_container = ft.Column(
-            controls=[self.sort_panel, self.game_grid],
+            controls=[self.sort_panel, self.collection_actions_panel, self.game_grid],
             spacing=0,
             expand=True,
         )
@@ -2706,7 +2706,6 @@ class CyberLauncher:
                     on_favorite=self.on_favorite_click,
                     on_upload=self.show_upload_dialog,
                     on_exclude=self.exclude_game,
-                    on_collection=self.show_add_to_collection_dialog,
                     show_size=show_size,
                     enable_animations=enable_animations
                 )
@@ -2781,6 +2780,9 @@ class CyberLauncher:
                 button.bgcolor = "#33D500F9" if name == filter_name else "transparent"
 
         self.current_filter = filter_name
+
+        # Панель "Управление коллекцией" видна только когда выбрана коллекция
+        self.collection_actions_panel.visible = filter_name.startswith("collection_")
 
         if filter_name == "settings":
             # Switch content and update once
@@ -3372,6 +3374,7 @@ class CyberLauncher:
                 else:
                     button.bgcolor = "transparent"
 
+        self.collection_actions_panel.visible = True
         self.bg_container.content = self.games_container
         self.update_game_grid()
 
@@ -3524,81 +3527,152 @@ class CyberLauncher:
         await self.game_manager.save_library()
         self.refresh_collections_sidebar()
 
-    def show_add_to_collection_dialog(self, game: GameModel):
-        """Показать диалог добавления игры в коллекцию"""
-        collections = self.game_manager.get_collections()
+    def _on_manage_collection_click(self, e):
+        """Открывает мульти-селект диалог управления играми текущей коллекции."""
+        if not self.current_filter.startswith("collection_"):
+            return
+        collection_id = self.current_filter.replace("collection_", "")
+        self.show_manage_collection_games_dialog(collection_id)
 
-        if not collections:
-            self.show_snackbar("Сначала создайте коллекцию", bgcolor="#FF9800")
+    def show_manage_collection_games_dialog(self, collection_id: str):
+        """Мульти-селект диалог: показать ВСЕ игры с чекбоксами, отмеченные —
+        в коллекции, не отмеченные — нет. На «Сохранить» применяется новое
+        множество атомарно через GameManager.set_collection_for_games."""
+        col = next((c for c in self.game_manager.get_collections()
+                    if c["id"] == collection_id), None)
+        if not col:
+            self.show_snackbar("Коллекция не найдена", bgcolor="#F44336")
+            return
+        col_name = col.get("name", "?")
+        col_color = col.get("color", ACCENT_PURPLE)
+
+        # Снапшот всех игр + начальное состояние чекбоксов
+        all_games = sorted(self.game_manager.get_all_games(),
+                           key=lambda g: g.title.lower())
+        if not all_games:
+            self.show_snackbar("В библиотеке пока нет игр", bgcolor="#FF9800")
             return
 
-        def toggle_collection(e, col_id):
-            # Единая точка истины — backend GameManager. UI читает game.collections,
-            # который и есть тот же объект. Нет двойной мутации, нет race с проверкой
-            # `if collection_id not in game.collections` в backend.
-            self.game_manager.toggle_collection_sync(game.uid, col_id)
-            rebuild_checkboxes()
-            checkboxes.update()
+        checked = {g.uid: (collection_id in (g.collections or [])) for g in all_games}
+        search_state = {"query": ""}
 
-        def rebuild_checkboxes():
-            checkboxes.controls.clear()
-            for col in collections:
-                is_in = col["id"] in game.collections
-                cb = ft.Container(
-                    content=ft.Row(
-                        controls=[
-                            ft.Checkbox(value=is_in, on_change=lambda e, cid=col["id"]: toggle_collection(e, cid)),
-                            ft.Container(width=10, height=10, border_radius=5, bgcolor=col.get("color", ACCENT_PURPLE)),
-                            ft.Text(col["name"], size=14, color=TEXT_WHITE, expand=True),
-                        ],
-                        spacing=10,
-                    ),
-                    padding=ft.Padding(left=5, right=5, top=8, bottom=8),
-                    border_radius=8,
-                    bgcolor="#1E1E1E",
-                )
-                checkboxes.controls.append(cb)
+        def make_row(game):
+            thumb_src = game.icon_path if (game.icon_path and Path(game.icon_path).exists()) else None
+            thumb = ft.Container(
+                width=40, height=56,
+                border_radius=4,
+                bgcolor=None if thumb_src else CARD_BG,
+                image=ft.DecorationImage(src=thumb_src, fit="cover") if thumb_src else None,
+            )
+            def on_check(e, uid=game.uid):
+                checked[uid] = bool(e.control.value)
+                counter_text.value = f"Выбрано: {sum(1 for v in checked.values() if v)} / {len(checked)}"
+                counter_text.update()
+            cb = ft.Checkbox(value=checked[game.uid], on_change=on_check,
+                             active_color=col_color)
+            return ft.Container(
+                content=ft.Row(
+                    controls=[
+                        cb,
+                        thumb,
+                        ft.Text(game.title, size=14, color=TEXT_WHITE, expand=True,
+                                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                    ],
+                    spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.Padding(left=10, right=10, top=4, bottom=4),
+                border_radius=6,
+                data=game,  # для фильтрации по поиску
+            )
 
-        checkboxes = ft.ListView(controls=[], spacing=5, height=150, padding=5)
-        rebuild_checkboxes()
+        all_rows = [make_row(g) for g in all_games]
+        list_view = ft.ListView(controls=list(all_rows), spacing=2, height=420,
+                                padding=5)
 
-        def on_close(e):
+        def apply_search(e):
+            q = (search_field.value or "").lower().strip()
+            search_state["query"] = q
+            if not q:
+                list_view.controls = list(all_rows)
+            else:
+                list_view.controls = [r for r in all_rows
+                                       if q in r.data.title.lower()]
+            list_view.update()
+
+        search_field = ft.TextField(
+            hint_text="Поиск...",
+            prefix_icon=ft.Icons.SEARCH,
+            on_change=apply_search,
+            height=38,
+            content_padding=10,
+            text_size=13,
+            border_radius=8,
+            bgcolor="#1E1E1E",
+            border_color="#333333",
+            focused_border_color=ACCENT_BLUE,
+            expand=True,
+        )
+
+        counter_text = ft.Text(
+            f"Выбрано: {sum(1 for v in checked.values() if v)} / {len(checked)}",
+            size=12, color=TEXT_GREY,
+        )
+
+        def on_save(e):
+            selected = {uid for uid, v in checked.items() if v}
+            changed = self.game_manager.set_collection_for_games(collection_id, selected)
             dialog.open = False
             self.page.update()
-            # Гарантированно сохраняем изменения коллекций перед тем как пользователь
-            # потенциально закроет программу — даже если debounce ещё не сработал
-            self.page.run_task(self.game_manager.flush_save)
             self.refresh_collections_sidebar()
-            if game.uid in self._card_cache:
-                del self._card_cache[game.uid]
-            # Если активен фильтр по коллекции и игра больше не в этой коллекции,
-            # её нужно убрать из view — поэтому пересчитываем список
-            if self.current_filter.startswith("collection_"):
-                self.update_game_grid(reset_page=True)
-            else:
-                self.update_game_grid(reset_page=False)
+            # Инвалидируем кеш карточек для игр чьи коллекции изменились
+            # (затронуло "changed" игр, но дёшево очистить полностью)
+            self._card_cache.clear()
+            self.update_game_grid(reset_page=True)
+            if changed:
+                self.show_snackbar(
+                    f"Коллекция '{col_name}': обновлено {changed} игр",
+                    bgcolor="#4CAF50",
+                )
 
-        # Обрезаем название игры для заголовка
-        short_title = game.title[:25] + "..." if len(game.title) > 25 else game.title
+        def on_cancel(e):
+            dialog.open = False
+            self.page.update()
+
+        # Цвет-чип коллекции у заголовка
+        color_chip = ft.Container(width=14, height=14, border_radius=7, bgcolor=col_color)
 
         dialog = ft.AlertDialog(
-            title=ft.Text("Добавить в коллекцию", weight=ft.FontWeight.BOLD, size=16),
+            modal=True,
+            title=ft.Row(
+                controls=[
+                    color_chip,
+                    ft.Text(f"«{col_name}» — выбор игр", weight=ft.FontWeight.BOLD),
+                ],
+                spacing=10,
+            ),
             content=ft.Container(
-                width=280,
+                width=520,
                 content=ft.Column(
                     controls=[
-                        ft.Text(short_title, size=12, color=TEXT_GREY, italic=True),
-                        ft.Container(height=10),
-                        checkboxes,
+                        ft.Text("Отметьте игры, которые должны входить в коллекцию.",
+                                size=12, color=TEXT_GREY),
+                        ft.Container(height=8),
+                        search_field,
+                        ft.Container(height=8),
+                        list_view,
+                        ft.Container(height=8),
+                        counter_text,
                     ],
                     spacing=0,
                     tight=True,
                 ),
             ),
             actions=[
-                ft.ElevatedButton("Готово", on_click=on_close, bgcolor=ACCENT_BLUE, color="#FFFFFF"),
+                ft.TextButton("Отмена", on_click=on_cancel),
+                ft.ElevatedButton("Сохранить", on_click=on_save,
+                                  bgcolor=ACCENT_PURPLE, color="#FFFFFF"),
             ],
-            actions_alignment=ft.MainAxisAlignment.CENTER,
         )
 
         self.page.overlay.append(dialog)

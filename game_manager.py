@@ -1734,6 +1734,34 @@ class GameManager:
         self.save_library_sync()
         return True
 
+    def set_collection_for_games(self, collection_id: str, game_uids: set) -> int:
+        """Атомарно выставляет принадлежность коллекции для всех игр:
+        - игры из game_uids получают этот collection_id (если ещё не было)
+        - у всех остальных игр этот collection_id удаляется
+
+        Возвращает количество затронутых игр. Sync save — изменения сразу
+        на диске. Используется новым UI 'Управление играми коллекции' для
+        мульти-селекта без N отдельных toggle-вызовов."""
+        # Защита: пустой collection_id не трогаем
+        if not collection_id:
+            return 0
+        changed = 0
+        target_uids = set(game_uids or [])
+        for uid, game in self._games.items():
+            should_be_in = uid in target_uids
+            currently_in = collection_id in game.collections
+            if should_be_in and not currently_in:
+                game.collections.append(collection_id)
+                changed += 1
+            elif not should_be_in and currently_in:
+                game.collections.remove(collection_id)
+                changed += 1
+        if changed:
+            self.save_library_sync()
+            logger.info(f"Bulk collection '{collection_id}' update: "
+                        f"{len(target_uids)} included, {changed} games changed")
+        return changed
+
     def toggle_collection_sync(self, game_uid: str, collection_id: str) -> Optional[bool]:
         """Идемпотентный toggle игры в/из коллекции. Возвращает True (добавлена),
         False (убрана) или None (игра не найдена). Сохранение — через debounce.

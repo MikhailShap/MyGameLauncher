@@ -1300,6 +1300,30 @@ class GameManager:
                 logger.info(f"Loaded library: {len(self._games)} games, "
                             f"{len(self._collections)} collections")
 
+                # Sweep: автоматически чистим игры, которых больше нет на диске
+                # (удалены пока лаунчер был закрыт). Раньше это требовало
+                # ручного "Обновить библиотеку".
+                def _sweep_missing_sync():
+                    to_remove = []
+                    for uid, game in self._games.items():
+                        if game.exe_path and game.exe_path.startswith("steam://"):
+                            # Steam — проверяем install_path
+                            if game.install_path and not Path(game.install_path).exists():
+                                to_remove.append((uid, game.title))
+                        else:
+                            # System — проверяем сам exe
+                            if game.exe_path and not Path(game.exe_path).exists():
+                                to_remove.append((uid, game.title))
+                    return to_remove
+
+                missing = await asyncio.to_thread(_sweep_missing_sync)
+                if missing:
+                    for uid, title in missing:
+                        logger.info(f"Auto-sweep: removing missing game '{title}' (uid={uid})")
+                        del self._games[uid]
+                    await self.save_library()
+                    logger.info(f"Auto-sweep: removed {len(missing)} games no longer on disk")
+
                 # Validate and repair cache references
                 games_list = list(self._games.values())
                 repaired = self.cover_validator.repair_library_references(games_list)

@@ -876,16 +876,19 @@ class CyberLauncher:
             if path not in self.settings["excluded_paths"]:
                 self.settings["excluded_paths"].append(path)
             self.save_settings()
-            
+
             # Remove from card cache
             if game.uid in self._card_cache:
                 del self._card_cache[game.uid]
-            
+
             # Remove from current games list
             self._all_games_list = [g for g in self._all_games_list if g.uid != game.uid]
-            
+
             # Re-render cards without resetting page
             self._render_visible_cards()
+            # Обновляем счётчики коллекций в сайдбаре — иначе они остаются
+            # со старым числом игр (показывают "17" пока в коллекции уже 16)
+            self.refresh_collections_sidebar()
             self.show_snackbar(f"'{game.title}' исключена из библиотеки", bgcolor="#FF9800")
 
 
@@ -2633,6 +2636,9 @@ class CyberLauncher:
         await process() # Call the async process function
         self.loading_overlay.hide()
         self.page.update()  # Скрыть оверлей
+        # Сайдбар с коллекциями нужно освежить — после rescan-а
+        # счётчики игр в коллекциях могут измениться
+        self.refresh_collections_sidebar()
         self.update_game_grid()
         # Догружаем hero-арт для новых Steam-игр (если что-то добавилось)
         self.page.run_task(self.game_manager.prefetch_hero_art)

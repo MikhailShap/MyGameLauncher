@@ -1060,7 +1060,16 @@ class DiskScanner:
 
     # Игнорируемые папки и файлы (lower case)
     IGNORE_DIRS = {'windows', 'window.old', 'program data', 'users', '$recycle.bin', 'system volume information', 'common files', 'microsoft', 'drivers', 'directx', 'vcredist', 'support', 'redist', 'prerequisites'}
-    IGNORE_FILES = {'unins', 'setup', 'update', 'config', 'crash', 'unitycrashhandler', 'dxsetup', 'vcredist', 'redist', 'console', 'terminal', 'server', 'launcher'}
+    # NB: 'crash' убран — это substring и ловил легитимные игры вроде
+    # CrashBandicoot4.exe. Crash-handlers ловятся через 'crashhandler'
+    # и 'unitycrashhandler'. 'launcher' оставлен для пары
+    # GameLauncher.exe + Game.exe в одной папке (берём вторую).
+    IGNORE_FILES = {'unins', 'setup', 'update', 'config', 'crashhandler', 'unitycrashhandler', 'dxsetup', 'vcredist', 'redist', 'console', 'terminal', 'server', 'launcher'}
+    # Минимальный размер exe чтобы считаться игрой. Раньше было 512 КБ —
+    # отбрасывало легитимные UE-bootstrap'ы (Grip.exe ~201 КБ, который
+    # лежит в корне и стартует Engine\Binaries\Win64\... shipping exe).
+    # 100 КБ — отсекает мелкие утилиты, но впускает мини-лаунчеры.
+    MIN_EXE_SIZE_BYTES = 100 * 1024
 
     def __init__(self):
         pass
@@ -1068,31 +1077,40 @@ class DiskScanner:
     def _is_game_exe(self, path: Path) -> bool:
         """Эвристика: является ли файл игровым исполняемым файлом"""
         name_lower = path.name.lower()
-        
+
         # 1. Проверка расширения (только exe)
         if path.suffix.lower() != ".exe":
             return False
-            
+
         # 2. Игнорирование по имени файла
         if any(x in name_lower for x in self.IGNORE_FILES):
             return False
-            
-        # 3. Размер файла (игры обычно > 500 КБ, маленькие exe часто лаунчеры или утилиты)
+
+        # 3. Минимальный размер — отсеивает мелкие утилиты
         try:
-            if path.stat().st_size < 512 * 1024: # < 512KB
+            if path.stat().st_size < self.MIN_EXE_SIZE_BYTES:
                 return False
-        except:
+        except Exception:
             return False
-            
+
         return True
 
     def _find_best_exe(self, folder: Path) -> Optional[Path]:
         """Находит главный exe в папке игры"""
         exes = []
         try:
-            # Ищем exe на нескольких уровнях глубины (до 4 для UE/Unity игр)
-            # Приоритет: корень > 1 уровень > 2 уровня > 3 уровня
-            search_patterns = ["*.exe", "*/*.exe", "*/*/*.exe", "*/*/*/*.exe"]
+            # Ищем exe на нескольких уровнях глубины. UE-структура для
+            # таких игр как Grip / Crash Bandicoot 4:
+            #   GameFolder\GameInternalName\Binaries\Win64\Game-Win64-Shipping.exe
+            # это 4 уровня от корневой папки игры — поэтому добавлен
+            # пятый паттерн */*/*/*/*.exe.
+            search_patterns = [
+                "*.exe",
+                "*/*.exe",
+                "*/*/*.exe",
+                "*/*/*/*.exe",
+                "*/*/*/*/*.exe",
+            ]
 
             for pattern in search_patterns:
                 for item in folder.glob(pattern):

@@ -3914,25 +3914,86 @@ def main(page: ft.Page):
 
 
 def _kill_orphan_flet_processes():
-    """Убивает зомби flet.exe / flet_view.exe процессы из предыдущих запусков.
+    """Убивает зомби flet.exe из предыдущих запусков — но ТОЛЬКО наши.
 
     Сценарий: python.exe умер аварийно (Ctrl+C, краш, taskkill), но Flutter
     Desktop окно (flet.exe) осталось висеть как зомби с открытым TCP. На
     следующем старте новый flet.exe может конфликтовать с зомби и тихо
     умирать → лог обрывается на 'Flet View found' без 'App session started'.
 
-    Запускаем taskkill при старте чтобы гарантировать чистое состояние.
-    Безопасно: убиваем только процессы с именем flet.exe в рамках текущего
-    пользователя; других пользователей taskkill без админа не тронет."""
+    КРИТИЧНО: фильтруем по пути flet.exe — без этого убивались чужие Flet-
+    приложения юзера (DayPlanner и т.п.), которые тоже используют flet.exe."""
     if sys.platform != "win32":
         return
+
+    # Где живёт НАШ flet.exe? Frozen-сборка → рядом с CyberLauncher.exe;
+    # dev-режим (python main.py) → внутри venv.
+    if getattr(sys, "frozen", False):
+        our_prefix = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        try:
+            import flet_desktop
+            our_prefix = os.path.dirname(os.path.abspath(flet_desktop.__file__))
+        except Exception:
+            our_prefix = os.path.dirname(os.path.abspath(__file__))
+    our_prefix = our_prefix.lower()
+
     try:
-        # /F — force, /IM — by image name, /FI — filter (только нашего юзера)
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "flet.exe"],
-            capture_output=True, timeout=3,
-            creationflags=0x08000000,  # CREATE_NO_WINDOW — не мигаем cmd-окном
-        )
+        kernel32 = ctypes.windll.kernel32
+        TH32CS_SNAPPROCESS = 0x00000002
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_void_p),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD,
+            wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
+        ]
+
+        snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+        if not snap or snap == INVALID_HANDLE_VALUE:
+            return
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            if not kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+                return
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            PROCESS_TERMINATE = 0x0001
+            while True:
+                if entry.szExeFile.lower() == "flet.exe":
+                    pid = entry.th32ProcessID
+                    h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                    if h:
+                        try:
+                            buf = ctypes.create_unicode_buffer(1024)
+                            size = wintypes.DWORD(1024)
+                            ok = kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size))
+                            if ok and buf.value.lower().startswith(our_prefix):
+                                hk = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+                                if hk:
+                                    kernel32.TerminateProcess(hk, 1)
+                                    kernel32.CloseHandle(hk)
+                        finally:
+                            kernel32.CloseHandle(h)
+                if not kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                    break
+        finally:
+            kernel32.CloseHandle(snap)
     except Exception:
         pass
 

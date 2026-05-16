@@ -30,6 +30,12 @@ except ImportError:
 # Импорт backend
 from game_manager import GameManager, GameModel, Platform, Category, logger as backend_logger, get_app_data_dir
 
+# Версия приложения. Менять только здесь — используется и для заголовка окна
+# (через который FindWindowW находит лаунчер для restore из BigPicture), и
+# для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
+APP_VERSION = "1.4.4"
+WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
+
 # Опциональные модули геймпада и BigPicture
 try:
     from gamepad_manager import GamepadManager
@@ -71,7 +77,7 @@ def acquire_single_instance_lock():
     if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
         hwnd = 0
         try:
-            hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+            hwnd = user32.FindWindowW(None, WINDOW_TITLE)
         except Exception:
             hwnd = 0
 
@@ -141,7 +147,7 @@ def create_tray_icon():
                 if sys.platform == "win32":
                     try:
                         user32 = ctypes.windll.user32
-                        hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+                        hwnd = user32.FindWindowW(None, WINDOW_TITLE)
                         if hwnd:
                             user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                             user32.SetForegroundWindow(hwnd)
@@ -1006,7 +1012,7 @@ class CyberLauncher:
                 # self.update_game_grid(reset_page=False)
 
     def setup_page(self):
-        self.page.title = "CyberLauncher v1.0"
+        self.page.title = WINDOW_TITLE
         self.page.bgcolor = BG_COLOR
         self.page.padding = 0
         self.page.theme_mode = ft.ThemeMode.DARK
@@ -1642,7 +1648,7 @@ class CyberLauncher:
                     ft.Row(controls=[
                         ft.Icon(ft.Icons.INFO_OUTLINE, color=ACCENT_BLUE, size=20),
                         ft.Text("CyberLauncher", size=16, color=TEXT_WHITE, weight=ft.FontWeight.BOLD),
-                        ft.Text("v1.0", size=14, color=TEXT_GREY),
+                        ft.Text(f"v{APP_VERSION}", size=14, color=TEXT_GREY),
                     ], spacing=10),
                     ft.Container(height=10),
                     ft.Text("Универсальный лаунчер для всех ваших игр", size=13, color=TEXT_GREY),
@@ -2358,7 +2364,7 @@ class CyberLauncher:
             return
         try:
             user32 = ctypes.windll.user32
-            hwnd = self._get_launcher_hwnd() or user32.FindWindowW(None, "CyberLauncher v1.0")
+            hwnd = self._get_launcher_hwnd() or user32.FindWindowW(None, WINDOW_TITLE)
             if hwnd:
                 SW_SHOW = 5
                 user32.ShowWindow(hwnd, SW_SHOW)
@@ -2385,7 +2391,7 @@ class CyberLauncher:
 
         user32 = ctypes.windll.user32
         try:
-            hwnd = user32.FindWindowW(None, "CyberLauncher v1.0")
+            hwnd = user32.FindWindowW(None, WINDOW_TITLE)
             if hwnd:
                 self._launcher_hwnd = hwnd
                 return hwnd
@@ -2501,7 +2507,7 @@ class CyberLauncher:
         try:
             if sys.platform == "win32":
                 user32 = ctypes.windll.user32
-                hwnd = self._get_launcher_hwnd() or user32.FindWindowW(None, "CyberLauncher v1.0")
+                hwnd = self._get_launcher_hwnd() or user32.FindWindowW(None, WINDOW_TITLE)
                 if hwnd:
                     SW_MINIMIZE = 6
                     user32.ShowWindow(hwnd, SW_MINIMIZE)

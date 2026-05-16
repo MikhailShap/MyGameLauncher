@@ -15,6 +15,32 @@ import sys
 import os
 
 def build():
+    # Если запущены НЕ из venv (например, `python Build.py` без активации) —
+    # перезапускаемся через venv/Scripts/python.exe. Иначе PyInstaller соберёт
+    # exe без pygame/SteamGridDB/прочих зависимостей, которые есть только
+    # в venv, и геймпад/иконки молча отвалятся в дистрибутиве.
+    here = os.path.dirname(os.path.abspath(__file__))
+    venv_py = os.path.join(here, "venv", "Scripts", "python.exe")
+    if os.path.exists(venv_py) and os.path.abspath(sys.executable).lower() != os.path.abspath(venv_py).lower():
+        print(f"[INFO] Re-launching via venv python: {venv_py}")
+        os.execv(venv_py, [venv_py, os.path.abspath(__file__)])
+
+    # Проверка критичных рантайм-зависимостей. Если падаем здесь — значит
+    # venv не настроен / pip install не дотянул.
+    missing = []
+    for mod in ("pygame", "pygame._sdl2.controller", "PIL", "flet"):
+        try:
+            __import__(mod)
+        except ImportError as e:
+            missing.append(f"{mod} ({e})")
+    if missing:
+        print("[ERROR] Missing dependencies in current Python:")
+        for m in missing:
+            print(f"   - {m}")
+        print(f"   python: {sys.executable}")
+        print("Activate venv or run: pip install -r requirements.txt")
+        sys.exit(1)
+
     # Проверяем PyInstaller
     try:
         import PyInstaller
@@ -71,6 +97,12 @@ def build():
         "--clean",             # Очистить кэш перед сборкой
         "--noconfirm",         # Не спрашивать подтверждение
         "--noupx",             # БЕЗ UPX — иначе медленный старт и анимации
+        # PyInstaller-хук для pygame в свежих pygame-ce не копирует
+        # pygame/_sdl2/__init__.py, из-за чего "import pygame._sdl2.controller"
+        # падает в frozen-сборке и GamepadManager.available=False → геймпад
+        # не определяется. --collect-all гарантирует, что весь пакет
+        # (исходники, .pyd, данные) попадёт в _internal/pygame/.
+        "--collect-all", "pygame",
     ]
     
     # Добавляем данные

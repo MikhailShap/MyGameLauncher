@@ -1326,6 +1326,39 @@ class GameManager:
                 logger.info(f"Loaded library: {len(self._games)} games, "
                             f"{len(self._collections)} collections")
 
+                # Нормализация относительных icon_path. В старых версиях
+                # лаунчера кэш лежал в cwd → пути типа "cache/icons/abc.jpg"
+                # сохранялись как относительные. После переезда кэша в
+                # %APPDATA%\\CyberLauncher\\cache\\ они перестают находиться
+                # и repair_library_references зануляет их → "иконки слетели".
+                # Резолвим относительные пути относительно APP_DATA_DIR,
+                # это где сейчас живёт cache/. Если файла там нет — пробуем
+                # cwd для совсем старых данных.
+                app_root = get_app_data_dir()
+                normalized = 0
+                for g in self._games.values():
+                    if not g.icon_path:
+                        continue
+                    p = Path(g.icon_path)
+                    if p.is_absolute() and p.exists():
+                        continue
+                    candidates = []
+                    if p.is_absolute():
+                        # Абсолютный но не существует — попробуем заменить
+                        # cache/icons/X.jpg на новую локацию
+                        if 'icons' in p.parts:
+                            candidates.append(app_root / 'cache' / 'icons' / p.name)
+                    else:
+                        candidates.append(app_root / p)
+                        candidates.append(Path.cwd() / p)
+                    for c in candidates:
+                        if c.exists() and c.stat().st_size > 2048:
+                            g.icon_path = str(c.resolve())
+                            normalized += 1
+                            break
+                if normalized:
+                    logger.info(f"Normalized {normalized} icon_paths to absolute")
+
                 # Sweep: автоматически чистим игры, которых больше нет на диске
                 # (удалены пока лаунчер был закрыт). Раньше это требовало
                 # ручного "Обновить библиотеку".
@@ -1567,25 +1600,42 @@ class GameManager:
         # Создаём новый словарь игр, полностью заменяя старый (чтобы удалить игры из отключенных лаунчеров)
         # Но при этом сохраняем метаданные (избранное, категории, кастомные иконки) для игр, которые снова нашлись.
         new_games_dict = {}
-        
+
         all_found_games = steam_games + system_games
-        
+
+        # Индекс старых записей по install_path — нужен для матчинга когда
+        # uid поменялся (DiskScanner начал выбирать другой .exe в той же
+        # папке игры после смены эвристики). Без этого fallback'а юзер
+        # теряет все метаданные игры: favorite, collections, custom cover,
+        # play_time и hero-арт.
+        old_by_install = {}
+        for old_g in self._games.values():
+            if old_g.install_path:
+                key = os.path.normpath(old_g.install_path).lower()
+                old_by_install[key] = old_g
+
         for game in all_found_games:
-            # Если игра была в старой базе - восстанавливаем метаданные
-            if game.uid in self._games:
-                old_game = self._games[game.uid]
+            # 1) Точный match по uid
+            old_game = self._games.get(game.uid)
+            # 2) Fallback: match по install_path если uid не совпал
+            if old_game is None and game.install_path:
+                key = os.path.normpath(game.install_path).lower()
+                old_game = old_by_install.get(key)
+                if old_game is not None and old_game.uid != game.uid:
+                    logger.info(f"Matched '{game.title}' by install_path "
+                                f"(uid changed {old_game.uid} → {game.uid})")
+                    # Мигрируем hero-кэш на новый uid чтобы не терять фоны
+                    self._migrate_hero_cache(old_game.uid, game.uid)
+
+            if old_game is not None:
                 game.is_favorite = old_game.is_favorite
                 game.category = old_game.category
                 # КРИТИЧНО: collections иначе все принадлежности игр коллекциям
-                # обнуляются на каждый "Обновить библиотеку" — пользователь
-                # теряет все свои коллекции после rescan
+                # обнуляются на каждый "Обновить библиотеку"
                 game.collections = list(old_game.collections or [])
-                # Также сохраняем историю активности — иначе rescan стирает
-                # last_played/play_time и "Недавние" в BP сбрасываются
                 game.last_played = old_game.last_played
                 game.play_time = old_game.play_time
                 game.added_date = old_game.added_date
-                # Per-game settings — сохраняем через rescan
                 game.run_as_admin = old_game.run_as_admin
 
                 # Восстанавливаем кастомную иконку, если она валидна
@@ -1940,6 +1990,35 @@ class GameManager:
         return game
 
     # ========== Hero art (landscape) prefetch для BigPicture ==========
+
+    def _migrate_hero_cache(self, old_uid: str, new_uid: str):
+        """Переименовывает hero-кэш-файлы со старого uid на новый.
+        Вызывается из scan_all_games когда install_path-fallback нашёл
+        совпадение, но uid поменялся (например, DiskScanner начал выбирать
+        другой .exe). Без миграции фон игры терялся в BigPicture."""
+        if not old_uid or not new_uid or old_uid == new_uid:
+            return
+        try:
+            # Основной авто-fetched hero
+            old_main = self.cache_heroes / f"{old_uid}.jpg"
+            new_main = self.cache_heroes / f"{new_uid}.jpg"
+            if old_main.exists() and not new_main.exists():
+                old_main.rename(new_main)
+                logger.info(f"Migrated hero cache: {old_uid}.jpg → {new_uid}.jpg")
+            # .miss-маркер
+            old_miss = self.cache_heroes / f"{old_uid}.miss"
+            new_miss = self.cache_heroes / f"{new_uid}.miss"
+            if old_miss.exists() and not new_miss.exists():
+                old_miss.rename(new_miss)
+            # Кастомные uploads <uid>_<timestamp>.jpg
+            for old_custom in self.cache_heroes.glob(f"{old_uid}_*.jpg"):
+                suffix = old_custom.name[len(old_uid):]  # _<ts>.jpg
+                new_custom = self.cache_heroes / f"{new_uid}{suffix}"
+                if not new_custom.exists():
+                    old_custom.rename(new_custom)
+                    logger.info(f"Migrated custom hero: {old_custom.name} → {new_custom.name}")
+        except Exception as e:
+            logger.warning(f"Hero cache migration failed for {old_uid}→{new_uid}: {e}")
 
     def get_hero_path(self, game: 'GameModel') -> Optional[str]:
         """Возвращает абсолютный путь к закэшированному landscape-арту игры.

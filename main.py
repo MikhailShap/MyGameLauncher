@@ -784,6 +784,13 @@ class CyberLauncher:
         # которые могли пройти когда foreground state ещё не устаканился.
         self._gamepad_silence_until: float = 0.0
 
+        # Pending play-time sessions: uid → timestamp запуска. Нужно для
+        # игр которые watcher game_manager не может отследить — Steam-игры
+        # с EasyAntiCheat и подобной защитой блокируют OpenProcess, и
+        # process-scan возвращает пусто. В этом случае мы оцениваем
+        # play_time по времени между запуском и возвратом фокуса в лаунчер.
+        self._pending_play_sessions: dict = {}
+
         # Screensaver: после N сек бездействия в BigPicture показывает фоны
         # игр поочерёдно. Cross-fade между двумя image-слоями.
         self._idle_timeout_s: float = 300.0  # 5 минут
@@ -2073,6 +2080,15 @@ class CyberLauncher:
         if data == "close":
             self.window_action("close")
             return
+        # При возврате окна (alt-tab из игры) применяем play_time для всех
+        # pending-сессий — это резервный путь когда watcher не смог
+        # обнаружить процесс игры (EAC и подобные).
+        if data in ("restore", "unminimize", "focus") and self._pending_play_sessions:
+            try:
+                for pending_uid in list(self._pending_play_sessions.keys()):
+                    self._finalize_pending_play_session(pending_uid)
+            except Exception:
+                pass
         # При возврате окна (alt-tab из игры) и активном BP — снова в fullscreen.
         # NB: gamepad-гейтинг идёт через _is_launcher_foreground() (WinAPI),
         # не через этот обработчик — Flet ненадёжно фаерит focus/blur при
@@ -2508,6 +2524,9 @@ class CyberLauncher:
         backend_logger.info(f"Game exited (uid={uid}) — restoring launcher")
         # Сбрасываем silence-window заранее — игра не запущена больше
         self._gamepad_silence_until = 0.0
+        # Финализируем pending-сессию play_time для игр которые watcher
+        # game_manager не смог точно отследить (Steam с EAC, runas)
+        self._finalize_pending_play_session(uid)
         if sys.platform != "win32":
             return
         try:
@@ -2527,6 +2546,28 @@ class CyberLauncher:
                 self.page.run_task(self._async_refullscreen_after_game)
             except Exception:
                 pass
+
+    def _finalize_pending_play_session(self, uid: str):
+        """Применяет play_time для pending-сессии. Вызывается когда:
+        - watcher определил окончание игры → _on_game_exited
+        - пользователь вернулся в лаунчер (alt-tab → window restore)
+        Удаляет запись из pending после применения, чтобы не учитывать
+        одно и то же дважды."""
+        start_ts = self._pending_play_sessions.pop(uid, None)
+        if start_ts is None:
+            return
+        elapsed_min = int((time.time() - start_ts) / 60)
+        # 1 мин минимум (фильтр мгновенных отмен), 24 ч максимум
+        # (страховка от долгих простоев когда забыли свернуть игру)
+        if elapsed_min < 1 or elapsed_min > 24 * 60:
+            backend_logger.info(f"Skipping play_time tracking for uid={uid}: {elapsed_min} min out of range")
+            return
+        game = self.game_manager._games.get(uid)
+        if not game:
+            return
+        game.play_time = (game.play_time or 0) + elapsed_min
+        self.game_manager.request_save()
+        backend_logger.info(f"Tracked play time for '{game.title}': +{elapsed_min} min (total: {game.play_time})")
 
     async def _async_refullscreen_after_game(self):
         try:
@@ -2884,11 +2925,20 @@ class CyberLauncher:
         self.page.run_task(self.launch_game, game)
     
     async def launch_game(self, game: GameModel):
+        # Записываем старт сессии для ВСЕХ игр — единая точка истины
+        # для play_time. game_manager-watcher только уведомляет о выходе
+        # (если может — для системных игр через Popen, для Steam-EAC он
+        # может не сработать); main.py всегда считает время сам по
+        # таймстампам запуска и финализации.
+        self._pending_play_sessions[game.uid] = time.time()
+
         success = await self.game_manager.launch_game(game.uid)
-        
+
         if success:
             self.show_snackbar(f"Запуск: {game.title}", bgcolor="#333333")
         else:
+            # Запуск не состоялся (UAC отказ / файл не найден) — снимаем сессию
+            self._pending_play_sessions.pop(game.uid, None)
             self.show_snackbar(f"Ошибка запуска: {game.title}", bgcolor="#8B0000")
     
     def on_favorite_click(self, game: GameModel):

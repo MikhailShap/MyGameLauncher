@@ -1687,54 +1687,55 @@ class GameManager:
             logger.warning(f"on_game_exited callback failed: {e}")
 
     def _watch_game_via_popen(self, uid: str, popen):
-        """Watcher для system-игр: Popen.wait() блокирует до выхода процесса."""
+        """Watcher для system-игр: Popen.wait() блокирует до выхода процесса.
+        play_time считается на стороне main.py через _pending_play_sessions —
+        единая точка истины для всех игр."""
         import threading as _threading
         def _waiter():
-            start = time.time()
             try:
                 popen.wait()
             except Exception:
                 pass
-            elapsed_min = int((time.time() - start) / 60)
-            if uid in self._games and elapsed_min > 0:
-                self._games[uid].play_time = (self._games[uid].play_time or 0) + elapsed_min
-                self.request_save()
-                logger.info(f"Game '{self._games[uid].title}' ran {elapsed_min} min")
             self._notify_game_exited(uid)
         _threading.Thread(target=_waiter, daemon=True).start()
 
     def _watch_game_via_process_scan(self, uid: str, install_path: str):
-        """Watcher для Steam-игр: периодически смотрим список процессов и
-        ищем процесс с .exe внутри install_path. Сначала ждём появления
-        (Steam-launch не моментальный), потом ждём исчезновения."""
+        """Watcher для Steam/admin-игр: периодически смотрим список процессов
+        и ищем процесс с .exe внутри install_path. Сначала ждём появления
+        (Steam-launch не моментальный), потом ждём исчезновения.
+
+        Важно: для игр с анти-читом (EasyAntiCheat, BattlEye, etc.)
+        OpenProcess к игре блокируется и мы НЕ видим процесс — appeared
+        останется False. В этом случае play_time считается на стороне
+        main.py через _pending_play_sessions (время от запуска до alt-tab
+        обратно в лаунчер). Callback exited тоже не дёргаем — лаунчер
+        поднимется только когда юзер сам alt-tab'нет."""
         import threading as _threading
         def _waiter():
             target_dir = os.path.normpath(install_path).lower()
-            # Этап 1: ждём появления (Steam может загружать игру до 60 сек)
+            # Этап 1: ждём появления. 5 минут — некоторые Steam-игры стартуют
+            # долго (анти-чит, проверки, обновления). Раньше было 90 сек —
+            # лаунчер преждевременно вылазил на экран если процесс не нашёлся.
             appeared = False
-            for _ in range(45):  # 90 сек
+            for _ in range(150):  # 5 мин (150 × 2 сек)
                 time.sleep(2)
                 if _get_processes_with_exe_in_dir(target_dir):
                     appeared = True
                     break
             if not appeared:
-                logger.info(f"Steam game '{self._games.get(uid, GameModel(uid='',title='?',exe_path='')).title}' "
-                            f"never appeared in {target_dir}")
-                # Всё равно дёрнем callback — лаунчер должен подняться через
-                # минуту-полторы если игра так и не запустилась (пиратка / Steam down)
-                self._notify_game_exited(uid)
+                title = self._games[uid].title if uid in self._games else "?"
+                logger.info(f"Game '{title}' process never visible in {target_dir} — "
+                            f"likely anti-cheat protected. play_time будет посчитан "
+                            f"на стороне main.py при возврате юзера в лаунчер.")
+                # НЕ зовём _notify_game_exited — иначе лаунчер вылезет поверх
+                # игры. Юзер сам вернётся через alt-tab когда закончит.
                 return
-            # Этап 2: ждём исчезновения
-            start = time.time()
+            # Этап 2: ждём исчезновения. play_time считается на стороне
+            # main.py — здесь только уведомление о выходе.
             while True:
                 time.sleep(3)
                 if not _get_processes_with_exe_in_dir(target_dir):
                     break
-            elapsed_min = int((time.time() - start) / 60)
-            if uid in self._games and elapsed_min > 0:
-                self._games[uid].play_time = (self._games[uid].play_time or 0) + elapsed_min
-                self.request_save()
-                logger.info(f"Steam game '{self._games[uid].title}' ran {elapsed_min} min")
             self._notify_game_exited(uid)
         _threading.Thread(target=_waiter, daemon=True).start()
 

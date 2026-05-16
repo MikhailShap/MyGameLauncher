@@ -180,6 +180,12 @@ class GameModel:
     # Запускать с правами администратора (через UAC). Нужно некоторым играм
     # вроде Crash Bandicoot 4 — иначе DXGI_ERROR_INVALID_CALL при старте.
     run_as_admin: bool = False
+    # Прошлые uid'ы игры. uid = md5(exe_path) для system-игр; когда DiskScanner
+    # начинает выбирать другой .exe в той же папке (после смены эвристики),
+    # uid меняется. legacy_uids хранит цепочку прежних uid, чтобы:
+    #  - get_hero_path находил фоны под старыми uid (<old_uid>_<ts>.jpg)
+    #  - cleanup_orphaned_cache не удалял их как "сиротские"
+    legacy_uids: List[str] = field(default_factory=list)
 
     @staticmethod
     def generate_uid(path: str) -> str:
@@ -734,6 +740,19 @@ class CoverValidator:
                     icon_path = game.get('icon_path')
                     if icon_path:
                         referenced_files.add(Path(icon_path).name)
+                    # Сохраняем кастомные иконки от прошлых uid игры. Custom
+                    # upload идёт в md5(uid)[:12].jpg (см. CoverUploader). При
+                    # смене uid файл становится orphan и cleanup его сносит.
+                    # Защищаем его через legacy_uids.
+                    uid = game.get('uid')
+                    if uid:
+                        referenced_files.add(
+                            hashlib.md5(uid.encode()).hexdigest()[:12] + ".jpg"
+                        )
+                    for legacy_uid in (game.get('legacy_uids') or []):
+                        referenced_files.add(
+                            hashlib.md5(legacy_uid.encode()).hexdigest()[:12] + ".jpg"
+                        )
         except:
             return (0, 0)
 
@@ -1359,6 +1378,19 @@ class GameManager:
                 if normalized:
                     logger.info(f"Normalized {normalized} icon_paths to absolute")
 
+                # One-shot восстановление фонов после смены эвристики DiskScanner.
+                # В v1.4.1 сканер начал выбирать наружный .exe вместо UE-launcher
+                # типа *-Win64-Shipping.exe → uid=md5(exe) поменялся → кастомные
+                # фоны (cache/heroes/<old_uid>_<ts>.jpg) осиротели. Миграция в
+                # scan_all_games не сработала ретроактивно: к моменту следующего
+                # рескана старый uid уже не было в library.json.
+                # Здесь сканируем install_path всех system-игр, считаем md5 для
+                # каждого .exe (глубина до 4) и если совпало с orphan uid —
+                # переименовываем файлы и записываем legacy_uids.
+                recovered = await asyncio.to_thread(self._recover_orphan_heroes)
+                if recovered > 0:
+                    await self.save_library()
+
                 # Sweep: автоматически чистим игры, которых больше нет на диске
                 # (удалены пока лаунчер был закрыт). Раньше это требовало
                 # ручного "Обновить библиотеку".
@@ -1637,6 +1669,12 @@ class GameManager:
                 game.play_time = old_game.play_time
                 game.added_date = old_game.added_date
                 game.run_as_admin = old_game.run_as_admin
+                # Сохраняем цепочку прошлых uid + добавляем старый если поменялся.
+                # Нужно чтобы get_hero_path находил кастомные фоны под старыми
+                # uid и cleanup не удалял их.
+                game.legacy_uids = list(old_game.legacy_uids or [])
+                if old_game.uid != game.uid and old_game.uid not in game.legacy_uids:
+                    game.legacy_uids.append(old_game.uid)
 
                 # Восстанавливаем кастомную иконку, если она валидна
                 if old_game.icon_path and self.cover_validator.validate_cache_file(old_game.icon_path):
@@ -2020,28 +2058,147 @@ class GameManager:
         except Exception as e:
             logger.warning(f"Hero cache migration failed for {old_uid}→{new_uid}: {e}")
 
+    def _recover_orphan_heroes(self) -> int:
+        """One-shot восстановление потерянных фонов после смены эвристики
+        DiskScanner. Сканирует cache/heroes на файлы вида <uid>[_<ts>].jpg,
+        где uid не принадлежит ни одной текущей игре. Для каждой system-игры
+        обходит install_path, считает md5(exe) до глубины 4, и при совпадении
+        с orphan-uid:
+          - переименовывает orphan-файлы под текущий uid игры
+          - записывает старый uid в game.legacy_uids
+        Возвращает число изменённых записей library.json."""
+        if not self.cache_heroes.exists():
+            return 0
+
+        current_uids = {g.uid for g in self._games.values()}
+        # uid → [Path, Path, ...]
+        orphans: Dict[str, List[Path]] = {}
+        for f in self.cache_heroes.glob("*.jpg"):
+            stem = f.stem
+            uid_part = stem.split("_", 1)[0] if "_" in stem else stem
+            if len(uid_part) == 12 and uid_part not in current_uids:
+                orphans.setdefault(uid_part, []).append(f)
+        if not orphans:
+            return 0
+
+        logger.info(f"_recover_orphan_heroes: found {len(orphans)} orphan uids in cache")
+
+        # Маппинг: old_uid → game (по совпадению md5(exe) внутри install_path)
+        mapping: Dict[str, 'GameModel'] = {}
+        for game in self._games.values():
+            if game.platform != Platform.SYSTEM.value or not game.install_path:
+                continue
+            inst = Path(game.install_path)
+            if not inst.exists():
+                continue
+            try:
+                for exe in inst.rglob("*.exe"):
+                    try:
+                        rel = exe.relative_to(inst)
+                    except ValueError:
+                        continue
+                    if len(rel.parts) > 4:
+                        continue
+                    old_uid = hashlib.md5(str(exe).lower().encode()).hexdigest()[:12]
+                    if old_uid in orphans and old_uid != game.uid and old_uid not in mapping:
+                        mapping[old_uid] = game
+                        break
+            except Exception as e:
+                logger.warning(f"Recover scan failed for {game.title}: {e}")
+
+        if not mapping:
+            logger.info("_recover_orphan_heroes: no orphans matched to current games")
+            # Не оставляем мусор — auto-fetched (без timestamp) orphan можно удалить,
+            # custom оставляем (вдруг юзер вернёт игру).
+            cleaned = 0
+            for uid, files in orphans.items():
+                for f in files:
+                    if "_" not in f.stem:  # auto-fetched, не custom
+                        try:
+                            f.unlink()
+                            cleaned += 1
+                        except Exception:
+                            pass
+            if cleaned:
+                logger.info(f"_recover_orphan_heroes: cleaned {cleaned} unmatched auto-fetched orphans")
+            return 0
+
+        migrated_files = 0
+        updated_games = 0
+        for old_uid, game in mapping.items():
+            new_uid = game.uid
+            for src in orphans[old_uid]:
+                suffix = src.name[len(old_uid):]  # ".jpg" или "_<ts>.jpg"
+                dst = self.cache_heroes / f"{new_uid}{suffix}"
+                if dst.exists():
+                    # Не перетираем — у текущего uid уже что-то есть.
+                    # Для custom (_<ts>) — оставляем оба, get_hero_path выберет
+                    # по mtime. Для auto (<uid>.jpg) — удаляем старый orphan.
+                    if "_" not in suffix:
+                        try:
+                            src.unlink()
+                        except Exception:
+                            pass
+                    continue
+                try:
+                    src.rename(dst)
+                    migrated_files += 1
+                    logger.info(f"Recovered hero: {src.name} → {dst.name} ('{game.title}')")
+                except Exception as e:
+                    logger.warning(f"Failed to rename {src.name}: {e}")
+
+            if old_uid not in game.legacy_uids:
+                game.legacy_uids.append(old_uid)
+                updated_games += 1
+
+        # Удаляем orphan'ы которые не сопоставились (от удалённых игр)
+        cleaned = 0
+        for uid, files in orphans.items():
+            if uid in mapping:
+                continue
+            for f in files:
+                if "_" not in f.stem:  # только auto-fetched
+                    try:
+                        f.unlink()
+                        cleaned += 1
+                    except Exception:
+                        pass
+        if cleaned:
+            logger.info(f"_recover_orphan_heroes: cleaned {cleaned} unmatched auto-fetched orphans")
+
+        logger.info(f"_recover_orphan_heroes: migrated {migrated_files} files, "
+                    f"updated {updated_games} games (added legacy_uids)")
+        return updated_games
+
     def get_hero_path(self, game: 'GameModel') -> Optional[str]:
         """Возвращает абсолютный путь к закэшированному landscape-арту игры.
         Приоритет: кастомный <uid>_<mtime>.jpg (загружен юзером, новейший по
         mtime суффиксу), затем auto-fetched <uid>.jpg. None если ничего нет —
-        BigPicture покажет пустой градиент вместо плохой картинки."""
+        BigPicture покажет пустой градиент вместо плохой картинки.
+
+        Также проверяет legacy_uids — это страхует от потери фонов когда
+        DiskScanner перевыбрал .exe и uid поменялся, а миграция файлов не
+        сработала (например, между сессиями)."""
         if game is None or not game.uid:
             return None
 
-        # 1) Кастомный фон с timestamp-суффиксом (последний загруженный)
-        custom_files = sorted(
-            self.cache_heroes.glob(f"{game.uid}_*.jpg"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        for cf in custom_files:
+        uids_to_check = [game.uid] + list(getattr(game, "legacy_uids", []) or [])
+
+        # 1) Кастомный фон с timestamp-суффиксом — собираем по всем uid,
+        # выбираем самый свежий по mtime
+        all_custom = []
+        for u in uids_to_check:
+            all_custom.extend(self.cache_heroes.glob(f"{u}_*.jpg"))
+        all_custom.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for cf in all_custom:
             if cf.stat().st_size > 2048:
                 return str(cf.resolve())
 
         # 2) Auto-fetched (Steam library_hero / RAWG background_image)
-        local = self.cache_heroes / f"{game.uid}.jpg"
-        if local.exists() and local.stat().st_size > 2048:
-            return str(local.resolve())
+        for u in uids_to_check:
+            local = self.cache_heroes / f"{u}.jpg"
+            if local.exists() and local.stat().st_size > 2048:
+                return str(local.resolve())
         return None
 
     def is_hero_known_missing(self, game: 'GameModel') -> bool:

@@ -59,6 +59,7 @@ def build():
         f"game_manager.py;.",      # Копируем game_manager.py
         f"gamepad_manager.py;.",   # Менеджер геймпада
         f"bigpicture_view.py;.",   # PS-стиль режим
+        f"wishlist_manager.py;.",  # Раздел "Желаемое" (Steam wishlist)
         f"{icon_file};.",          # Копируем иконку
     ]
 
@@ -85,6 +86,7 @@ def build():
         "pygame._sdl2.controller",
         "gamepad_manager",
         "bigpicture_view",
+        "wishlist_manager",
     ]
     
     # Формируем команду

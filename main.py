@@ -1069,6 +1069,7 @@ class CyberLauncher:
         # Sidebar buttons
         self.sidebar_buttons["all"] = SidebarButton(ft.Icons.GRID_VIEW_ROUNDED, "Все игры", is_active=True, on_click=self.on_filter_click, data="all")
         self.sidebar_buttons["favorites"] = SidebarButton(ft.Icons.FAVORITE_BORDER, "Избранное", on_click=self.on_filter_click, data="favorites")
+        self.sidebar_buttons["wishlist"] = SidebarButton(ft.Icons.LOCAL_FIRE_DEPARTMENT_OUTLINED, "Желаемое", on_click=self.on_filter_click, data="wishlist")
         self.sidebar_buttons["steam"] = SidebarButton(ft.Icons.VIDEOGAME_ASSET_OUTLINED, "Steam", on_click=self.on_filter_click, data="steam")
         self.sidebar_buttons["epic"] = SidebarButton(ft.Icons.TOKEN_OUTLINED, "Epic Games", on_click=self.on_filter_click, data="epic")
         self.sidebar_buttons["system"] = SidebarButton(ft.Icons.COMPUTER_OUTLINED, "Системные", on_click=self.on_filter_click, data="system")
@@ -1124,6 +1125,7 @@ class CyberLauncher:
                     ft.Container(height=8),
                     self.sidebar_buttons["all"],
                     self.sidebar_buttons["favorites"],
+                    self.sidebar_buttons["wishlist"],
                     ft.Container(height=5),
                     ft.Text("ПЛАТФОРМЫ", color="#80FFFFFF", size=11, weight=ft.FontWeight.BOLD),
                     ft.Container(height=5),
@@ -1696,6 +1698,473 @@ class CyberLauncher:
             "Вибрация геймпада включена" if value else "Вибрация геймпада выключена",
             bgcolor="#1E1E1E",
         )
+
+    # ============================== Wishlist (Желаемое) ==============================
+
+    WISHLIST_SORT_LABELS = {
+        "priority": "🔥 Приоритетные сверху",
+        "date_desc": "По дате (новые)",
+        "date_asc": "По дате (старые)",
+        "name": "По названию",
+    }
+
+    def build_wishlist_view(self):
+        """Раздел "Желаемое". Карточки с Steam-играми, которые юзер хочет
+        взять но ещё не установил. Метаданные — Steam Store API."""
+        if not hasattr(self, "_wishlist_sort"):
+            self._wishlist_sort = "priority"
+
+        # Заголовок + кнопки управления (Добавить, сортировка)
+        title_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35", size=32),
+                ft.Text("Желаемое", size=28, weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
+                ft.Container(expand=True),
+                ft.ElevatedButton(
+                    "Добавить из Steam",
+                    icon=ft.Icons.ADD,
+                    on_click=lambda e: self.show_wishlist_add_dialog(),
+                    bgcolor=ACCENT_PURPLE,
+                    color=TEXT_WHITE,
+                ),
+            ],
+            spacing=15,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        # Sort dropdown
+        self._wishlist_sort_text = ft.Text(
+            self.WISHLIST_SORT_LABELS[self._wishlist_sort],
+            size=12, color=TEXT_WHITE,
+        )
+        sort_button = ft.PopupMenuButton(
+            content=ft.Container(
+                content=ft.Row(
+                    controls=[
+                        self._wishlist_sort_text,
+                        ft.Icon(ft.Icons.ARROW_DROP_DOWN, color=TEXT_WHITE, size=20),
+                    ],
+                    spacing=5,
+                ),
+                padding=ft.Padding(left=12, right=8, top=6, bottom=6),
+                border_radius=8,
+                bgcolor="#1E1E1E",
+                border=ft.Border.all(1, "#333333"),
+            ),
+            items=[
+                ft.PopupMenuItem(text=label, on_click=lambda _, k=key: self._set_wishlist_sort(k))
+                for key, label in self.WISHLIST_SORT_LABELS.items()
+            ],
+        )
+
+        # Items grid
+        items = self.game_manager.wishlist.get_sorted(self._wishlist_sort)
+        cards = [self._build_wishlist_card(it) for it in items]
+        self._wishlist_grid = ft.GridView(
+            expand=True,
+            runs_count=3,
+            max_extent=380,
+            child_aspect_ratio=1.05,
+            spacing=15,
+            run_spacing=15,
+            padding=ft.Padding(left=0, right=0, top=10, bottom=20),
+            controls=cards,
+        )
+
+        empty_hint = ft.Container(
+            visible=not items,
+            padding=40,
+            alignment=ft.Alignment(0, 0),
+            content=ft.Column(
+                controls=[
+                    ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT_OUTLINED, color=TEXT_GREY, size=64),
+                    ft.Text("В списке желаемого пока пусто",
+                            size=16, color=TEXT_GREY, weight=ft.FontWeight.W_500),
+                    ft.Text('Нажмите "Добавить из Steam" чтобы найти и сохранить игру.',
+                            size=13, color=TEXT_GREY),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=12,
+            ),
+        )
+
+        controls_row = ft.Row(
+            controls=[
+                ft.Text(f"{len(items)} игр", size=13, color=TEXT_GREY),
+                ft.Container(expand=True),
+                ft.Icon(ft.Icons.SORT, color=TEXT_GREY, size=16),
+                ft.Text("Сортировка:", size=12, color=TEXT_GREY),
+                sort_button,
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        return ft.Container(
+            expand=True,
+            padding=ft.Padding(left=40, right=40, top=30, bottom=20),
+            content=ft.Column(
+                controls=[
+                    title_row,
+                    ft.Container(height=10),
+                    controls_row,
+                    ft.Container(height=10),
+                    empty_hint if not items else self._wishlist_grid,
+                ],
+                expand=True,
+                spacing=0,
+            ),
+        )
+
+    def _set_wishlist_sort(self, key: str):
+        self._wishlist_sort = key
+        # Перестроить view (быстрее чем точечно обновлять каждую карточку)
+        self.wishlist_view = self.build_wishlist_view()
+        self.bg_container.content = self.wishlist_view
+        self.page.update()
+
+    def _refresh_wishlist_view(self):
+        """Полный rebuild — используется после add/remove/toggle."""
+        if self.current_filter != "wishlist":
+            return
+        self.wishlist_view = self.build_wishlist_view()
+        self.bg_container.content = self.wishlist_view
+        self.page.update()
+
+    def _build_wishlist_card(self, item) -> ft.Container:
+        """Карточка одной игры в списке желаемого.
+        Layout: header_image сверху, ниже название + кнопки."""
+        # Cover image: используем header_image_url, fallback на градиент
+        if item.header_image_url:
+            cover = ft.Container(
+                height=160,
+                image=ft.DecorationImage(src=item.header_image_url, fit="cover"),
+                border_radius=ft.BorderRadius(8, 8, 0, 0),
+            )
+        else:
+            cover = ft.Container(
+                height=160,
+                gradient=ft.LinearGradient(
+                    begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1),
+                    colors=["#1a1a2e", "#16213e"],
+                ),
+                content=ft.Icon(ft.Icons.SPORTS_ESPORTS, size=64, color="#FFD54F"),
+                alignment=ft.Alignment(0, 0),
+                border_radius=ft.BorderRadius(8, 8, 0, 0),
+            )
+
+        # Огонёк toggle
+        fire_icon = ft.Icon(
+            ft.Icons.LOCAL_FIRE_DEPARTMENT if item.is_priority else ft.Icons.LOCAL_FIRE_DEPARTMENT_OUTLINED,
+            color="#FF6B35" if item.is_priority else "#888",
+            size=22,
+        )
+        fire_btn = ft.Container(
+            content=fire_icon,
+            width=36, height=36, border_radius=18,
+            bgcolor="#332A00" if item.is_priority else "#1E1E1E",
+            border=ft.Border.all(1, "#FF6B35" if item.is_priority else "#333"),
+            alignment=ft.Alignment(0, 0),
+            on_click=lambda e, aid=item.app_id: self._wishlist_toggle_priority(aid),
+            ink=True,
+            tooltip="Приоритет (взять в ближайшее время)",
+        )
+
+        # Steam page button
+        steam_btn = ft.ElevatedButton(
+            "Steam",
+            icon=ft.Icons.OPEN_IN_NEW,
+            on_click=lambda e, url=item.store_url: webbrowser.open(url) if url else None,
+            bgcolor="#1B2838",
+            color=TEXT_WHITE,
+        )
+
+        # Trailer button (если есть)
+        trailer_btn = None
+        if item.trailer_url:
+            trailer_btn = ft.ElevatedButton(
+                "Трейлер",
+                icon=ft.Icons.PLAY_CIRCLE_OUTLINE,
+                on_click=lambda e, url=item.trailer_url: webbrowser.open(url),
+                bgcolor="#333",
+                color=TEXT_WHITE,
+            )
+
+        # Delete button
+        del_btn = ft.IconButton(
+            ft.Icons.DELETE_OUTLINE,
+            icon_color="#FF5252",
+            tooltip="Удалить из желаемого",
+            on_click=lambda e, aid=item.app_id, title=item.title: self._wishlist_confirm_delete(aid, title),
+        )
+
+        title_text = ft.Text(
+            item.title or "?",
+            size=15, color=TEXT_WHITE, weight=ft.FontWeight.W_600,
+            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        meta_line = " · ".join(s for s in [item.release_date, item.genres] if s)
+        meta_text = ft.Text(
+            meta_line, size=11, color=TEXT_GREY,
+            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        desc_text = ft.Text(
+            item.short_description or "",
+            size=12, color="#BBBBBB",
+            max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+
+        actions = [steam_btn]
+        if trailer_btn is not None:
+            actions.append(trailer_btn)
+        actions.append(ft.Container(expand=True))
+        actions.append(fire_btn)
+        actions.append(del_btn)
+
+        body = ft.Container(
+            padding=ft.Padding(left=14, right=14, top=10, bottom=10),
+            content=ft.Column(
+                controls=[
+                    title_text,
+                    meta_text if meta_line else ft.Container(),
+                    ft.Container(height=4),
+                    desc_text,
+                    ft.Container(expand=True),
+                    ft.Row(controls=actions, spacing=8,
+                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ],
+                spacing=2,
+                expand=True,
+            ),
+        )
+
+        return ft.Container(
+            bgcolor=CARD_BG,
+            border_radius=8,
+            border=ft.Border.all(1, "#FF6B35" if item.is_priority else "#333"),
+            content=ft.Column(controls=[cover, body], spacing=0, expand=True),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        )
+
+    def _wishlist_toggle_priority(self, app_id: str):
+        new_val = self.game_manager.wishlist.toggle_priority(app_id)
+        if new_val is None:
+            return
+        # Полный rebuild чтобы пересортировать (если сейчас sort=priority)
+        self._refresh_wishlist_view()
+
+    def _wishlist_confirm_delete(self, app_id: str, title: str):
+        def on_confirm(e):
+            dialog.open = False
+            self.page.update()
+            self.game_manager.wishlist.remove(app_id)
+            self._refresh_wishlist_view()
+            self.show_snackbar(f"'{title}' удалена из желаемого", bgcolor="#FF9800")
+
+        def on_cancel(e):
+            dialog.open = False
+            self.page.update()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Удалить из желаемого?"),
+            content=ft.Text(f"'{title}' будет удалена из списка."),
+            actions=[
+                ft.TextButton("Отмена", on_click=on_cancel),
+                ft.TextButton("Удалить", on_click=on_confirm,
+                              style=ft.ButtonStyle(color="#F44336")),
+            ],
+        )
+        self.page.overlay.append(dialog)
+        dialog.open = True
+        self.page.update()
+
+    def show_wishlist_add_dialog(self):
+        """Диалог поиска и добавления игры через Steam Store API."""
+        from wishlist_manager import steam_search
+
+        search_state = {"results": [], "query": "", "debounce_token": 0}
+
+        results_column = ft.Column(controls=[], spacing=4)
+        status_text = ft.Text("Введите название игры", size=12, color=TEXT_GREY)
+
+        def render_results():
+            results_column.controls.clear()
+            for r in search_state["results"]:
+                app_id = r.get("app_id", "")
+                name = r.get("name", "?")
+                in_wishlist = self.game_manager.wishlist.has(app_id)
+                already_lbl = ft.Text(
+                    "уже в списке" if in_wishlist else "",
+                    size=11, color="#FFD54F",
+                )
+                row = ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Container(
+                                width=46, height=24,
+                                bgcolor=CARD_BG,
+                                image=ft.DecorationImage(src=r.get("header_image", ""), fit="cover") if r.get("header_image") else None,
+                                border_radius=4,
+                            ),
+                            ft.Column(
+                                controls=[
+                                    ft.Text(name, size=14, color=TEXT_WHITE,
+                                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                    already_lbl,
+                                ],
+                                spacing=0,
+                                expand=True,
+                                tight=True,
+                            ),
+                            ft.ElevatedButton(
+                                "Добавить" if not in_wishlist else "✓",
+                                icon=ft.Icons.ADD if not in_wishlist else ft.Icons.CHECK,
+                                on_click=(lambda e, aid=app_id, nm=name: self._wishlist_add_from_dialog(aid, nm, render_results, status_text)) if not in_wishlist else None,
+                                disabled=in_wishlist,
+                                bgcolor=ACCENT_PURPLE if not in_wishlist else "#333",
+                                color=TEXT_WHITE,
+                            ),
+                        ],
+                        spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.Padding(left=8, right=8, top=4, bottom=4),
+                    border_radius=6,
+                    bgcolor="#15FFFFFF",
+                )
+                results_column.controls.append(row)
+            try:
+                results_column.update()
+            except Exception:
+                pass
+
+        def on_query_change(e):
+            q = (search_field.value or "").strip()
+            search_state["query"] = q
+            search_state["debounce_token"] += 1
+            token = search_state["debounce_token"]
+
+            async def do_search():
+                await asyncio.sleep(0.35)
+                if token != search_state["debounce_token"]:
+                    return
+                if len(q) < 2:
+                    search_state["results"] = []
+                    status_text.value = "Введите минимум 2 символа"
+                    try:
+                        status_text.update()
+                    except Exception:
+                        pass
+                    render_results()
+                    return
+                status_text.value = "Ищу…"
+                try:
+                    status_text.update()
+                except Exception:
+                    pass
+                # network call в отдельный поток
+                items = await asyncio.to_thread(steam_search, q, 10)
+                if token != search_state["debounce_token"]:
+                    return
+                search_state["results"] = items
+                status_text.value = f"Найдено: {len(items)}" if items else "Ничего не найдено"
+                try:
+                    status_text.update()
+                except Exception:
+                    pass
+                render_results()
+
+            self.page.run_task(do_search)
+
+        search_field = ft.TextField(
+            hint_text="Название игры в Steam…",
+            prefix_icon=ft.Icons.SEARCH,
+            on_change=on_query_change,
+            autofocus=True,
+            border_radius=8,
+            bgcolor="#1E1E1E",
+            border_color="#333333",
+            focused_border_color=ACCENT_BLUE,
+            expand=True,
+        )
+
+        def on_close(e):
+            dialog.open = False
+            self.page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35"),
+                    ft.Text("Добавить в желаемое", weight=ft.FontWeight.BOLD),
+                ],
+                spacing=10,
+            ),
+            content=ft.Container(
+                width=600,
+                height=480,
+                alignment=ft.Alignment(-1, -1),
+                content=ft.Column(
+                    controls=[
+                        ft.Text("Поиск по Steam Store. Подсказки появляются после "
+                                "2+ символов.", size=12, color=TEXT_GREY),
+                        ft.Container(height=10),
+                        search_field,
+                        ft.Container(height=8),
+                        status_text,
+                        ft.Container(height=4),
+                        ft.Container(
+                            height=340,
+                            content=ft.Column(
+                                controls=[results_column],
+                                scroll=ft.ScrollMode.AUTO,
+                            ),
+                        ),
+                    ],
+                    spacing=0,
+                ),
+            ),
+            actions=[
+                ft.TextButton("Закрыть", on_click=on_close),
+            ],
+        )
+        self.page.overlay.append(dialog)
+        dialog.open = True
+        self.page.update()
+
+    def _wishlist_add_from_dialog(self, app_id: str, name_hint: str, render_cb, status_text):
+        """Добавить игру в wishlist (используется из диалога поиска).
+        Делает fetch appdetails в фоне, затем обновляет UI."""
+        status_text.value = f"Добавляю '{name_hint}'…"
+        try:
+            status_text.update()
+        except Exception:
+            pass
+
+        async def do_add():
+            item = await asyncio.to_thread(self.game_manager.wishlist.add_by_app_id, app_id)
+            if item is None:
+                status_text.value = "Не удалось получить данные из Steam"
+                try:
+                    status_text.update()
+                except Exception:
+                    pass
+                return
+            status_text.value = f"Добавлено: {item.title}"
+            try:
+                status_text.update()
+            except Exception:
+                pass
+            # Обновим UI диалога и страницы wishlist
+            try:
+                render_cb()
+            except Exception:
+                pass
+            self._refresh_wishlist_view()
+
+        self.page.run_task(do_add)
+
+    # ============================== End Wishlist ==============================
 
     def build_disk_info_view(self):
         """Создает представление с информацией о дисках"""
@@ -2868,6 +3337,11 @@ class CyberLauncher:
             # Show disk info view
             self.disk_info_view = self.build_disk_info_view()
             self.bg_container.content = self.disk_info_view
+            self.page.update()
+        elif filter_name == "wishlist":
+            # Раздел "Желаемое" — отдельная view с карточками Steam-игр
+            self.wishlist_view = self.build_wishlist_view()
+            self.bg_container.content = self.wishlist_view
             self.page.update()
         else:
             self.bg_container.content = self.games_container

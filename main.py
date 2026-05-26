@@ -1752,7 +1752,7 @@ class CyberLauncher:
                 border=ft.Border.all(1, "#333333"),
             ),
             items=[
-                ft.PopupMenuItem(text=label, on_click=lambda _, k=key: self._set_wishlist_sort(k))
+                ft.PopupMenuItem(label, on_click=lambda _, k=key: self._set_wishlist_sort(k))
                 for key, label in self.WISHLIST_SORT_LABELS.items()
             ],
         )

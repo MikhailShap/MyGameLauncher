@@ -2138,19 +2138,44 @@ class CyberLauncher:
         )
 
         def on_close(e):
+            backend_logger.info("Wishlist add dialog: close clicked")
             self._dismiss_dialog(dialog)
+
+        # Используем кастомный Container в title-row вместо TextButton в
+        # actions — actions-кнопки AlertDialog в этой версии Flet
+        # ненадёжно ловят клики, особенно с большим content.
+        close_btn = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=18),
+                    ft.Text("Закрыть", color=TEXT_WHITE, size=13),
+                ],
+                spacing=4,
+                tight=True,
+            ),
+            padding=ft.Padding(left=12, right=12, top=8, bottom=8),
+            border_radius=8,
+            bgcolor="#444",
+            on_click=on_close,
+            ink=True,
+            tooltip="Закрыть диалог",
+        )
 
         dialog = ft.AlertDialog(
             title=ft.Row(
                 controls=[
                     ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35"),
                     ft.Text("Добавить в желаемое", weight=ft.FontWeight.BOLD),
+                    ft.Container(expand=True),
+                    close_btn,
                 ],
                 spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
+            on_dismiss=on_close,  # клик мимо диалога / ESC
             content=ft.Container(
                 width=600,
-                height=480,
+                height=440,
                 alignment=ft.Alignment(-1, -1),
                 content=ft.Column(
                     controls=[
@@ -2162,7 +2187,7 @@ class CyberLauncher:
                         status_text,
                         ft.Container(height=4),
                         ft.Container(
-                            height=340,
+                            height=300,
                             content=ft.Column(
                                 controls=[results_column],
                                 scroll=ft.ScrollMode.AUTO,
@@ -2172,9 +2197,6 @@ class CyberLauncher:
                     spacing=0,
                 ),
             ),
-            actions=[
-                ft.TextButton("Закрыть", on_click=on_close),
-            ],
         )
         self._open_dialog(dialog)
 

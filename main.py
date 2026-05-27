@@ -938,14 +938,50 @@ class CyberLauncher:
         snackbar.open = True
         self.page.update()
 
-    def _dismiss_dialog(self, dialog):
-        """Закрывает AlertDialog и убирает его из page.overlay.
-        Если оставить — диалоги копятся в overlay сессия за сессией,
-        Flutter Engine после minimize/restore может потерять компоновку."""
+    def _open_dialog(self, dialog):
+        """Показывает AlertDialog. Сначала пробует Flet 0.28+ API
+        page.open(dialog), fallback на ручной append+open=True."""
+        opened = False
         try:
-            dialog.open = False
+            open_fn = getattr(self.page, "open", None)
+            if callable(open_fn):
+                open_fn(dialog)
+                opened = True
         except Exception:
             pass
+        if not opened:
+            try:
+                if dialog not in self.page.overlay:
+                    self.page.overlay.append(dialog)
+                dialog.open = True
+            except Exception:
+                pass
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+    def _dismiss_dialog(self, dialog):
+        """Закрывает AlertDialog и убирает его из page.overlay.
+        Используем сначала Flet 0.28+ API page.close(dialog) — он работает
+        надёжнее в новых версиях, где dialog.open=False иногда игнорируется
+        для modal=True диалогов. Fallback на ручной open=False для старых
+        версий Flet."""
+        closed = False
+        try:
+            close_fn = getattr(self.page, "close", None)
+            if callable(close_fn):
+                close_fn(dialog)
+                closed = True
+        except Exception:
+            pass
+        if not closed:
+            try:
+                dialog.open = False
+            except Exception:
+                pass
+        # Best-effort убираем из overlay чтобы накопленные dialog-объекты
+        # не путали Flutter Engine после minimize/restore.
         try:
             if dialog in self.page.overlay:
                 self.page.overlay.remove(dialog)
@@ -1989,9 +2025,7 @@ class CyberLauncher:
                               style=ft.ButtonStyle(color="#F44336")),
             ],
         )
-        self.page.overlay.append(dialog)
-        dialog.open = True
-        self.page.update()
+        self._open_dialog(dialog)
 
     def show_wishlist_add_dialog(self):
         """Диалог поиска и добавления игры через Steam Store API."""
@@ -2107,7 +2141,6 @@ class CyberLauncher:
             self._dismiss_dialog(dialog)
 
         dialog = ft.AlertDialog(
-            modal=True,
             title=ft.Row(
                 controls=[
                     ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35"),
@@ -2143,9 +2176,7 @@ class CyberLauncher:
                 ft.TextButton("Закрыть", on_click=on_close),
             ],
         )
-        self.page.overlay.append(dialog)
-        dialog.open = True
-        self.page.update()
+        self._open_dialog(dialog)
 
     def _wishlist_add_from_dialog(self, app_id: str, name_hint: str, render_cb, status_text):
         """Добавить игру в wishlist (используется из диалога поиска).
@@ -4231,9 +4262,7 @@ class CyberLauncher:
             ],
         )
 
-        self.page.overlay.append(dialog)
-        dialog.open = True
-        self.page.update()
+        self._open_dialog(dialog)
 
     def show_manage_collection_games_dialog(self, collection_id: str):
         """Мульти-селект диалог: показать ВСЕ игры с чекбоксами, отмеченные —

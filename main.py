@@ -2002,7 +2002,9 @@ class CyberLauncher:
         actions.append(del_btn)
 
         body = ft.Container(
-            padding=ft.Padding(left=14, right=14, top=10, bottom=10),
+            # bottom padding меньше top, чтобы action-row сидел ближе к низу
+            # карточки (юзеру так визуально комфортнее).
+            padding=ft.Padding(left=14, right=14, top=10, bottom=4),
             content=ft.Column(
                 controls=[
                     title_text,

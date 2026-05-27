@@ -2183,16 +2183,10 @@ class CyberLauncher:
         # Карточка — визуальная "коробка" поверх затемнения. Своя on_click =
         # stub: Flet/Flutter консумит событие в ближайшем GestureDetector'е,
         # так что backdrop не сработает при клике внутри карточки.
-        # ВАЖНО: высота результатов задана ФИКСИРОВАННОЙ — раньше пытались
-        # дать results_container expand=True, но Flet растягивал его в пустоту
-        # даже когда results_column пустой, из-за чего status_text/результаты
-        # съезжали на 150+px вниз от поля поиска.
-        # Высота карточки = title(~32) + subtitle(~18) + search(~50) +
-        # status(~18) + RESULTS_HEIGHT + close(~44) + spacers(~46) + padding*2
-        # ≈ 208 + RESULTS_HEIGHT + 48. С RESULTS_HEIGHT=340 → 596, берём 640
-        # с запасом — без запаса close-кнопка уезжала под clip-зону и не
-        # ловила клики.
-        RESULTS_HEIGHT = 340
+        # Карточка с фиксированной высотой; результаты — expand=True внутри
+        # Column с expand=True, чтобы заняли всю свободную высоту между
+        # status_text и close-кнопкой. close-row прижимается к низу.
+        # Card height=640 даёт ~430px для списка → ~6-7 строк по 67px.
         card = ft.Container(
             width=680,
             height=640,
@@ -2219,8 +2213,11 @@ class CyberLauncher:
                     ft.Container(height=10),
                     status_text,
                     ft.Container(height=6),
+                    # Результаты занимают всю оставшуюся высоту (expand=True).
+                    # Когда results_column пуст — Container просто схлопывается
+                    # до зоны (scroll включён, ничего не рендерится).
                     ft.Container(
-                        height=RESULTS_HEIGHT,
+                        expand=True,
                         content=ft.Column(
                             controls=[results_column],
                             scroll=ft.ScrollMode.AUTO,
@@ -2240,6 +2237,10 @@ class CyberLauncher:
                     ),
                 ],
                 spacing=0,
+                # expand=True у Column обязателен, чтобы expand=True у
+                # results-Container'а получил живое constraint (иначе он
+                # коллапсируется в 0 — Column с natural size).
+                expand=True,
             ),
         )
 

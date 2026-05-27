@@ -2141,24 +2141,15 @@ class CyberLauncher:
             backend_logger.info("Wishlist add dialog: close clicked")
             self._dismiss_dialog(dialog)
 
-        # Используем кастомный Container в title-row вместо TextButton в
-        # actions — actions-кнопки AlertDialog в этой версии Flet
-        # ненадёжно ловят клики, особенно с большим content.
-        close_btn = ft.Container(
-            content=ft.Row(
-                controls=[
-                    ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=18),
-                    ft.Text("Закрыть", color=TEXT_WHITE, size=13),
-                ],
-                spacing=4,
-                tight=True,
-            ),
-            padding=ft.Padding(left=12, right=12, top=8, bottom=8),
-            border_radius=8,
-            bgcolor="#444",
+        # Кнопка "Закрыть" размещается внизу content-области. AlertDialog.title
+        # и AlertDialog.actions в этой версии Flet ненадёжно пропускают клики
+        # к вложенным интерактивным элементам — content же работает корректно.
+        close_btn = ft.ElevatedButton(
+            "Закрыть",
+            icon=ft.Icons.CLOSE,
             on_click=on_close,
-            ink=True,
-            tooltip="Закрыть диалог",
+            bgcolor="#444",
+            color=TEXT_WHITE,
         )
 
         dialog = ft.AlertDialog(
@@ -2166,16 +2157,13 @@ class CyberLauncher:
                 controls=[
                     ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35"),
                     ft.Text("Добавить в желаемое", weight=ft.FontWeight.BOLD),
-                    ft.Container(expand=True),
-                    close_btn,
                 ],
                 spacing=10,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             on_dismiss=on_close,  # клик мимо диалога / ESC
             content=ft.Container(
                 width=600,
-                height=440,
+                height=460,
                 alignment=ft.Alignment(-1, -1),
                 content=ft.Column(
                     controls=[
@@ -2192,6 +2180,14 @@ class CyberLauncher:
                                 controls=[results_column],
                                 scroll=ft.ScrollMode.AUTO,
                             ),
+                        ),
+                        ft.Container(height=10),
+                        ft.Row(
+                            controls=[
+                                ft.Container(expand=True),
+                                close_btn,
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                     ],
                     spacing=0,

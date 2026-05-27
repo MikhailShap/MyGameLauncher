@@ -2142,7 +2142,10 @@ class CyberLauncher:
             bgcolor="#1E1E1E",
             border_color="#333333",
             focused_border_color=ACCENT_BLUE,
-            expand=True,
+            # expand=True убран: колонка карточки не expand → TextField с
+            # expand=True сжимается по вертикали в "ленточку". Без expand
+            # TextField берёт натуральную высоту (~48px) и растягивается
+            # по ширине автоматически (cross-axis stretch у Column).
         )
 
         # Кастомный модал — НЕ ft.AlertDialog. В этой версии Flet AlertDialog

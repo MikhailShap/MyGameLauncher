@@ -4,8 +4,11 @@
 метаданных — Steam Store API (storesearch + appdetails). Никаких локальных
 exe/install_path: только Steam-страница, описание, трейлер.
 
-Огонёк (is_priority) — пометка "хочу взять в ближайшее время", по нему
-можно сортировать вверх списка.
+Огонёк (priority) — 3-уровневая пометка:
+  high   — зелёный — играть прям в ближайшее время
+  medium — жёлтый — поиграть потом
+  low    — серый — попробовать когда-нибудь (default)
+Сортировка SORT_PRIORITY: high → medium → low, внутри уровня — новые сверху.
 
 Файл `wishlist.json` в %APPDATA%\\CyberLauncher\\data\\. Атомарная запись
 через .tmp + os.replace.
@@ -28,6 +31,15 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger("WishlistManager")
 
 
+# Уровни приоритета. Зелёный — "хочу прям сейчас", жёлтый — "потом",
+# серый — "просто попробовать когда-нибудь". Сортировка идёт high → med → low.
+PRIORITY_HIGH = "high"
+PRIORITY_MEDIUM = "medium"
+PRIORITY_LOW = "low"
+PRIORITY_LEVELS = (PRIORITY_HIGH, PRIORITY_MEDIUM, PRIORITY_LOW)
+_PRIORITY_RANK = {PRIORITY_HIGH: 0, PRIORITY_MEDIUM: 1, PRIORITY_LOW: 2}
+
+
 @dataclass
 class WishlistItem:
     """Один элемент списка желаемого. Все поля кроме app_id могут быть пустыми,
@@ -42,7 +54,10 @@ class WishlistItem:
     release_date: str = ""
     developers: str = ""                         # "Dev1, Dev2"
     genres: str = ""                             # "Action, RPG"
-    is_priority: bool = False                    # огонёк
+    # 3-уровневый приоритет: high (зелёный — играть прям сейчас),
+    # medium (жёлтый — потом), low (серый — попробовать когда-нибудь).
+    # default low чтобы новые игры не лезли в верх списка по умолчанию.
+    priority: str = PRIORITY_LOW
     added_date: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
@@ -51,7 +66,15 @@ class WishlistItem:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WishlistItem":
         valid = {f for f in cls.__dataclass_fields__.keys()}
-        return cls(**{k: v for k, v in data.items() if k in valid})
+        filtered = {k: v for k, v in data.items() if k in valid}
+        # Миграция со старой модели (is_priority: bool). Если в JSON ещё нет
+        # priority, но есть is_priority — конвертируем True → high, False → low.
+        if "priority" not in filtered:
+            filtered["priority"] = PRIORITY_HIGH if data.get("is_priority") else PRIORITY_LOW
+        # Валидация: неизвестные значения → low (защита от мусора в JSON)
+        if filtered.get("priority") not in PRIORITY_LEVELS:
+            filtered["priority"] = PRIORITY_LOW
+        return cls(**filtered)
 
 
 def _http_get_json(url: str, timeout: float = 10.0) -> Optional[Any]:
@@ -223,14 +246,37 @@ class WishlistManager:
             return True
         return False
 
+    def set_priority(self, app_id: str, level: str) -> Optional[str]:
+        """Установить уровень приоритета (high/medium/low).
+        Возвращает новое значение или None если app_id неизвестен / уровень невалиден."""
+        if app_id not in self._items or level not in PRIORITY_LEVELS:
+            return None
+        item = self._items[app_id]
+        item.priority = level
+        self.save_sync()
+        return item.priority
+
+    def cycle_priority(self, app_id: str) -> Optional[str]:
+        """Циклить low → medium → high → low. Используется как одиночный
+        клик на огоньке карточки. Возвращает новое значение."""
+        if app_id not in self._items:
+            return None
+        cycle_order = (PRIORITY_LOW, PRIORITY_MEDIUM, PRIORITY_HIGH)
+        item = self._items[app_id]
+        cur = item.priority if item.priority in cycle_order else PRIORITY_LOW
+        item.priority = cycle_order[(cycle_order.index(cur) + 1) % len(cycle_order)]
+        self.save_sync()
+        return item.priority
+
+    # Старое API оставляем как shim — есть и в коде, и в гипотетических хуках.
+    # Маппим бинарный toggle на high ↔ low (skip medium для бинарной семантики).
     def toggle_priority(self, app_id: str) -> Optional[bool]:
-        """Огонёк on/off. Возвращает новое значение или None если нет такого app_id."""
         if app_id not in self._items:
             return None
         item = self._items[app_id]
-        item.is_priority = not item.is_priority
+        item.priority = PRIORITY_LOW if item.priority == PRIORITY_HIGH else PRIORITY_HIGH
         self.save_sync()
-        return item.is_priority
+        return item.priority == PRIORITY_HIGH
 
     def has(self, app_id: str) -> bool:
         return str(app_id) in self._items
@@ -243,11 +289,11 @@ class WishlistManager:
     def get_sorted(self, sort_key: str) -> List[WishlistItem]:
         items = list(self._items.values())
         if sort_key == self.SORT_PRIORITY:
-            # огонёк сверху, потом по дате убывания
-            items.sort(key=lambda it: (not it.is_priority, it.added_date or ""), reverse=False)
-            # added_date пустые в конец — но reverse=False с (False, date) сортит ascending по дате
-            # хотим новые сверху среди огоньковых
-            items.sort(key=lambda it: (not it.is_priority, -_iso_ts(it.added_date)))
+            # priority rank (high=0, med=1, low=2) → новые сверху внутри группы.
+            items.sort(key=lambda it: (
+                _PRIORITY_RANK.get(it.priority, 2),
+                -_iso_ts(it.added_date),
+            ))
         elif sort_key == self.SORT_DATE_DESC:
             items.sort(key=lambda it: it.added_date or "", reverse=True)
         elif sort_key == self.SORT_DATE_ASC:

@@ -1817,11 +1817,15 @@ class CyberLauncher:
         # Items grid
         items = self.game_manager.wishlist.get_sorted(self._wishlist_sort)
         cards = [self._build_wishlist_card(it) for it in items]
+        # aspect_ratio 1.05 был слишком плоским — кнопки действий обрезались
+        # снизу карточки. 0.82 даёт высоту ~390-460px на типичной ширине
+        # → cover 160 + body с заголовком, описанием (2 строки) и actions row
+        # помещается с запасом.
         self._wishlist_grid = ft.GridView(
             expand=True,
             runs_count=3,
             max_extent=380,
-            child_aspect_ratio=1.05,
+            child_aspect_ratio=0.82,
             spacing=15,
             run_spacing=15,
             padding=ft.Padding(left=0, right=0, top=10, bottom=20),
@@ -1887,18 +1891,35 @@ class CyberLauncher:
         self.bg_container.content = self.wishlist_view
         self.page.update()
 
+    # Цвета 3-уровневого огонька: high=зелёный (срочно), medium=жёлтый (потом),
+    # low=серый (когда-нибудь). Используются и для иконки, и для бордера карточки.
+    _PRIORITY_COLORS = {
+        "high":   ("#4CAF50", "#1A2E1B"),  # icon, bg-tint
+        "medium": ("#FFC107", "#2E2A1A"),
+        "low":    ("#888888", "#1E1E1E"),
+    }
+    _PRIORITY_TOOLTIPS = {
+        "high":   "Приоритет: ВЫСОКИЙ (играть в ближайшее время). Клик — следующий уровень.",
+        "medium": "Приоритет: средний (поиграть потом). Клик — следующий уровень.",
+        "low":    "Приоритет: низкий (попробовать когда-нибудь). Клик — следующий уровень.",
+    }
+
     def _build_wishlist_card(self, item) -> ft.Container:
         """Карточка одной игры в списке желаемого.
         Layout: header_image сверху, ниже название + кнопки."""
+        prio = item.priority if item.priority in self._PRIORITY_COLORS else "low"
+        prio_icon_color, prio_bg = self._PRIORITY_COLORS[prio]
+        prio_tooltip = self._PRIORITY_TOOLTIPS[prio]
+
         # Cover image: используем header_image_url, fallback на градиент
         if item.header_image_url:
-            cover = ft.Container(
+            cover_inner = ft.Container(
                 height=160,
                 image=ft.DecorationImage(src=item.header_image_url, fit="cover"),
                 border_radius=ft.BorderRadius(8, 8, 0, 0),
             )
         else:
-            cover = ft.Container(
+            cover_inner = ft.Container(
                 height=160,
                 gradient=ft.LinearGradient(
                     begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1),
@@ -1908,22 +1929,30 @@ class CyberLauncher:
                 alignment=ft.Alignment(0, 0),
                 border_radius=ft.BorderRadius(8, 8, 0, 0),
             )
-
-        # Огонёк toggle
-        fire_icon = ft.Icon(
-            ft.Icons.LOCAL_FIRE_DEPARTMENT if item.is_priority else ft.Icons.LOCAL_FIRE_DEPARTMENT_OUTLINED,
-            color="#FF6B35" if item.is_priority else "#888",
-            size=22,
-        )
-        fire_btn = ft.Container(
-            content=fire_icon,
-            width=36, height=36, border_radius=18,
-            bgcolor="#332A00" if item.is_priority else "#1E1E1E",
-            border=ft.Border.all(1, "#FF6B35" if item.is_priority else "#333"),
+        # Badge приоритета в правом верхнем углу cover — заметная подсказка
+        # уровня даже когда action-row не виден (узкая колонка / маленькое окно).
+        prio_badge = ft.Container(
+            right=8, top=8,
+            width=28, height=28, border_radius=14,
+            bgcolor="#CC000000",
             alignment=ft.Alignment(0, 0),
-            on_click=lambda e, aid=item.app_id: self._wishlist_toggle_priority(aid),
+            content=ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, size=18, color=prio_icon_color),
+        )
+        cover = ft.Stack(controls=[cover_inner, prio_badge])
+
+        # 3-уровневый огонёк — клик циклит low → medium → high → low.
+        fire_btn = ft.Container(
+            content=ft.Icon(
+                ft.Icons.LOCAL_FIRE_DEPARTMENT,
+                color=prio_icon_color, size=22,
+            ),
+            width=36, height=36, border_radius=18,
+            bgcolor=prio_bg,
+            border=ft.Border.all(1, prio_icon_color),
+            alignment=ft.Alignment(0, 0),
+            on_click=lambda e, aid=item.app_id: self._wishlist_cycle_priority(aid),
             ink=True,
-            tooltip="Приоритет (взять в ближайшее время)",
+            tooltip=prio_tooltip,
         )
 
         # Steam page button
@@ -1994,20 +2023,28 @@ class CyberLauncher:
             ),
         )
 
+        # Бордер высокого приоритета акцентируется тем же цветом огонька;
+        # medium/low — нейтральный тёмный, чтобы карточка не "кричала".
+        border_color = prio_icon_color if prio == "high" else "#333"
         return ft.Container(
             bgcolor=CARD_BG,
             border_radius=8,
-            border=ft.Border.all(1, "#FF6B35" if item.is_priority else "#333"),
+            border=ft.Border.all(1, border_color),
             content=ft.Column(controls=[cover, body], spacing=0, expand=True),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
 
-    def _wishlist_toggle_priority(self, app_id: str):
-        new_val = self.game_manager.wishlist.toggle_priority(app_id)
+    def _wishlist_cycle_priority(self, app_id: str):
+        new_val = self.game_manager.wishlist.cycle_priority(app_id)
         if new_val is None:
             return
         # Полный rebuild чтобы пересортировать (если сейчас sort=priority)
         self._refresh_wishlist_view()
+
+    # Старое имя оставлено как shim для безопасности — могли остаться вызовы
+    # из других мест. Делегирует на cycle_priority.
+    def _wishlist_toggle_priority(self, app_id: str):
+        self._wishlist_cycle_priority(app_id)
 
     def _wishlist_confirm_delete(self, app_id: str, title: str):
         def on_confirm(e):

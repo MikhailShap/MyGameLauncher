@@ -2187,10 +2187,15 @@ class CyberLauncher:
         # дать results_container expand=True, но Flet растягивал его в пустоту
         # даже когда results_column пустой, из-за чего status_text/результаты
         # съезжали на 150+px вниз от поля поиска.
-        RESULTS_HEIGHT = 360
+        # Высота карточки = title(~32) + subtitle(~18) + search(~50) +
+        # status(~18) + RESULTS_HEIGHT + close(~44) + spacers(~46) + padding*2
+        # ≈ 208 + RESULTS_HEIGHT + 48. С RESULTS_HEIGHT=340 → 596, берём 640
+        # с запасом — без запаса close-кнопка уезжала под clip-зону и не
+        # ловила клики.
+        RESULTS_HEIGHT = 340
         card = ft.Container(
             width=680,
-            height=560,
+            height=640,
             bgcolor="#2A2A2A",
             border_radius=14,
             padding=24,

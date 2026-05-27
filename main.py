@@ -1817,19 +1817,23 @@ class CyberLauncher:
         # Items grid
         items = self.game_manager.wishlist.get_sorted(self._wishlist_sort)
         cards = [self._build_wishlist_card(it) for it in items]
-        # aspect_ratio: cover=160 + body~150 (title+meta+desc+actions+padding)
-        # = ~310. На типичной ширине ячейки ~320 → ratio≈1.03. Берём 1.0 чтобы
-        # был небольшой буфер без огромной пустой области внизу
-        # (раньше 0.82 давал ~100px пустоты под action-row).
-        self._wishlist_grid = ft.GridView(
+        # GridView с child_aspect_ratio даёт высоту КАРТОЧКИ = ширина_ячейки /
+        # ratio — но ширина зависит от размера окна. На узких окнах высота
+        # схлопывается и action-row обрезается, на широких — пустота снизу.
+        # Решение: Row(wrap=True) с фиксированной width/height у самой
+        # карточки (см. _build_wishlist_card → width=320, height=340).
+        # Карточки переносятся естественным wrap при нехватке места.
+        self._wishlist_grid = ft.Column(
             expand=True,
-            runs_count=3,
-            max_extent=380,
-            child_aspect_ratio=1.0,
-            spacing=15,
-            run_spacing=15,
-            padding=ft.Padding(left=0, right=0, top=10, bottom=20),
-            controls=cards,
+            scroll=ft.ScrollMode.AUTO,
+            controls=[
+                ft.Row(
+                    controls=cards,
+                    wrap=True,
+                    spacing=15,
+                    run_spacing=15,
+                ),
+            ],
         )
 
         empty_hint = ft.Container(
@@ -2005,6 +2009,9 @@ class CyberLauncher:
                     meta_text if meta_line else ft.Container(),
                     ft.Container(height=4),
                     desc_text,
+                    # expand spacer прижимает actions к низу; теперь у карточки
+                    # фиксированная высота, так что spacer берёт известный остаток
+                    # и не плодит "пустоту" на больших ячейках.
                     ft.Container(expand=True),
                     ft.Row(controls=actions, spacing=8,
                            vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -2017,7 +2024,15 @@ class CyberLauncher:
         # Бордер высокого приоритета акцентируется тем же цветом огонька;
         # medium/low — нейтральный тёмный, чтобы карточка не "кричала".
         border_color = prio_icon_color if prio == "high" else "#333"
+        # ФИКСИРОВАННЫЕ размеры карточки. Раньше использовали GridView
+        # max_extent + aspect_ratio — на узких окнах cell.width схлопывалась,
+        # cell.height вместе с ней, и actions-row обрезался clip-зоной.
+        # Теперь cards имеют известные width/height, Row(wrap=True) их
+        # переносит. Cover 160 + body content (~135) + padding (20) ≈ 315.
+        # height=340 даёт ~25px буфера снизу.
         return ft.Container(
+            width=320,
+            height=340,
             bgcolor=CARD_BG,
             border_radius=8,
             border=ft.Border.all(1, border_color),

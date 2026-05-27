@@ -1817,15 +1817,15 @@ class CyberLauncher:
         # Items grid
         items = self.game_manager.wishlist.get_sorted(self._wishlist_sort)
         cards = [self._build_wishlist_card(it) for it in items]
-        # aspect_ratio 1.05 был слишком плоским — кнопки действий обрезались
-        # снизу карточки. 0.82 даёт высоту ~390-460px на типичной ширине
-        # → cover 160 + body с заголовком, описанием (2 строки) и actions row
-        # помещается с запасом.
+        # aspect_ratio: cover=160 + body~150 (title+meta+desc+actions+padding)
+        # = ~310. На типичной ширине ячейки ~320 → ratio≈1.03. Берём 1.0 чтобы
+        # был небольшой буфер без огромной пустой области внизу
+        # (раньше 0.82 давал ~100px пустоты под action-row).
         self._wishlist_grid = ft.GridView(
             expand=True,
             runs_count=3,
             max_extent=380,
-            child_aspect_ratio=0.82,
+            child_aspect_ratio=1.0,
             spacing=15,
             run_spacing=15,
             padding=ft.Padding(left=0, right=0, top=10, bottom=20),
@@ -1929,31 +1929,21 @@ class CyberLauncher:
                 alignment=ft.Alignment(0, 0),
                 border_radius=ft.BorderRadius(8, 8, 0, 0),
             )
-        # Badge приоритета в правом верхнем углу cover — заметная подсказка
-        # уровня даже когда action-row не виден (узкая колонка / маленькое окно).
+        # Огонёк-бэйдж в правом верхнем углу cover — единственный
+        # индикатор/контрол приоритета (раньше был ещё дубль в action-row).
+        # Клик циклит low → medium → high → low.
         prio_badge = ft.Container(
             right=8, top=8,
-            width=28, height=28, border_radius=14,
+            width=32, height=32, border_radius=16,
             bgcolor="#CC000000",
-            alignment=ft.Alignment(0, 0),
-            content=ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, size=18, color=prio_icon_color),
-        )
-        cover = ft.Stack(controls=[cover_inner, prio_badge])
-
-        # 3-уровневый огонёк — клик циклит low → medium → high → low.
-        fire_btn = ft.Container(
-            content=ft.Icon(
-                ft.Icons.LOCAL_FIRE_DEPARTMENT,
-                color=prio_icon_color, size=22,
-            ),
-            width=36, height=36, border_radius=18,
-            bgcolor=prio_bg,
             border=ft.Border.all(1, prio_icon_color),
             alignment=ft.Alignment(0, 0),
+            content=ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, size=20, color=prio_icon_color),
             on_click=lambda e, aid=item.app_id: self._wishlist_cycle_priority(aid),
             ink=True,
             tooltip=prio_tooltip,
         )
+        cover = ft.Stack(controls=[cover_inner, prio_badge])
 
         # Steam page button
         steam_btn = ft.ElevatedButton(
@@ -1999,11 +1989,12 @@ class CyberLauncher:
             max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
         )
 
+        # action-row без огонька (он теперь только на cover'е как бэйдж):
+        # слева Steam (+ опционально Трейлер), справа корзина.
         actions = [steam_btn]
         if trailer_btn is not None:
             actions.append(trailer_btn)
         actions.append(ft.Container(expand=True))
-        actions.append(fire_btn)
         actions.append(del_btn)
 
         body = ft.Container(

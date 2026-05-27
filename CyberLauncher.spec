@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('game_manager.py', '.'), ('gamepad_manager.py', '.'), ('bigpicture_view.py', '.'), ('wishlist_manager.py', '.'), ('icon.ico', '.')]
+binaries = []
+hiddenimports = ['win32gui', 'win32ui', 'win32con', 'win32api', 'pefile', 'PIL', 'PIL.Image', 'flet', 'flet_desktop', 'icoextract', 'duckduckgo_search', 'curl_cffi', 'primp', 'pystray', 'pystray._win32', 'pygame', 'pygame.joystick', 'pygame._sdl2', 'pygame._sdl2.controller', 'gamepad_manager', 'bigpicture_view', 'wishlist_manager']
+tmp_ret = collect_all('pygame')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
-    datas=[('game_manager.py', '.'), ('gamepad_manager.py', '.'), ('bigpicture_view.py', '.'), ('icon.ico', '.')],
-    hiddenimports=['win32gui', 'win32ui', 'win32con', 'win32api', 'pefile', 'PIL', 'PIL.Image', 'flet', 'flet_desktop', 'icoextract', 'duckduckgo_search', 'curl_cffi', 'primp', 'pystray', 'pystray._win32', 'pygame', 'pygame.joystick', 'pygame._sdl2', 'pygame._sdl2.controller', 'gamepad_manager', 'bigpicture_view'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

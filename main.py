@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.4.4"
+APP_VERSION = "1.5.5"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональные модули геймпада и BigPicture
@@ -777,6 +777,9 @@ class CyberLauncher:
         self._bigpicture_active: bool = False
         self._pre_bigpicture_state: dict = {}
         self.gamepad_manager = None  # инициализируется в build_ui
+        # Wishlist add dialog (кастомный overlay). Если открыт — ESC закрывает.
+        self._wishlist_add_overlay: Optional["ft.Control"] = None
+        self._wishlist_add_close = None  # callable, ставится при открытии
 
         # Window focus — нужен чтобы блокировать gamepad-события когда юзер
         # играет в запущенную игру. SDL читает гейпад даже когда окно не в
@@ -2089,6 +2092,7 @@ class CyberLauncher:
 
         def on_query_change(e):
             q = (search_field.value or "").strip()
+            backend_logger.info(f"Wishlist add dialog: query changed → '{q}' (len={len(q)})")
             search_state["query"] = q
             search_state["debounce_token"] += 1
             token = search_state["debounce_token"]
@@ -2112,7 +2116,9 @@ class CyberLauncher:
                 except Exception:
                     pass
                 # network call в отдельный поток
+                backend_logger.info(f"Wishlist add dialog: steam_search('{q}') starting")
                 items = await asyncio.to_thread(steam_search, q, 10)
+                backend_logger.info(f"Wishlist add dialog: steam_search returned {len(items)} items")
                 if token != search_state["debounce_token"]:
                     return
                 search_state["results"] = items
@@ -2137,64 +2143,122 @@ class CyberLauncher:
             expand=True,
         )
 
-        def on_close(e):
-            backend_logger.info("Wishlist add dialog: close clicked")
-            self._dismiss_dialog(dialog)
+        # Кастомный модал — НЕ ft.AlertDialog. В этой версии Flet AlertDialog
+        # съедает on_change у вложенного TextField и dialog.open=False
+        # визуально не закрывает (CLOSE BUTTON фаерит в логе, но картинка
+        # остаётся на экране). Используем тот же паттерн, что у screensaver:
+        # внешний Container(expand=True) поверх page.overlay → внутри Stack
+        # → backdrop (full size, on_click=close) + центрированная карточка
+        # (on_click stub, чтобы клик внутри не дошёл до backdrop).
 
-        # Кнопка "Закрыть" размещается внизу content-области. AlertDialog.title
-        # и AlertDialog.actions в этой версии Flet ненадёжно пропускают клики
-        # к вложенным интерактивным элементам — content же работает корректно.
-        close_btn = ft.ElevatedButton(
-            "Закрыть",
-            icon=ft.Icons.CLOSE,
-            on_click=on_close,
-            bgcolor="#444",
-            color=TEXT_WHITE,
-        )
+        def _close():
+            overlay = getattr(self, "_wishlist_add_overlay", None)
+            if overlay is None:
+                return
+            try:
+                if overlay in self.page.overlay:
+                    self.page.overlay.remove(overlay)
+            except Exception:
+                pass
+            self._wishlist_add_overlay = None
+            self._wishlist_add_close = None
+            try:
+                self.page.update()
+            except Exception:
+                pass
 
-        dialog = ft.AlertDialog(
-            title=ft.Row(
+        def on_close_btn(e):
+            backend_logger.info("Wishlist add dialog: CLOSE clicked (custom overlay)")
+            _close()
+
+        def on_backdrop_click(e):
+            backend_logger.info("Wishlist add dialog: BACKDROP clicked (custom overlay)")
+            _close()
+
+        # Карточка — визуальная "коробка" поверх затемнения. Своя on_click =
+        # stub: Flet/Flutter консумит событие в ближайшем GestureDetector'е,
+        # так что backdrop не сработает при клике внутри карточки.
+        card = ft.Container(
+            width=640,
+            height=560,
+            bgcolor="#2A2A2A",
+            border_radius=14,
+            padding=24,
+            on_click=lambda e: None,
+            content=ft.Column(
                 controls=[
-                    ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35"),
-                    ft.Text("Добавить в желаемое", weight=ft.FontWeight.BOLD),
-                ],
-                spacing=10,
-            ),
-            on_dismiss=on_close,  # клик мимо диалога / ESC
-            content=ft.Container(
-                width=600,
-                height=460,
-                alignment=ft.Alignment(-1, -1),
-                content=ft.Column(
-                    controls=[
-                        ft.Text("Поиск по Steam Store. Подсказки появляются после "
-                                "2+ символов.", size=12, color=TEXT_GREY),
-                        ft.Container(height=10),
-                        search_field,
-                        ft.Container(height=8),
-                        status_text,
-                        ft.Container(height=4),
-                        ft.Container(
-                            height=300,
-                            content=ft.Column(
-                                controls=[results_column],
-                                scroll=ft.ScrollMode.AUTO,
+                    ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35", size=24),
+                            ft.Text("Добавить в желаемое",
+                                    weight=ft.FontWeight.BOLD, size=18, color=TEXT_WHITE),
+                        ],
+                        spacing=10,
+                    ),
+                    ft.Container(height=6),
+                    ft.Text("Поиск по Steam Store. Подсказки появляются после "
+                            "2+ символов. ESC или клик мимо — закрыть.",
+                            size=12, color=TEXT_GREY),
+                    ft.Container(height=12),
+                    search_field,
+                    ft.Container(height=8),
+                    status_text,
+                    ft.Container(height=6),
+                    ft.Container(
+                        expand=True,
+                        content=ft.Column(
+                            controls=[results_column],
+                            scroll=ft.ScrollMode.AUTO,
+                        ),
+                    ),
+                    ft.Container(height=8),
+                    ft.Row(
+                        controls=[
+                            ft.Container(expand=True),
+                            ft.TextButton(
+                                "Закрыть",
+                                icon=ft.Icons.CLOSE,
+                                on_click=on_close_btn,
                             ),
-                        ),
-                        ft.Container(height=10),
-                        ft.Row(
-                            controls=[
-                                ft.Container(expand=True),
-                                close_btn,
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                    ],
-                    spacing=0,
-                ),
+                        ],
+                    ),
+                ],
+                spacing=0,
+                expand=True,
             ),
         )
-        self._open_dialog(dialog)
+
+        # backdrop — полная подложка, ловит клик мимо карточки
+        backdrop = ft.Container(
+            expand=True,
+            bgcolor="#CC000000",
+            on_click=on_backdrop_click,
+        )
+
+        # Центрирование карточки поверх backdrop через Row+Column. Можно было
+        # бы Stack+alignment, но Row/Column в Flet надёжнее центрируют поверх
+        # expand-родителя.
+        centered_card = ft.Row(
+            controls=[card],
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            expand=True,
+        )
+
+        overlay = ft.Container(
+            expand=True,
+            content=ft.Stack(
+                expand=True,
+                controls=[backdrop, centered_card],
+            ),
+        )
+
+        self._wishlist_add_overlay = overlay
+        self._wishlist_add_close = _close
+
+        backend_logger.info("Wishlist add dialog: opening (custom overlay, Stack pattern)")
+        self.page.overlay.append(overlay)
+        self.page.update()
 
     def _wishlist_add_from_dialog(self, app_id: str, name_hint: str, render_cb, status_text):
         """Добавить игру в wishlist (используется из диалога поиска).
@@ -2825,10 +2889,19 @@ class CyberLauncher:
             if key == "F11":
                 self.toggle_bigpicture()
                 return
-            # ESC — выход из BigPicture (в обычном режиме игнорируется)
-            if key == "Escape" and self._bigpicture_active:
-                self._exit_bigpicture()
-                return
+            # ESC — приоритет: закрыть открытый wishlist-overlay, потом
+            # выйти из BigPicture. В обычном режиме без open dialog — игнор.
+            if key == "Escape":
+                if self._wishlist_add_overlay is not None and self._wishlist_add_close is not None:
+                    backend_logger.info("Wishlist add dialog: ESC pressed")
+                    try:
+                        self._wishlist_add_close()
+                    except Exception:
+                        pass
+                    return
+                if self._bigpicture_active:
+                    self._exit_bigpicture()
+                    return
             # Если в BigPicture — клавиатура работает как геймпад
             if self._bigpicture_active and self._bigpicture_view is not None:
                 bp = self._bigpicture_view

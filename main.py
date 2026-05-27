@@ -938,6 +938,24 @@ class CyberLauncher:
         snackbar.open = True
         self.page.update()
 
+    def _dismiss_dialog(self, dialog):
+        """Закрывает AlertDialog и убирает его из page.overlay.
+        Если оставить — диалоги копятся в overlay сессия за сессией,
+        Flutter Engine после minimize/restore может потерять компоновку."""
+        try:
+            dialog.open = False
+        except Exception:
+            pass
+        try:
+            if dialog in self.page.overlay:
+                self.page.overlay.remove(dialog)
+        except Exception:
+            pass
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
     def _build_exclusions_list(self) -> ft.Container:
         """Build the list of excluded programs for settings"""
         excluded = self.settings.get("excluded_paths", [])
@@ -1954,15 +1972,13 @@ class CyberLauncher:
 
     def _wishlist_confirm_delete(self, app_id: str, title: str):
         def on_confirm(e):
-            dialog.open = False
-            self.page.update()
+            self._dismiss_dialog(dialog)
             self.game_manager.wishlist.remove(app_id)
             self._refresh_wishlist_view()
             self.show_snackbar(f"'{title}' удалена из желаемого", bgcolor="#FF9800")
 
         def on_cancel(e):
-            dialog.open = False
-            self.page.update()
+            self._dismiss_dialog(dialog)
 
         dialog = ft.AlertDialog(
             title=ft.Text("Удалить из желаемого?"),
@@ -2088,8 +2104,7 @@ class CyberLauncher:
         )
 
         def on_close(e):
-            dialog.open = False
-            self.page.update()
+            self._dismiss_dialog(dialog)
 
         dialog = ft.AlertDialog(
             modal=True,
@@ -2576,6 +2591,38 @@ class CyberLauncher:
                     self._force_window_to_front()
             except Exception:
                 pass
+        # Flutter Engine изредка теряет содержимое после minimize/restore
+        # (белый/пустой экран). Принудительно пересобираем активную view —
+        # это надёжнее чем просто page.update().
+        if data in ("restore", "unminimize") and not self._bigpicture_active:
+            try:
+                self._rebuild_current_view()
+            except Exception as ex:
+                backend_logger.warning(f"View rebuild on restore failed: {ex}")
+
+    def _rebuild_current_view(self):
+        """Пересборка bg_container.content под текущий фильтр. Используется
+        как защита от Flutter Engine glitch при minimize/restore."""
+        f = self.current_filter
+        if f == "settings":
+            self.settings_view = self.build_settings_view()
+            self.bg_container.content = self.settings_view
+        elif f == "disk_info":
+            self.disk_info_view = self.build_disk_info_view()
+            self.bg_container.content = self.disk_info_view
+        elif f == "wishlist":
+            self.wishlist_view = self.build_wishlist_view()
+            self.bg_container.content = self.wishlist_view
+        else:
+            self.bg_container.content = self.games_container
+            try:
+                self.update_game_grid(reset_page=False)
+            except Exception:
+                pass
+        try:
+            self.page.update()
+        except Exception:
+            pass
 
     async def shutdown(self):
         """Корректная остановка приложения: gamepad → bigpicture → game_manager."""
@@ -4114,8 +4161,7 @@ class CyberLauncher:
             )
 
         def on_close(e):
-            dialog.open = False
-            self.page.update()
+            self._dismiss_dialog(dialog)
 
         admin_switch = ft.Switch(
             value=bool(getattr(game, "run_as_admin", False)),

@@ -2036,7 +2036,7 @@ class CyberLauncher:
 
         search_state = {"results": [], "query": "", "debounce_token": 0}
 
-        results_column = ft.Column(controls=[], spacing=4)
+        results_column = ft.Column(controls=[], spacing=6)
         status_text = ft.Text("Введите название игры", size=12, color=TEXT_GREY)
 
         def render_results():
@@ -2047,24 +2047,26 @@ class CyberLauncher:
                 in_wishlist = self.game_manager.wishlist.has(app_id)
                 already_lbl = ft.Text(
                     "уже в списке" if in_wishlist else "",
-                    size=11, color="#FFD54F",
+                    size=12, color="#FFD54F",
                 )
                 row = ft.Container(
                     content=ft.Row(
                         controls=[
                             ft.Container(
-                                width=46, height=24,
+                                # Steam header capsule — соотношение ~2.15:1
+                                width=96, height=45,
                                 bgcolor=CARD_BG,
                                 image=ft.DecorationImage(src=r.get("header_image", ""), fit="cover") if r.get("header_image") else None,
-                                border_radius=4,
+                                border_radius=6,
                             ),
                             ft.Column(
                                 controls=[
-                                    ft.Text(name, size=14, color=TEXT_WHITE,
+                                    ft.Text(name, size=16, color=TEXT_WHITE,
+                                            weight=ft.FontWeight.W_500,
                                             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                                     already_lbl,
                                 ],
-                                spacing=0,
+                                spacing=2,
                                 expand=True,
                                 tight=True,
                             ),
@@ -2077,11 +2079,11 @@ class CyberLauncher:
                                 color=TEXT_WHITE,
                             ),
                         ],
-                        spacing=10,
+                        spacing=12,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    padding=ft.Padding(left=8, right=8, top=4, bottom=4),
-                    border_radius=6,
+                    padding=ft.Padding(left=10, right=10, top=8, bottom=8),
+                    border_radius=8,
                     bgcolor="#15FFFFFF",
                 )
                 results_column.controls.append(row)
@@ -2178,8 +2180,13 @@ class CyberLauncher:
         # Карточка — визуальная "коробка" поверх затемнения. Своя on_click =
         # stub: Flet/Flutter консумит событие в ближайшем GestureDetector'е,
         # так что backdrop не сработает при клике внутри карточки.
+        # ВАЖНО: высота результатов задана ФИКСИРОВАННОЙ — раньше пытались
+        # дать results_container expand=True, но Flet растягивал его в пустоту
+        # даже когда results_column пустой, из-за чего status_text/результаты
+        # съезжали на 150+px вниз от поля поиска.
+        RESULTS_HEIGHT = 360
         card = ft.Container(
-            width=640,
+            width=680,
             height=560,
             bgcolor="#2A2A2A",
             border_radius=14,
@@ -2195,20 +2202,21 @@ class CyberLauncher:
                         ],
                         spacing=10,
                     ),
-                    ft.Container(height=6),
+                    ft.Container(height=4),
                     ft.Text("Поиск по Steam Store. Подсказки появляются после "
                             "2+ символов. ESC или клик мимо — закрыть.",
                             size=12, color=TEXT_GREY),
                     ft.Container(height=12),
                     search_field,
-                    ft.Container(height=8),
+                    ft.Container(height=10),
                     status_text,
                     ft.Container(height=6),
                     ft.Container(
-                        expand=True,
+                        height=RESULTS_HEIGHT,
                         content=ft.Column(
                             controls=[results_column],
                             scroll=ft.ScrollMode.AUTO,
+                            spacing=0,
                         ),
                     ),
                     ft.Container(height=8),
@@ -2224,7 +2232,6 @@ class CyberLauncher:
                     ),
                 ],
                 spacing=0,
-                expand=True,
             ),
         )
 

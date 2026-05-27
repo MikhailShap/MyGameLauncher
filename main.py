@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональные модули геймпада и BigPicture

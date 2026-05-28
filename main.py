@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.7.6"
+APP_VERSION = "1.8.0"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2339,17 +2339,28 @@ class CyberLauncher:
                 },
             )],
             autoplay=True,
-            show_controls=True,
+            show_controls=False,   # нативную панель прячем — у нас своя
             muted=False,
             width=vw, height=vh,
             fit="contain",
             on_error=lambda e: backend_logger.warning(f"Trailer playback error: {getattr(e,'data',e)}"),
         )
 
+    @staticmethod
+    def _fmt_time(seconds: float) -> str:
+        try:
+            s = int(max(0, seconds))
+        except Exception:
+            s = 0
+        return f"{s // 60:d}:{s % 60:02d}"
+
     def _show_trailer_player(self, url: str, name: str = ""):
-        """Встроенный видео-плеер трейлера (flet_video / media_kit) поверх
-        detail. С выбором качества (HLS-варианты) и play/pause по клику.
-        Если flet_video недоступен — fallback в браузер."""
+        """КАСТОМНЫЙ видео-плеер трейлера. Видео-поверхность — media_kit
+        (других способов рисовать видео в Flet нет), но нативная панель
+        media_kit отключена (show_controls=False) — она ломала ввод и вёрстку.
+        Вся панель управления — наша, на чистом Flet, ПОД видео:
+        play/pause, перемотка (slider+время), звук, качество.
+        Методы плеера async → зовём через page.run_task."""
         if not url:
             return
         if not HAS_VIDEO or fv is None:
@@ -2360,8 +2371,10 @@ class CyberLauncher:
         ph = self.page.height or 800
         vw = min(int(pw * 0.86), 1100)
         vh = int(vw * 9 / 16)
-        if vh > ph * 0.8:
-            vh = int(ph * 0.8)
+        # Оставляем место под нашу панель (~70px) и крестик сверху
+        max_vh = int(ph * 0.9) - 90
+        if vh > max_vh:
+            vh = max(180, max_vh)
             vw = int(vh * 16 / 9)
 
         try:
@@ -2371,20 +2384,8 @@ class CyberLauncher:
             webbrowser.open(url)
             return
 
-        # mutable holder — плеер пересоздаётся при смене качества
-        pl = {"v": player}
-
-        # ВАЖНО: media_kit рисует видео нативной поверхностью, которая
-        # перехватывает ввод и игнорирует z-порядок Flet. Контролы, наложенные
-        # ПОВЕРХ видео, не получают события (проверено: on_change/on_click не
-        # фаерят). Поэтому play/pause и выбор качества выносим в панель ПОД
-        # видео — там обычное Flet-пространство, всё кликается.
-
-        def toggle_play(e):
-            try:
-                pl["v"].play_or_pause()
-            except Exception:
-                pass
+        pl = {"v": player}                       # плеер пересоздаётся при смене качества
+        st = {"playing": True, "muted": False, "dragging": False, "dur": 0.0}
 
         player_box = ft.Container(
             width=vw, height=vh, bgcolor="#000000",
@@ -2392,37 +2393,117 @@ class CyberLauncher:
             content=pl["v"],
         )
 
+        # ---- наши контролы ----
+        play_icon = ft.Icon(ft.Icons.PAUSE, color=TEXT_WHITE, size=24)
         play_btn = ft.Container(
-            content=ft.Icon(ft.Icons.PLAY_ARROW, color=TEXT_WHITE, size=22),
-            width=40, height=40, border_radius=20, bgcolor="#3A3A3A",
-            alignment=ft.Alignment(0, 0), ink=True,
+            content=play_icon, width=42, height=42, border_radius=21,
+            bgcolor="#3A3A3A", alignment=ft.Alignment(0, 0), ink=True,
             tooltip="Плей / Пауза",
-            on_click=toggle_play,
         )
-
+        mute_icon = ft.Icon(ft.Icons.VOLUME_UP, color=TEXT_WHITE, size=22)
+        mute_btn = ft.Container(
+            content=mute_icon, width=42, height=42, border_radius=21,
+            bgcolor="#3A3A3A", alignment=ft.Alignment(0, 0), ink=True,
+            tooltip="Звук вкл/выкл",
+        )
+        cur_lbl = ft.Text("0:00", size=12, color=TEXT_WHITE, width=44,
+                          text_align=ft.TextAlign.CENTER)
+        dur_lbl = ft.Text("0:00", size=12, color=TEXT_WHITE, width=44,
+                          text_align=ft.TextAlign.CENTER)
+        seek = ft.Slider(min=0, max=1, value=0, expand=True,
+                         active_color=ACCENT_PURPLE, thumb_color=ACCENT_PURPLE)
         quality_dd = ft.Dropdown(
             value="auto",
             options=[ft.dropdown.Option("auto", "Авто")],
-            width=140,
-            dense=True,
-            bgcolor="#1E1E1E",
-            border_color="#555",
-            color=TEXT_WHITE,
-            text_size=13,
-            label="Качество",
-            label_style=ft.TextStyle(size=11, color=TEXT_GREY),
+            width=120, dense=True, bgcolor="#1E1E1E",
+            border_color="#555", color=TEXT_WHITE, text_size=13,
         )
 
+        def _set_play_icon():
+            play_icon.name = ft.Icons.PAUSE if st["playing"] else ft.Icons.PLAY_ARROW
+            self._safe_page_update()
+
+        async def _do_toggle():
+            try:
+                await pl["v"].play_or_pause()
+                st["playing"] = not st["playing"]
+                _set_play_icon()
+            except Exception as ex:
+                backend_logger.warning(f"toggle play failed: {ex}")
+
+        play_btn.on_click = lambda e: self.page.run_task(_do_toggle)
+
+        async def _do_mute():
+            st["muted"] = not st["muted"]
+            try:
+                pl["v"].muted = st["muted"]
+                pl["v"].update()
+            except Exception:
+                pass
+            mute_icon.name = ft.Icons.VOLUME_OFF if st["muted"] else ft.Icons.VOLUME_UP
+            self._safe_page_update()
+
+        mute_btn.on_click = lambda e: self.page.run_task(_do_mute)
+
+        def _seek_start(e):
+            st["dragging"] = True
+
+        async def _do_seek(val):
+            try:
+                await pl["v"].seek(ft.Duration(seconds=int(val)))
+            except Exception as ex:
+                backend_logger.warning(f"seek failed: {ex}")
+            st["dragging"] = False
+
+        seek.on_change_start = _seek_start
+        seek.on_change_end = lambda e: self.page.run_task(_do_seek, float(seek.value or 0))
+        # На время перетаскивания обновляем подпись текущего времени
+        def _seek_changing(e):
+            cur_lbl.value = self._fmt_time(float(seek.value or 0))
+            try:
+                cur_lbl.update()
+            except Exception:
+                pass
+        seek.on_change = _seek_changing
+
+        # Опрос позиции/длительности (нативных событий позиции нет)
+        async def _poll_loop():
+            while self._media_overlay is overlay:
+                try:
+                    v = pl["v"]
+                    if st["dur"] <= 0:
+                        d = await v.get_duration()
+                        secs = (d.in_seconds if d else 0) or 0
+                        if secs > 0:
+                            st["dur"] = float(secs)
+                            seek.max = st["dur"]
+                            dur_lbl.value = self._fmt_time(st["dur"])
+                            self._safe_page_update()
+                    if not st["dragging"]:
+                        p = await v.get_current_position()
+                        cur = (p.in_seconds if p else 0) or 0
+                        cur_lbl.value = self._fmt_time(cur)
+                        if st["dur"] > 0:
+                            seek.value = min(cur, st["dur"])
+                        try:
+                            cur_lbl.update(); seek.update()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5)
+
+        # ---- смена качества ----
         async def _apply_quality(sel: str):
-            # Готовим ресурс (URL master для Авто, иначе temp-плейлист качества)
             if sel == "auto":
                 resource = url
             else:
                 try:
                     h = int(sel)
                 except ValueError:
-                    resource = url
-                else:
+                    h = None
+                resource = url
+                if h is not None:
                     info = await asyncio.to_thread(
                         self.game_manager.wishlist.get_trailer_quality_info, url
                     )
@@ -2434,10 +2515,7 @@ class CyberLauncher:
                             self.game_manager.wishlist.write_quality_playlist,
                             variant, info["audio_media"],
                         )
-                    else:
-                        resource = url
             backend_logger.info(f"Trailer quality -> {sel}; resource={resource[:80]}")
-            # Если оверлей уже закрыт — выходим
             if self._media_overlay is not overlay:
                 return
             try:
@@ -2447,12 +2525,12 @@ class CyberLauncher:
                 return
             pl["v"] = new_player
             player_box.content = new_player
+            st["playing"] = True
+            st["dur"] = 0.0
+            _set_play_icon()
             self._safe_page_update()
 
-        def on_quality_change(e):
-            self.page.run_task(_apply_quality, quality_dd.value)
-
-        quality_dd.on_change = on_quality_change
+        quality_dd.on_change = lambda e: self.page.run_task(_apply_quality, quality_dd.value)
 
         async def _load_variants():
             info = await asyncio.to_thread(
@@ -2461,14 +2539,31 @@ class CyberLauncher:
             if self._media_overlay is not overlay:
                 return
             if not info or not info.get("variants"):
-                return  # нет вариантов — оставляем только Авто
+                return
             opts = [ft.dropdown.Option("auto", "Авто")]
             for v in info["variants"]:
-                h = v["height"]
-                if h:
-                    opts.append(ft.dropdown.Option(str(h), f"{h}p"))
+                if v["height"]:
+                    opts.append(ft.dropdown.Option(str(v["height"]), f"{v['height']}p"))
             quality_dd.options = opts
             self._safe_page_update()
+
+        # ---- сборка панели ----
+        controls_bar = ft.Container(
+            width=vw,
+            padding=ft.Padding(left=12, right=12, top=8, bottom=8),
+            bgcolor="#1A1A1A", border_radius=10,
+            content=ft.Row(
+                controls=[play_btn, cur_lbl, seek, dur_lbl, mute_btn, quality_dd],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=10,
+            ),
+        )
+        center_block = ft.Column(
+            controls=[player_box, ft.Container(height=10), controls_bar],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            tight=True,
+        )
 
         close_x = ft.Container(
             content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=24),
@@ -2477,9 +2572,6 @@ class CyberLauncher:
             on_click=lambda e: self._close_media_overlay(),
             right=16, top=16,
         )
-        # Гарантированный fallback: открыть трейлер в браузере. media_kit
-        # иногда не вытягивает HLS Steam с akamai (сетевые ошибки) — браузер
-        # сыграет всегда.
         open_browser_btn = ft.Container(
             content=ft.Row(
                 controls=[
@@ -2493,19 +2585,6 @@ class CyberLauncher:
             tooltip="Открыть трейлер в браузере",
             on_click=lambda e, u=url: webbrowser.open(u),
             right=72, top=18,
-        )
-        # Панель управления ПОД видео (обычное Flet-пространство → кликается).
-        controls_bar = ft.Row(
-            controls=[play_btn, quality_dd],
-            alignment=ft.MainAxisAlignment.CENTER,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=14,
-        )
-        center_block = ft.Column(
-            controls=[player_box, ft.Container(height=12), controls_bar],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            alignment=ft.MainAxisAlignment.CENTER,
-            tight=True,
         )
 
         body = ft.Stack(
@@ -2524,8 +2603,8 @@ class CyberLauncher:
         self.page.overlay.append(overlay)
         self.page.update()
 
-        # Подтягиваем доступные качества в фоне
         self.page.run_task(_load_variants)
+        self.page.run_task(_poll_loop)
 
     def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:
         """Скроллируемое тело детального экрана из нормализованных Steam-данных

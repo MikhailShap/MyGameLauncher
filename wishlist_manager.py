@@ -266,8 +266,20 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
 
     trailers = []
     for m in (details.get("movies") or []):
-        mp4 = m.get("mp4") or {}
-        url = mp4.get("max") or mp4.get("480") or ""
+        # Две схемы Steam:
+        #  1) Старая: mp4/webm = {"480": url, "max": url} — прямой файл.
+        #  2) Новая (с 2024+): hls_h264 / dash_h264 / dash_av1 = строка-URL
+        #     HLS/DASH-манифеста. media_kit/libmpv проигрывает HLS.
+        url = ""
+        mp4 = m.get("mp4")
+        webm = m.get("webm")
+        if isinstance(mp4, dict) and (mp4.get("max") or mp4.get("480")):
+            url = mp4.get("max") or mp4.get("480")
+        elif isinstance(webm, dict) and (webm.get("max") or webm.get("480")):
+            url = webm.get("max") or webm.get("480")
+        else:
+            # Новая схема: берём HLS (надёжнее всего для mpv), затем DASH.
+            url = m.get("hls_h264") or m.get("dash_h264") or m.get("dash_av1") or ""
         if url:
             trailers.append({
                 "name": m.get("name", "") or "",

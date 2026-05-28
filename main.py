@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.7.4"
+APP_VERSION = "1.7.5"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2323,9 +2323,21 @@ class CyberLauncher:
 
     def _make_video_player(self, resource: str, vw: int, vh: int):
         """Создаёт fv.Video для заданного ресурса (URL master / локальный
-        temp-плейлист конкретного качества)."""
+        temp-плейлист конкретного качества).
+
+        http_headers: akamai (Steam CDN) часто отклоняет дефолтный UA
+        ffmpeg → 'Failed to open'. Браузерный UA + Referer на стор.
+        """
         return fv.Video(
-            playlist=[fv.VideoMedia(resource=resource)],
+            playlist=[fv.VideoMedia(
+                resource=resource,
+                http_headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                  "Chrome/124.0 Safari/537.36",
+                    "Referer": "https://store.steampowered.com/",
+                },
+            )],
             autoplay=True,
             show_controls=True,
             muted=False,
@@ -2470,12 +2482,30 @@ class CyberLauncher:
             on_click=lambda e: self._close_media_overlay(),
             right=16, top=16,
         )
+        # Гарантированный fallback: открыть трейлер в браузере. media_kit
+        # иногда не вытягивает HLS Steam с akamai (сетевые ошибки) — браузер
+        # сыграет всегда.
+        open_browser_btn = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.OPEN_IN_NEW, color=TEXT_WHITE, size=18),
+                    ft.Text("В браузере", size=13, color=TEXT_WHITE),
+                ],
+                spacing=6, tight=True,
+            ),
+            padding=ft.Padding(left=12, right=12, top=8, bottom=8),
+            border_radius=8, bgcolor="#3A3A3A", ink=True,
+            tooltip="Открыть трейлер в браузере",
+            on_click=lambda e, u=url: webbrowser.open(u),
+            right=72, top=18,
+        )
         body = ft.Stack(
             expand=True,
             controls=[
                 ft.Container(expand=True, bgcolor="#F2000000",
                              on_click=lambda e: self._close_media_overlay()),
                 ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=player_box),
+                open_browser_btn,
                 close_x,
             ],
         )

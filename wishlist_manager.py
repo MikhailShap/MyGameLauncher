@@ -22,6 +22,8 @@ import os
 import threading
 import urllib.parse
 import urllib.request
+import re
+import html as _html
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
@@ -29,6 +31,27 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("WishlistManager")
+
+
+def strip_html(raw: str) -> str:
+    """Грубая, но безопасная очистка Steam-HTML описания в читаемый текст.
+    Блочные теги → перевод строки, <li> → '• ', остальные теги удаляются,
+    HTML-сущности раскодируются. Без внешних зависимостей."""
+    if not raw:
+        return ""
+    s = raw
+    # <br>, </p>, </div>, заголовки, </li> → перенос строки
+    s = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", s)
+    s = re.sub(r"(?i)<\s*/\s*(p|div|h[1-6]|tr|ul|ol)\s*>", "\n", s)
+    s = re.sub(r"(?i)<\s*li[^>]*>", "\n• ", s)
+    # Остальные теги вырезаем
+    s = re.sub(r"<[^>]+>", "", s)
+    # HTML-сущности (&amp; &quot; &#39; …)
+    s = _html.unescape(s)
+    # Схлопываем лишние пустые строки и пробелы
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\n\s*\n\s*\n+", "\n\n", s)
+    return s.strip()
 
 
 # Уровни приоритета. Зелёный — "хочу прям сейчас", жёлтый — "потом",
@@ -159,6 +182,92 @@ def build_wishlist_item(app_id: str) -> Optional[WishlistItem]:
     genres = [g.get("description", "") for g in (details.get("genres") or [])]
     item.genres = ", ".join(g for g in genres if g)
     return item
+
+
+def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
+    """Полные детали игры для детального экрана. Тянет appdetails и
+    нормализует в плоский dict, удобный для UI. Возвращает None если
+    Steam не дал данных.
+
+    Поля результата:
+      title, header_image, background, about (plain text),
+      release_date, developers, publishers (str),
+      genres (str), categories (list[str] — фичи: одиночная игра,
+      контроллер, ачивки…), platforms (list[str]: Windows/Mac/Linux),
+      metacritic_score (int|None), metacritic_url,
+      price (str: 'Бесплатно' / '999 руб.' / ''),
+      screenshots (list[url]), trailers (list[{name, thumb, url}]),
+      store_url
+    """
+    details = steam_appdetails(app_id)
+    if not details:
+        return None
+
+    # Описание: about_the_game приоритетнее (полнее), затем detailed_description
+    about_raw = details.get("about_the_game") or details.get("detailed_description") or ""
+    about = strip_html(about_raw)
+
+    devs = details.get("developers") or []
+    pubs = details.get("publishers") or []
+    genres = [g.get("description", "") for g in (details.get("genres") or [])]
+    cats = [c.get("description", "") for c in (details.get("categories") or [])]
+
+    plat_raw = details.get("platforms") or {}
+    platforms = []
+    if plat_raw.get("windows"):
+        platforms.append("Windows")
+    if plat_raw.get("mac"):
+        platforms.append("macOS")
+    if plat_raw.get("linux"):
+        platforms.append("Linux")
+
+    mc = details.get("metacritic") or {}
+    metacritic_score = mc.get("score")
+    metacritic_url = mc.get("url") or ""
+
+    # Цена
+    if details.get("is_free"):
+        price = "Бесплатно"
+    else:
+        po = details.get("price_overview") or {}
+        price = po.get("final_formatted") or ""
+
+    screenshots = []
+    for sh in (details.get("screenshots") or []):
+        url = sh.get("path_full") or sh.get("path_thumbnail") or ""
+        if url:
+            screenshots.append(url)
+
+    trailers = []
+    for m in (details.get("movies") or []):
+        mp4 = m.get("mp4") or {}
+        url = mp4.get("max") or mp4.get("480") or ""
+        if url:
+            trailers.append({
+                "name": m.get("name", "") or "",
+                "thumb": m.get("thumbnail", "") or "",
+                "url": url,
+            })
+
+    return {
+        "app_id": str(app_id),
+        "title": details.get("name") or "",
+        "header_image": details.get("header_image") or "",
+        "background": details.get("background_raw") or details.get("background") or "",
+        "about": about,
+        "release_date": (details.get("release_date") or {}).get("date") or "",
+        "developers": ", ".join(devs) if devs else "",
+        "publishers": ", ".join(pubs) if pubs else "",
+        "genres": ", ".join(g for g in genres if g),
+        "categories": [c for c in cats if c],
+        "platforms": platforms,
+        "metacritic_score": metacritic_score,
+        "metacritic_url": metacritic_url,
+        "price": price,
+        "screenshots": screenshots,
+        "trailers": trailers,
+        "store_url": f"https://store.steampowered.com/app/{app_id}/",
+    }
 
 
 class WishlistManager:

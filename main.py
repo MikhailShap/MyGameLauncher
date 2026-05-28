@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.6.2"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональные модули геймпада и BigPicture
@@ -780,6 +780,9 @@ class CyberLauncher:
         # Wishlist add dialog (кастомный overlay). Если открыт — ESC закрывает.
         self._wishlist_add_overlay: Optional["ft.Control"] = None
         self._wishlist_add_close = None  # callable, ставится при открытии
+        # Wishlist detail (полный экран игры по клику на карточку).
+        self._wishlist_detail_overlay: Optional["ft.Control"] = None
+        self._wishlist_detail_close = None
 
         # Window focus — нужен чтобы блокировать gamepad-события когда юзер
         # играет в запущенную игру. SDL читает гейпад даже когда окно не в
@@ -2058,6 +2061,11 @@ class CyberLauncher:
             border_radius=8,
             border=ft.Border.all(1.5, border_clr),
             shadow=glow,
+            # Клик по карточке (вне кнопок) открывает детальный экран. Кнопки
+            # внутри (Steam, корзина, огонёк) имеют свои on_click и поглощают
+            # событие, так что они НЕ триггерят детальный экран.
+            on_click=lambda e, it=item: self._show_wishlist_detail(it),
+            ink=True,
             content=ft.Column(controls=[cover, body], spacing=0, expand=True),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
@@ -2073,6 +2081,268 @@ class CyberLauncher:
     # из других мест. Делегирует на cycle_priority.
     def _wishlist_toggle_priority(self, app_id: str):
         self._wishlist_cycle_priority(app_id)
+
+    def _show_wishlist_detail(self, item):
+        """Полный экран игры по клику на карточку желаемого: трейлер,
+        скриншоты, полное описание, характеристики. Детали тянутся из Steam
+        по требованию (один запрос) — не храним их в wishlist.json."""
+        backend_logger.info(f"Wishlist detail: opening '{item.title}' (app_id={item.app_id})")
+
+        def _close():
+            overlay = getattr(self, "_wishlist_detail_overlay", None)
+            if overlay is None:
+                return
+            try:
+                if overlay in self.page.overlay:
+                    self.page.overlay.remove(overlay)
+            except Exception:
+                pass
+            self._wishlist_detail_overlay = None
+            self._wishlist_detail_close = None
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+        # Размеры карточки относительно окна (с разумными лимитами)
+        pw = self.page.width or 1280
+        ph = self.page.height or 800
+        card_w = min(int(pw * 0.86), 1040)
+        card_h = min(int(ph * 0.88), 760)
+
+        # Контент-контейнер: сначала спиннер, после загрузки — наполняем
+        content_holder = ft.Container(
+            expand=True,
+            alignment=ft.Alignment(0, 0),
+            content=ft.Column(
+                controls=[
+                    ft.ProgressRing(color=ACCENT_PURPLE),
+                    ft.Container(height=12),
+                    ft.Text("Загружаю данные из Steam…", size=13, color=TEXT_GREY),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+        )
+
+        # Кнопка-крестик закрытия (как в add-диалоге)
+        close_btn = ft.Container(
+            content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=20),
+            width=36, height=36, border_radius=18,
+            bgcolor="#3A3A3A",
+            alignment=ft.Alignment(0, 0),
+            on_click=lambda e: _close(),
+            ink=True,
+            tooltip="Закрыть (ESC)",
+        )
+
+        header_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35", size=24),
+                ft.Text(item.title or "Без названия",
+                        weight=ft.FontWeight.BOLD, size=20, color=TEXT_WHITE,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                close_btn,
+            ],
+            spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        card = ft.Container(
+            width=card_w,
+            height=card_h,
+            bgcolor="#1F1F1F",
+            border_radius=14,
+            padding=20,
+            on_click=lambda e: None,  # поглощаем клик внутри карточки
+            content=ft.Column(
+                controls=[header_row, ft.Container(height=10), content_holder],
+                spacing=0,
+                expand=True,
+            ),
+        )
+
+        backdrop = ft.Container(expand=True, bgcolor="#DD000000", on_click=lambda e: _close())
+        centered = ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=card)
+        overlay = ft.Container(
+            expand=True,
+            content=ft.Stack(expand=True, controls=[backdrop, centered]),
+        )
+        self._wishlist_detail_overlay = overlay
+        self._wishlist_detail_close = _close
+        self.page.overlay.append(overlay)
+        self.page.update()
+
+        # Фоновая загрузка деталей, затем заполняем content_holder
+        async def _load():
+            from wishlist_manager import fetch_game_details
+            details = await asyncio.to_thread(fetch_game_details, item.app_id)
+            # Если юзер уже закрыл — не трогаем UI
+            if self._wishlist_detail_overlay is not overlay:
+                return
+            if not details:
+                content_holder.content = ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.CLOUD_OFF, color=TEXT_GREY, size=48),
+                        ft.Container(height=8),
+                        ft.Text("Не удалось загрузить данные из Steam",
+                                size=14, color=TEXT_GREY),
+                        ft.Container(height=12),
+                        ft.ElevatedButton(
+                            "Открыть в Steam", icon=ft.Icons.OPEN_IN_NEW,
+                            on_click=lambda e, u=item.store_url: webbrowser.open(u) if u else None,
+                            bgcolor="#1B2838", color=TEXT_WHITE,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                )
+                self._safe_page_update()
+                return
+            content_holder.content = self._build_wishlist_detail_body(item, details, _close)
+            content_holder.alignment = None
+            self._safe_page_update()
+
+        self.page.run_task(_load)
+
+    def _safe_page_update(self):
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
+    def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:
+        """Скроллируемое тело детального экрана из нормализованных Steam-данных
+        (dict из wishlist_manager.fetch_game_details)."""
+
+        def chip(text: str, bg="#2E2E2E", fg=TEXT_WHITE):
+            return ft.Container(
+                content=ft.Text(text, size=12, color=fg),
+                padding=ft.Padding(left=10, right=10, top=5, bottom=5),
+                border_radius=14, bgcolor=bg,
+            )
+
+        col = ft.Column(scroll=ft.ScrollMode.AUTO, spacing=14, expand=True)
+
+        # --- Hero (header image) ---
+        # DecorationImage на контейнере — надёжный full-bleed паттерн (так же
+        # сделана обложка карточки). ft.Image как ребёнок в этом Flet ведёт
+        # себя хуже (натуральный размер / коллапс).
+        if d.get("header_image"):
+            col.controls.append(
+                ft.Container(
+                    height=230,
+                    border_radius=10,
+                    image=ft.DecorationImage(src=d["header_image"], fit="cover"),
+                )
+            )
+
+        # --- Мета-строка: дата · цена · метакритик ---
+        meta_chips = []
+        if d.get("release_date"):
+            meta_chips.append(chip("📅 " + d["release_date"]))
+        if d.get("price"):
+            meta_chips.append(chip("💰 " + d["price"], bg="#1B3A1B", fg="#9CE89C"))
+        ms = d.get("metacritic_score")
+        if ms is not None:
+            mc_color = "#1B3A1B" if ms >= 75 else ("#3A331B" if ms >= 50 else "#3A1B1B")
+            meta_chips.append(chip(f"Metacritic {ms}", bg=mc_color))
+        for p in d.get("platforms", []):
+            meta_chips.append(chip(p, bg="#23303A"))
+        if meta_chips:
+            col.controls.append(ft.Row(controls=meta_chips, wrap=True, spacing=8, run_spacing=8))
+
+        # --- Разработчик / издатель / жанры ---
+        info_bits = []
+        if d.get("developers"):
+            info_bits.append(f"Разработчик: {d['developers']}")
+        if d.get("publishers"):
+            info_bits.append(f"Издатель: {d['publishers']}")
+        if d.get("genres"):
+            info_bits.append(f"Жанры: {d['genres']}")
+        if info_bits:
+            col.controls.append(
+                ft.Text("\n".join(info_bits), size=13, color=TEXT_GREY, selectable=True)
+            )
+
+        # --- Трейлеры ---
+        trailers = d.get("trailers") or []
+        if trailers:
+            col.controls.append(ft.Text("Трейлер", size=16, weight=ft.FontWeight.BOLD, color=TEXT_WHITE))
+            trow = ft.Row(scroll=ft.ScrollMode.AUTO, spacing=10)
+            for t in trailers[:6]:
+                thumb = t.get("thumb") or ""
+                url = t.get("url") or ""
+                trow.controls.append(
+                    ft.Container(
+                        width=320, height=180,
+                        border_radius=8,
+                        bgcolor="#000000",
+                        image=ft.DecorationImage(src=thumb, fit="cover") if thumb else None,
+                        on_click=(lambda e, u=url: webbrowser.open(u)) if url else None,
+                        tooltip="Открыть трейлер",
+                        alignment=ft.Alignment(0, 0),
+                        content=ft.Icon(ft.Icons.PLAY_CIRCLE_FILL, color="#EEFFFFFF", size=56),
+                    )
+                )
+            col.controls.append(trow)
+
+        # --- Скриншоты ---
+        shots = d.get("screenshots") or []
+        if shots:
+            col.controls.append(ft.Text("Скриншоты", size=16, weight=ft.FontWeight.BOLD, color=TEXT_WHITE))
+            srow = ft.Row(scroll=ft.ScrollMode.AUTO, spacing=10)
+            for url in shots[:12]:
+                srow.controls.append(
+                    ft.Container(
+                        width=320, height=180,
+                        border_radius=8,
+                        bgcolor="#000000",
+                        image=ft.DecorationImage(src=url, fit="cover"),
+                        on_click=lambda e, u=url: webbrowser.open(u),
+                        tooltip="Открыть в полном размере",
+                    )
+                )
+            col.controls.append(srow)
+
+        # --- Описание ---
+        if d.get("about"):
+            col.controls.append(ft.Text("Об игре", size=16, weight=ft.FontWeight.BOLD, color=TEXT_WHITE))
+            col.controls.append(
+                ft.Text(d["about"], size=13, color="#CCCCCC", selectable=True)
+            )
+
+        # --- Характеристики (категории/фичи) ---
+        cats = d.get("categories") or []
+        if cats:
+            col.controls.append(ft.Text("Особенности", size=16, weight=ft.FontWeight.BOLD, color=TEXT_WHITE))
+            col.controls.append(
+                ft.Row(controls=[chip(c) for c in cats[:20]], wrap=True, spacing=8, run_spacing=8)
+            )
+
+        # --- Footer: действия ---
+        footer = ft.Row(
+            controls=[
+                ft.ElevatedButton(
+                    "Открыть в Steam", icon=ft.Icons.OPEN_IN_NEW,
+                    on_click=lambda e, u=d.get("store_url"): webbrowser.open(u) if u else None,
+                    bgcolor="#1B2838", color=TEXT_WHITE,
+                ),
+                ft.Container(expand=True),
+                ft.OutlinedButton(
+                    "Удалить из желаемого", icon=ft.Icons.DELETE_OUTLINE,
+                    on_click=lambda e, aid=item.app_id, ttl=item.title: (
+                        close_cb(), self._wishlist_confirm_delete(aid, ttl)
+                    ),
+                    style=ft.ButtonStyle(color="#FF6B6B"),
+                ),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        col.controls.append(ft.Container(height=4))
+        col.controls.append(footer)
+
+        return col
 
     def _wishlist_confirm_delete(self, app_id: str, title: str):
         def on_confirm(e):
@@ -2983,6 +3253,14 @@ class CyberLauncher:
             # ESC — приоритет: закрыть открытый wishlist-overlay, потом
             # выйти из BigPicture. В обычном режиме без open dialog — игнор.
             if key == "Escape":
+                # Приоритет закрытия: detail > add-dialog > BigPicture.
+                if self._wishlist_detail_overlay is not None and self._wishlist_detail_close is not None:
+                    backend_logger.info("Wishlist detail: ESC pressed")
+                    try:
+                        self._wishlist_detail_close()
+                    except Exception:
+                        pass
+                    return
                 if self._wishlist_add_overlay is not None and self._wishlist_add_close is not None:
                     backend_logger.info("Wishlist add dialog: ESC pressed")
                     try:

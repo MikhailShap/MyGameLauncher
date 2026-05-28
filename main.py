@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.5.8"
+APP_VERSION = "1.5.9"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональные модули геймпада и BigPicture
@@ -2029,9 +2029,22 @@ class CyberLauncher:
             ),
         )
 
-        # Бордер всегда нейтральный тёмный — сплошная цветная обводка по всему
-        # периметру смотрелась грубо. Приоритет читается по цветному огоньку
-        # в углу cover'а, отдельная рамка не нужна.
+        # Обводка в цвете приоритета + мягкое свечение того же цвета. Жёсткая
+        # 1px-линия полной насыщенности смотрелась грубо — добавляем blur-glow,
+        # который размывает контур, и берём приглушённый оттенок (alpha) для
+        # самой рамки. low (серый) glow не даём — он и так нейтральный.
+        # high/medium получают цветной акцент.
+        if prio == "high":
+            border_clr = "#664CAF50"   # зелёный с alpha
+            glow = ft.BoxShadow(spread_radius=0, blur_radius=14,
+                                color="#554CAF50", offset=ft.Offset(0, 0))
+        elif prio == "medium":
+            border_clr = "#66FFC107"   # жёлтый с alpha
+            glow = ft.BoxShadow(spread_radius=0, blur_radius=12,
+                                color="#44FFC107", offset=ft.Offset(0, 0))
+        else:
+            border_clr = "#333"
+            glow = None
         # ФИКСИРОВАННЫЕ размеры карточки. Раньше использовали GridView
         # max_extent + aspect_ratio — на узких окнах cell.width схлопывалась,
         # cell.height вместе с ней, и actions-row обрезался clip-зоной.
@@ -2043,7 +2056,8 @@ class CyberLauncher:
             height=340,
             bgcolor=CARD_BG,
             border_radius=8,
-            border=ft.Border.all(1, "#333"),
+            border=ft.Border.all(1.5, border_clr),
+            shadow=glow,
             content=ft.Column(controls=[cover, body], spacing=0, expand=True),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )

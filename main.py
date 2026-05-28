@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.7.3"
+APP_VERSION = "1.7.4"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2363,31 +2363,46 @@ class CyberLauncher:
         pl = {"v": player}
 
         def toggle_play(e):
-            # Клик по области видео = play/pause (раньше on_click=None глушил
-            # встроенный тап mpv → клик не работал, только кнопка).
+            # Клик по области видео = play/pause. Слой-перехватчик лежит ПОВЕРХ
+            # видео (media_kit иначе сам съедает тап), но не закрывает нижнюю
+            # полосу нативных контролов.
             try:
                 pl["v"].play_or_pause()
             except Exception:
                 pass
 
+        # Прозрачный слой тапа поверх видео (alpha 1/255 — иначе Flutter не
+        # делает хит-тест по пустому контейнеру). bottom=56 оставляет нативную
+        # панель контролов кликабельной.
+        tap_layer = ft.Container(
+            left=0, top=0, right=0, bottom=56,
+            bgcolor="#01000000",
+            on_click=toggle_play,
+        )
+
+        # Селектор качества НАЛОЖЕН на видео (верх-право) — визуально "внутри"
+        # плеера. В нативную панель media_kit встроить нельзя (нет API).
+        quality_dd = ft.Dropdown(
+            value="auto",
+            options=[ft.dropdown.Option("auto", "Авто")],
+            width=130,
+            dense=True,
+            bgcolor="#CC1E1E1E",
+            border_color="#555",
+            color=TEXT_WHITE,
+            text_size=13,
+        )
+        quality_overlay = ft.Container(right=12, top=12, content=quality_dd)
+
+        # Видео + слои в одном Stack фиксированного размера
+        video_stack = ft.Stack(
+            width=vw, height=vh,
+            controls=[pl["v"], tap_layer, quality_overlay],
+        )
         player_box = ft.Container(
             width=vw, height=vh, bgcolor="#000000",
             border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            on_click=toggle_play,
-            content=player,
-        )
-
-        # Выпадающий список качества. Изначально только "Авто"; реальные
-        # варианты подгружаются в фоне (parse HLS).
-        quality_dd = ft.Dropdown(
-            value="auto",
-            options=[ft.dropdown.Option("auto", "Качество: Авто")],
-            width=200,
-            dense=True,
-            bgcolor="#1E1E1E",
-            border_color="#444",
-            color=TEXT_WHITE,
-            text_size=13,
+            content=video_stack,
         )
 
         async def _apply_quality(sel: str):
@@ -2413,6 +2428,7 @@ class CyberLauncher:
                         )
                     else:
                         resource = url
+            backend_logger.info(f"Trailer quality -> {sel}; resource={resource[:80]}")
             # Если оверлей уже закрыт — выходим
             if self._media_overlay is not overlay:
                 return
@@ -2422,7 +2438,8 @@ class CyberLauncher:
                 backend_logger.warning(f"Quality switch failed: {ex}")
                 return
             pl["v"] = new_player
-            player_box.content = new_player
+            # Заменяем именно видео-слой (controls[0]) в Stack
+            video_stack.controls[0] = new_player
             self._safe_page_update()
 
         def on_quality_change(e):
@@ -2438,7 +2455,7 @@ class CyberLauncher:
                 return
             if not info or not info.get("variants"):
                 return  # нет вариантов — оставляем только Авто
-            opts = [ft.dropdown.Option("auto", "Качество: Авто")]
+            opts = [ft.dropdown.Option("auto", "Авто")]
             for v in info["variants"]:
                 h = v["height"]
                 if h:
@@ -2453,29 +2470,12 @@ class CyberLauncher:
             on_click=lambda e: self._close_media_overlay(),
             right=16, top=16,
         )
-        # Панель управления над/под видео: селектор качества
-        controls_bar = ft.Container(
-            content=ft.Row(
-                controls=[quality_dd],
-                alignment=ft.MainAxisAlignment.CENTER,
-                spacing=10,
-            ),
-            padding=ft.Padding(left=0, right=0, top=10, bottom=0),
-        )
-
-        center_block = ft.Column(
-            controls=[player_box, controls_bar],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            alignment=ft.MainAxisAlignment.CENTER,
-            tight=True,
-        )
-
         body = ft.Stack(
             expand=True,
             controls=[
                 ft.Container(expand=True, bgcolor="#F2000000",
                              on_click=lambda e: self._close_media_overlay()),
-                ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=center_block),
+                ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=player_box),
                 close_x,
             ],
         )

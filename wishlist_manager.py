@@ -438,7 +438,9 @@ class WishlistManager:
     def write_quality_playlist(self, variant: Dict[str, Any],
                                audio_media: Optional[str]) -> str:
         """Пишет синтетический master-плейлист (одно качество + аудио) во
-        временный файл и возвращает путь. mpv проиграет его со звуком."""
+        временный файл и возвращает file:// URI. mpv проиграет его со звуком.
+        Возвращаем именно URI (а не голый путь) — media_kit на Windows
+        надёжнее открывает file:// чем 'C:\\...'."""
         text = build_single_quality_m3u8(variant, audio_media)
         self._details_cache_dir.mkdir(parents=True, exist_ok=True)
         # Уникальное имя — иначе media_kit/Flutter может взять старый из кэша
@@ -451,7 +453,7 @@ class WishlistManager:
                     old.unlink()
                 except Exception:
                     pass
-        return str(path)
+        return path.as_uri()
 
     # ---------- Детальные данные с кэшем ----------
 

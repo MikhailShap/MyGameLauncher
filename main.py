@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2125,29 +2125,73 @@ class CyberLauncher:
         card_w = min(int(pw * 0.86), 1040)
         card_h = min(int(ph * 0.88), 760)
 
-        # Контент-контейнер: сначала спиннер, после загрузки — наполняем
-        content_holder = ft.Container(
-            expand=True,
-            alignment=ft.Alignment(0, 0),
-            content=ft.Column(
+        content_holder = ft.Container(expand=True, alignment=ft.Alignment(0, 0))
+
+        def _spinner(text="Загружаю данные из Steam…"):
+            content_holder.alignment = ft.Alignment(0, 0)
+            content_holder.content = ft.Column(
                 controls=[
                     ft.ProgressRing(color=ACCENT_PURPLE),
                     ft.Container(height=12),
-                    ft.Text("Загружаю данные из Steam…", size=13, color=TEXT_GREY),
+                    ft.Text(text, size=13, color=TEXT_GREY),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 alignment=ft.MainAxisAlignment.CENTER,
-            ),
-        )
+            )
 
-        # Кнопка-крестик закрытия (как в add-диалоге)
+        def _render(details):
+            if not details:
+                content_holder.alignment = ft.Alignment(0, 0)
+                content_holder.content = ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.CLOUD_OFF, color=TEXT_GREY, size=48),
+                        ft.Container(height=8),
+                        ft.Text("Не удалось загрузить данные из Steam",
+                                size=14, color=TEXT_GREY),
+                        ft.Container(height=12),
+                        ft.ElevatedButton(
+                            "Открыть в Steam", icon=ft.Icons.OPEN_IN_NEW,
+                            on_click=lambda e, u=item.store_url: webbrowser.open(u) if u else None,
+                            bgcolor="#1B2838", color=TEXT_WHITE,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                )
+            else:
+                content_holder.alignment = None
+                content_holder.content = self._build_wishlist_detail_body(item, details, _close)
+
+        async def _load(force=False):
+            details = await asyncio.to_thread(
+                self.game_manager.wishlist.get_details, item.app_id, force
+            )
+            if self._wishlist_detail_overlay is not overlay:
+                return  # юзер уже закрыл
+            _render(details)
+            self._safe_page_update()
+
+        def on_refresh(e):
+            _spinner("Обновляю данные…")
+            self._safe_page_update()
+            self.page.run_task(_load, True)
+
+        # Кнопка «Обновить» (форс-перезапрос, минуя кэш)
+        refresh_btn = ft.Container(
+            content=ft.Icon(ft.Icons.REFRESH, color=TEXT_WHITE, size=20),
+            width=36, height=36, border_radius=18,
+            bgcolor="#3A3A3A",
+            alignment=ft.Alignment(0, 0),
+            on_click=on_refresh, ink=True,
+            tooltip="Обновить данные из Steam",
+        )
+        # Кнопка-крестик закрытия
         close_btn = ft.Container(
             content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=20),
             width=36, height=36, border_radius=18,
             bgcolor="#3A3A3A",
             alignment=ft.Alignment(0, 0),
-            on_click=lambda e: _close(),
-            ink=True,
+            on_click=lambda e: _close(), ink=True,
             tooltip="Закрыть (ESC)",
         )
 
@@ -2157,9 +2201,10 @@ class CyberLauncher:
                 ft.Text(item.title or "Без названия",
                         weight=ft.FontWeight.BOLD, size=20, color=TEXT_WHITE,
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                refresh_btn,
                 close_btn,
             ],
-            spacing=12,
+            spacing=10,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
@@ -2185,40 +2230,20 @@ class CyberLauncher:
         )
         self._wishlist_detail_overlay = overlay
         self._wishlist_detail_close = _close
+
+        # Мгновенный показ если данные уже в кэше (память/свежий диск) —
+        # без спиннера и без сети. Иначе спиннер + фоновая загрузка.
+        cached = self.game_manager.wishlist.get_details_cached(item.app_id)
+        if cached is not None:
+            _render(cached)
+        else:
+            _spinner()
+
         self.page.overlay.append(overlay)
         self.page.update()
 
-        # Фоновая загрузка деталей, затем заполняем content_holder
-        async def _load():
-            from wishlist_manager import fetch_game_details
-            details = await asyncio.to_thread(fetch_game_details, item.app_id)
-            # Если юзер уже закрыл — не трогаем UI
-            if self._wishlist_detail_overlay is not overlay:
-                return
-            if not details:
-                content_holder.content = ft.Column(
-                    controls=[
-                        ft.Icon(ft.Icons.CLOUD_OFF, color=TEXT_GREY, size=48),
-                        ft.Container(height=8),
-                        ft.Text("Не удалось загрузить данные из Steam",
-                                size=14, color=TEXT_GREY),
-                        ft.Container(height=12),
-                        ft.ElevatedButton(
-                            "Открыть в Steam", icon=ft.Icons.OPEN_IN_NEW,
-                            on_click=lambda e, u=item.store_url: webbrowser.open(u) if u else None,
-                            bgcolor="#1B2838", color=TEXT_WHITE,
-                        ),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                )
-                self._safe_page_update()
-                return
-            content_holder.content = self._build_wishlist_detail_body(item, details, _close)
-            content_holder.alignment = None
-            self._safe_page_update()
-
-        self.page.run_task(_load)
+        if cached is None:
+            self.page.run_task(_load, False)
 
     def _safe_page_update(self):
         try:

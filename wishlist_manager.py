@@ -23,6 +23,7 @@ import threading
 import urllib.parse
 import urllib.request
 import re
+import time
 import html as _html
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict, field
@@ -319,6 +320,10 @@ class WishlistManager:
     SORT_DATE_ASC = "date_asc"
     SORT_NAME = "name"
 
+    # Кэш детальных данных (детальный экран). Описание/скриншоты меняются
+    # редко; цена/дата релиза — иногда. 7 дней — разумный TTL.
+    DETAILS_TTL_SECONDS = 7 * 24 * 3600
+
     def __init__(self, data_dir: Path):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -326,6 +331,80 @@ class WishlistManager:
         self._items: Dict[str, WishlistItem] = {}   # app_id → item
         # Параллельный пул для fetch'а метаданных (несколько add сразу)
         self._executor = ThreadPoolExecutor(max_workers=3)
+        # Кэш детальных данных: память (на сессию) + диск (между запусками).
+        # Диск: <app_data>/cache/wishlist_details/<app_id>.json
+        self._details_cache_dir = self.data_dir.parent / "cache" / "wishlist_details"
+        self._details_mem: Dict[str, Dict[str, Any]] = {}
+
+    # ---------- Детальные данные с кэшем ----------
+
+    def get_details(self, app_id: str, force: bool = False) -> Optional[Dict[str, Any]]:
+        """Детали игры для детального экрана с кэшированием.
+        Порядок: память → диск (если свежий) → сеть. force=True игнорирует
+        кэш и тянет заново (кнопка «Обновить»). Безопасно вызывать из потока."""
+        app_id = str(app_id)
+        if not force:
+            mem = self._details_mem.get(app_id)
+            if mem is not None:
+                return mem
+            disk = self._read_details_disk(app_id)
+            if disk is not None:
+                self._details_mem[app_id] = disk
+                return disk
+        # Сеть
+        data = fetch_game_details(app_id)
+        if data:
+            self._details_mem[app_id] = data
+            self._write_details_disk(app_id, data)
+        return data
+
+    def get_details_cached(self, app_id: str) -> Optional[Dict[str, Any]]:
+        """Только из памяти/свежего диска, БЕЗ сети. Для мгновенного показа
+        без спиннера, если данные уже есть. None если в кэше нет."""
+        app_id = str(app_id)
+        mem = self._details_mem.get(app_id)
+        if mem is not None:
+            return mem
+        disk = self._read_details_disk(app_id)
+        if disk is not None:
+            self._details_mem[app_id] = disk
+        return disk
+
+    def _read_details_disk(self, app_id: str) -> Optional[Dict[str, Any]]:
+        f = self._details_cache_dir / f"{app_id}.json"
+        if not f.exists():
+            return None
+        try:
+            with open(f, "r", encoding="utf-8") as fp:
+                raw = json.load(fp)
+            ts = raw.get("_cached_at", 0)
+            if (time.time() - ts) > self.DETAILS_TTL_SECONDS:
+                return None  # устарело → перезапросим из сети
+            return raw.get("data")
+        except Exception:
+            return None
+
+    def _write_details_disk(self, app_id: str, data: Dict[str, Any]) -> None:
+        try:
+            self._details_cache_dir.mkdir(parents=True, exist_ok=True)
+            f = self._details_cache_dir / f"{app_id}.json"
+            payload = {"_cached_at": time.time(), "data": data}
+            tmp = f.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as fp:
+                json.dump(payload, fp, ensure_ascii=False)
+            os.replace(tmp, f)
+        except Exception as e:
+            logger.warning(f"Details cache write failed for {app_id}: {e}")
+
+    def _drop_details_cache(self, app_id: str) -> None:
+        """Удалить кэш деталей (при удалении игры из wishlist)."""
+        self._details_mem.pop(str(app_id), None)
+        try:
+            f = self._details_cache_dir / f"{app_id}.json"
+            if f.exists():
+                f.unlink()
+        except Exception:
+            pass
 
     # ---------- Persistence ----------
 
@@ -390,6 +469,7 @@ class WishlistManager:
             title = self._items[app_id].title
             del self._items[app_id]
             self.save_sync()
+            self._drop_details_cache(app_id)
             logger.info(f"Wishlist: removed '{title}' (app_id={app_id})")
             return True
         return False

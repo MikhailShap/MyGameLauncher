@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.8.1"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2385,12 +2385,16 @@ class CyberLauncher:
             return
 
         pl = {"v": player}                       # плеер пересоздаётся при смене качества
-        st = {"playing": True, "muted": False, "dragging": False, "dur": 0.0}
+        st = {"playing": True, "muted": False, "dragging": False, "dur": 0.0, "vol": 100.0}
 
+        # Прозрачный слой клика поверх видео (теперь нативные контролы off —
+        # есть шанс что Flet поймает тап). on_click задаётся ниже.
+        video_tap = ft.Container(left=0, top=0, right=0, bottom=0, bgcolor="#01000000")
+        video_stack = ft.Stack(width=vw, height=vh, controls=[pl["v"], video_tap])
         player_box = ft.Container(
             width=vw, height=vh, bgcolor="#000000",
             border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            content=pl["v"],
+            content=video_stack,
         )
 
         # ---- наши контролы ----
@@ -2406,6 +2410,14 @@ class CyberLauncher:
             bgcolor="#3A3A3A", alignment=ft.Alignment(0, 0), ink=True,
             tooltip="Звук вкл/выкл",
         )
+        vol_slider = ft.Slider(min=0, max=100, value=100, width=90,
+                               active_color=TEXT_WHITE, thumb_color=TEXT_WHITE)
+        fs_icon = ft.Icon(ft.Icons.FULLSCREEN, color=TEXT_WHITE, size=24)
+        fs_btn = ft.Container(
+            content=fs_icon, width=42, height=42, border_radius=21,
+            bgcolor="#3A3A3A", alignment=ft.Alignment(0, 0), ink=True,
+            tooltip="Полный экран",
+        )
         cur_lbl = ft.Text("0:00", size=12, color=TEXT_WHITE, width=44,
                           text_align=ft.TextAlign.CENTER)
         dur_lbl = ft.Text("0:00", size=12, color=TEXT_WHITE, width=44,
@@ -2419,9 +2431,17 @@ class CyberLauncher:
             border_color="#555", color=TEXT_WHITE, text_size=13,
         )
 
+        def _u(ctrl):
+            # Обновляем КОНКРЕТНЫЙ контрол — page.update() не освежает вложенные
+            # в overlay контролы надёжно.
+            try:
+                ctrl.update()
+            except Exception:
+                pass
+
         def _set_play_icon():
             play_icon.name = ft.Icons.PAUSE if st["playing"] else ft.Icons.PLAY_ARROW
-            self._safe_page_update()
+            _u(play_icon)
 
         async def _do_toggle():
             try:
@@ -2432,18 +2452,44 @@ class CyberLauncher:
                 backend_logger.warning(f"toggle play failed: {ex}")
 
         play_btn.on_click = lambda e: self.page.run_task(_do_toggle)
+        video_tap.on_click = lambda e: self.page.run_task(_do_toggle)
+
+        def _set_mute_icon():
+            mute_icon.name = ft.Icons.VOLUME_OFF if st["muted"] else ft.Icons.VOLUME_UP
+            _u(mute_icon)
+
+        async def _apply_volume(vol: float, from_slider: bool):
+            st["vol"] = vol
+            st["muted"] = vol <= 0
+            try:
+                pl["v"].volume = vol
+                pl["v"].update()
+            except Exception as ex:
+                backend_logger.warning(f"set volume failed: {ex}")
+            _set_mute_icon()
+            if not from_slider:
+                vol_slider.value = vol
+                _u(vol_slider)
 
         async def _do_mute():
-            st["muted"] = not st["muted"]
-            try:
-                pl["v"].muted = st["muted"]
-                pl["v"].update()
-            except Exception:
-                pass
-            mute_icon.name = ft.Icons.VOLUME_OFF if st["muted"] else ft.Icons.VOLUME_UP
-            self._safe_page_update()
+            # Тоггл: если есть звук → в 0, иначе вернуть прошлую громкость
+            if st["muted"] or st["vol"] <= 0:
+                await _apply_volume(100.0, from_slider=False)
+            else:
+                await _apply_volume(0.0, from_slider=False)
 
         mute_btn.on_click = lambda e: self.page.run_task(_do_mute)
+        vol_slider.on_change = lambda e: self.page.run_task(
+            _apply_volume, float(vol_slider.value or 0), True)
+
+        async def _do_fullscreen():
+            try:
+                pl["v"].fullscreen = True
+                pl["v"].update()
+            except Exception as ex:
+                backend_logger.warning(f"fullscreen failed: {ex}")
+
+        fs_btn.on_click = lambda e: self.page.run_task(_do_fullscreen)
 
         def _seek_start(e):
             st["dragging"] = True
@@ -2460,75 +2506,69 @@ class CyberLauncher:
         # На время перетаскивания обновляем подпись текущего времени
         def _seek_changing(e):
             cur_lbl.value = self._fmt_time(float(seek.value or 0))
-            try:
-                cur_lbl.update()
-            except Exception:
-                pass
+            _u(cur_lbl)
         seek.on_change = _seek_changing
 
-        # Опрос позиции/длительности (нативных событий позиции нет)
+        # Опрос позиции/длительности (нативных событий позиции нет).
+        # Используем миллисекунды и шаг 0.25с — ползунок идёт плавнее.
         async def _poll_loop():
             while self._media_overlay is overlay:
                 try:
                     v = pl["v"]
                     if st["dur"] <= 0:
                         d = await v.get_duration()
-                        secs = (d.in_seconds if d else 0) or 0
-                        if secs > 0:
-                            st["dur"] = float(secs)
+                        ms = (d.in_milliseconds if d else 0) or 0
+                        if ms > 0:
+                            st["dur"] = ms / 1000.0
                             seek.max = st["dur"]
                             dur_lbl.value = self._fmt_time(st["dur"])
-                            self._safe_page_update()
+                            _u(dur_lbl); _u(seek)
                     if not st["dragging"]:
                         p = await v.get_current_position()
-                        cur = (p.in_seconds if p else 0) or 0
+                        ms = (p.in_milliseconds if p else 0) or 0
+                        cur = ms / 1000.0
                         cur_lbl.value = self._fmt_time(cur)
                         if st["dur"] > 0:
                             seek.value = min(cur, st["dur"])
-                        try:
-                            cur_lbl.update(); seek.update()
-                        except Exception:
-                            pass
+                        _u(cur_lbl); _u(seek)
                 except Exception:
                     pass
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.25)
 
         # ---- смена качества ----
         async def _apply_quality(sel: str):
-            if sel == "auto":
-                resource = url
-            else:
-                try:
-                    h = int(sel)
-                except ValueError:
-                    h = None
-                resource = url
-                if h is not None:
-                    info = await asyncio.to_thread(
-                        self.game_manager.wishlist.get_trailer_quality_info, url
-                    )
-                    variant = None
-                    if info:
-                        variant = next((v for v in info["variants"] if v["height"] == h), None)
-                    if variant:
-                        resource = await asyncio.to_thread(
-                            self.game_manager.wishlist.write_quality_playlist,
-                            variant, info["audio_media"],
-                        )
-            backend_logger.info(f"Trailer quality -> {sel}; resource={resource[:80]}")
-            if self._media_overlay is not overlay:
-                return
+            backend_logger.info(f"Trailer quality change requested: {sel}")
             try:
+                resource = url
+                if sel != "auto":
+                    try:
+                        h = int(sel)
+                    except ValueError:
+                        h = None
+                    if h is not None:
+                        info = await asyncio.to_thread(
+                            self.game_manager.wishlist.get_trailer_quality_info, url
+                        )
+                        variant = None
+                        if info:
+                            variant = next((v for v in info["variants"] if v["height"] == h), None)
+                        if variant:
+                            resource = await asyncio.to_thread(
+                                self.game_manager.wishlist.write_quality_playlist,
+                                variant, info["audio_media"],
+                            )
+                backend_logger.info(f"Trailer quality -> {sel}; resource={resource[:90]}")
+                if self._media_overlay is not overlay:
+                    return
                 new_player = self._make_video_player(resource, vw, vh)
+                pl["v"] = new_player
+                video_stack.controls[0] = new_player
+                st["playing"] = True
+                st["dur"] = 0.0
+                _set_play_icon()
+                self._safe_page_update()
             except Exception as ex:
                 backend_logger.warning(f"Quality switch failed: {ex}")
-                return
-            pl["v"] = new_player
-            player_box.content = new_player
-            st["playing"] = True
-            st["dur"] = 0.0
-            _set_play_icon()
-            self._safe_page_update()
 
         quality_dd.on_change = lambda e: self.page.run_task(_apply_quality, quality_dd.value)
 
@@ -2553,9 +2593,10 @@ class CyberLauncher:
             padding=ft.Padding(left=12, right=12, top=8, bottom=8),
             bgcolor="#1A1A1A", border_radius=10,
             content=ft.Row(
-                controls=[play_btn, cur_lbl, seek, dur_lbl, mute_btn, quality_dd],
+                controls=[play_btn, cur_lbl, seek, dur_lbl,
+                          mute_btn, vol_slider, quality_dd, fs_btn],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=10,
+                spacing=8,
             ),
         )
         center_block = ft.Column(

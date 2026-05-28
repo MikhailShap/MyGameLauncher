@@ -55,6 +55,93 @@ def strip_html(raw: str) -> str:
     return s.strip()
 
 
+def _http_get_text(url: str, timeout: float = 8.0):
+    """GET → (text, final_url). final_url учитывает редиректы (нужен для
+    разрешения относительных URI в HLS-плейлисте)."""
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (CyberLauncher) Wishlist/1.0",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if r.status != 200:
+                return None, url
+            text = r.read().decode("utf-8", errors="replace")
+            return text, r.geturl()
+    except Exception as e:
+        logger.debug(f"HLS GET failed {url}: {e}")
+        return None, url
+
+
+def parse_hls_variants(master_url: str) -> Optional[Dict[str, Any]]:
+    """Парсит HLS master-плейлист трейлера Steam в список вариантов качества.
+
+    Возвращает {'audio_media': str|None, 'variants': [{'height':int,
+    'bandwidth':int, 'inf':str, 'video_url':abs_url}]} или None.
+
+    В новой схеме Steam аудио вынесено отдельной дорожкой
+    (#EXT-X-MEDIA:TYPE=AUDIO), а варианты видео — без звука. Поэтому для
+    проигрывания конкретного качества нужен синтетический master с одним
+    видео-вариантом + аудио-дорожкой (см. build_single_quality_m3u8)."""
+    text, final_url = _http_get_text(master_url)
+    if not text or "#EXTM3U" not in text:
+        return None
+    base = final_url.split("?", 1)[0].rsplit("/", 1)[0] + "/"
+
+    def absolutize(uri: str) -> str:
+        uri = uri.strip()
+        if uri.startswith("http://") or uri.startswith("https://"):
+            return uri
+        return base + uri
+
+    def rewrite_uri_abs(line: str) -> str:
+        # Заменяет URI="..." на абсолютный
+        m = re.search(r'URI="([^"]+)"', line)
+        if not m:
+            return line
+        return line[:m.start(1)] + absolutize(m.group(1)) + line[m.end(1):]
+
+    audio_media = None
+    variants = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        ls = line.strip()
+        if ls.startswith("#EXT-X-MEDIA:") and "TYPE=AUDIO" in ls:
+            audio_media = rewrite_uri_abs(ls)
+        elif ls.startswith("#EXT-X-STREAM-INF:"):
+            # Следующая непустая строка — URI варианта
+            uri = ""
+            for j in range(i + 1, len(lines)):
+                cand = lines[j].strip()
+                if cand and not cand.startswith("#"):
+                    uri = cand
+                    break
+            if not uri:
+                continue
+            res = re.search(r"RESOLUTION=\d+x(\d+)", ls)
+            bw = re.search(r"BANDWIDTH=(\d+)", ls)
+            variants.append({
+                "height": int(res.group(1)) if res else 0,
+                "bandwidth": int(bw.group(1)) if bw else 0,
+                "inf": ls,
+                "video_url": absolutize(uri),
+            })
+    if not variants:
+        return None
+    variants.sort(key=lambda v: v["height"], reverse=True)
+    return {"audio_media": audio_media, "variants": variants}
+
+
+def build_single_quality_m3u8(variant: Dict[str, Any], audio_media: Optional[str]) -> str:
+    """Синтетический master-плейлист с ОДНИМ видео-вариантом + аудио-дорожкой.
+    Все URI абсолютные, поэтому mpv проиграет нужное качество со звуком."""
+    out = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-INDEPENDENT-SEGMENTS"]
+    if audio_media:
+        out.append(audio_media)
+    out.append(variant["inf"])
+    out.append(variant["video_url"])
+    return "\n".join(out) + "\n"
+
+
 # Уровни приоритета. Зелёный — "хочу прям сейчас", жёлтый — "потом",
 # серый — "просто попробовать когда-нибудь". Сортировка идёт high → med → low.
 PRIORITY_HIGH = "high"
@@ -335,6 +422,36 @@ class WishlistManager:
         # Диск: <app_data>/cache/wishlist_details/<app_id>.json
         self._details_cache_dir = self.data_dir.parent / "cache" / "wishlist_details"
         self._details_mem: Dict[str, Dict[str, Any]] = {}
+        # Кэш разобранных HLS-вариантов трейлеров (по master-URL, на сессию)
+        self._hls_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
+    # ---------- Качество трейлера (HLS) ----------
+
+    def get_trailer_quality_info(self, master_url: str) -> Optional[Dict[str, Any]]:
+        """Разбирает HLS master трейлера в список вариантов (с памятью-кэшем)."""
+        if master_url in self._hls_cache:
+            return self._hls_cache[master_url]
+        info = parse_hls_variants(master_url)
+        self._hls_cache[master_url] = info
+        return info
+
+    def write_quality_playlist(self, variant: Dict[str, Any],
+                               audio_media: Optional[str]) -> str:
+        """Пишет синтетический master-плейлист (одно качество + аудио) во
+        временный файл и возвращает путь. mpv проиграет его со звуком."""
+        text = build_single_quality_m3u8(variant, audio_media)
+        self._details_cache_dir.mkdir(parents=True, exist_ok=True)
+        # Уникальное имя — иначе media_kit/Flutter может взять старый из кэша
+        path = self._details_cache_dir / f"_q_{variant.get('height', 0)}_{int(time.time()*1000)}.m3u8"
+        path.write_text(text, encoding="utf-8")
+        # Чистим прошлые временные плейлисты
+        for old in self._details_cache_dir.glob("_q_*.m3u8"):
+            if old != path:
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+        return str(path)
 
     # ---------- Детальные данные с кэшем ----------
 

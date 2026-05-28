@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.7.3"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2321,9 +2321,23 @@ class CyberLauncher:
         self.page.overlay.append(overlay)
         self.page.update()
 
+    def _make_video_player(self, resource: str, vw: int, vh: int):
+        """Создаёт fv.Video для заданного ресурса (URL master / локальный
+        temp-плейлист конкретного качества)."""
+        return fv.Video(
+            playlist=[fv.VideoMedia(resource=resource)],
+            autoplay=True,
+            show_controls=True,
+            muted=False,
+            width=vw, height=vh,
+            fit="contain",
+            on_error=lambda e: backend_logger.warning(f"Trailer playback error: {getattr(e,'data',e)}"),
+        )
+
     def _show_trailer_player(self, url: str, name: str = ""):
-        """Встроенный видео-плеер трейлера (flet_video / media_kit). Поверх
-        detail. Если flet_video недоступен — fallback в браузер."""
+        """Встроенный видео-плеер трейлера (flet_video / media_kit) поверх
+        detail. С выбором качества (HLS-варианты) и play/pause по клику.
+        Если flet_video недоступен — fallback в браузер."""
         if not url:
             return
         if not HAS_VIDEO or fv is None:
@@ -2339,19 +2353,98 @@ class CyberLauncher:
             vw = int(vh * 16 / 9)
 
         try:
-            player = fv.Video(
-                playlist=[fv.VideoMedia(resource=url)],
-                autoplay=True,
-                show_controls=True,
-                muted=False,
-                width=vw, height=vh,
-                fit="contain",
-                on_error=lambda e: backend_logger.warning(f"Trailer playback error: {getattr(e,'data',e)}"),
-            )
+            player = self._make_video_player(url, vw, vh)
         except Exception as ex:
             backend_logger.warning(f"flet_video init failed, fallback to browser: {ex}")
             webbrowser.open(url)
             return
+
+        # mutable holder — плеер пересоздаётся при смене качества
+        pl = {"v": player}
+
+        def toggle_play(e):
+            # Клик по области видео = play/pause (раньше on_click=None глушил
+            # встроенный тап mpv → клик не работал, только кнопка).
+            try:
+                pl["v"].play_or_pause()
+            except Exception:
+                pass
+
+        player_box = ft.Container(
+            width=vw, height=vh, bgcolor="#000000",
+            border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            on_click=toggle_play,
+            content=player,
+        )
+
+        # Выпадающий список качества. Изначально только "Авто"; реальные
+        # варианты подгружаются в фоне (parse HLS).
+        quality_dd = ft.Dropdown(
+            value="auto",
+            options=[ft.dropdown.Option("auto", "Качество: Авто")],
+            width=200,
+            dense=True,
+            bgcolor="#1E1E1E",
+            border_color="#444",
+            color=TEXT_WHITE,
+            text_size=13,
+        )
+
+        async def _apply_quality(sel: str):
+            # Готовим ресурс (URL master для Авто, иначе temp-плейлист качества)
+            if sel == "auto":
+                resource = url
+            else:
+                try:
+                    h = int(sel)
+                except ValueError:
+                    resource = url
+                else:
+                    info = await asyncio.to_thread(
+                        self.game_manager.wishlist.get_trailer_quality_info, url
+                    )
+                    variant = None
+                    if info:
+                        variant = next((v for v in info["variants"] if v["height"] == h), None)
+                    if variant:
+                        resource = await asyncio.to_thread(
+                            self.game_manager.wishlist.write_quality_playlist,
+                            variant, info["audio_media"],
+                        )
+                    else:
+                        resource = url
+            # Если оверлей уже закрыт — выходим
+            if self._media_overlay is not overlay:
+                return
+            try:
+                new_player = self._make_video_player(resource, vw, vh)
+            except Exception as ex:
+                backend_logger.warning(f"Quality switch failed: {ex}")
+                return
+            pl["v"] = new_player
+            player_box.content = new_player
+            self._safe_page_update()
+
+        def on_quality_change(e):
+            self.page.run_task(_apply_quality, quality_dd.value)
+
+        quality_dd.on_change = on_quality_change
+
+        async def _load_variants():
+            info = await asyncio.to_thread(
+                self.game_manager.wishlist.get_trailer_quality_info, url
+            )
+            if self._media_overlay is not overlay:
+                return
+            if not info or not info.get("variants"):
+                return  # нет вариантов — оставляем только Авто
+            opts = [ft.dropdown.Option("auto", "Качество: Авто")]
+            for v in info["variants"]:
+                h = v["height"]
+                if h:
+                    opts.append(ft.dropdown.Option(str(h), f"{h}p"))
+            quality_dd.options = opts
+            self._safe_page_update()
 
         close_x = ft.Container(
             content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=24),
@@ -2360,18 +2453,29 @@ class CyberLauncher:
             on_click=lambda e: self._close_media_overlay(),
             right=16, top=16,
         )
-        player_box = ft.Container(
-            width=vw, height=vh, bgcolor="#000000",
-            border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            on_click=lambda e: None,  # клик по видео не закрывает
-            content=player,
+        # Панель управления над/под видео: селектор качества
+        controls_bar = ft.Container(
+            content=ft.Row(
+                controls=[quality_dd],
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=10,
+            ),
+            padding=ft.Padding(left=0, right=0, top=10, bottom=0),
         )
+
+        center_block = ft.Column(
+            controls=[player_box, controls_bar],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            tight=True,
+        )
+
         body = ft.Stack(
             expand=True,
             controls=[
                 ft.Container(expand=True, bgcolor="#F2000000",
                              on_click=lambda e: self._close_media_overlay()),
-                ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=player_box),
+                ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=center_block),
                 close_x,
             ],
         )
@@ -2380,6 +2484,9 @@ class CyberLauncher:
         self._media_close = self._close_media_overlay
         self.page.overlay.append(overlay)
         self.page.update()
+
+        # Подтягиваем доступные качества в фоне
+        self.page.run_task(_load_variants)
 
     def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:
         """Скроллируемое тело детального экрана из нормализованных Steam-данных

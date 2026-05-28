@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.7.5"
+APP_VERSION = "1.7.6"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2374,47 +2374,43 @@ class CyberLauncher:
         # mutable holder — плеер пересоздаётся при смене качества
         pl = {"v": player}
 
+        # ВАЖНО: media_kit рисует видео нативной поверхностью, которая
+        # перехватывает ввод и игнорирует z-порядок Flet. Контролы, наложенные
+        # ПОВЕРХ видео, не получают события (проверено: on_change/on_click не
+        # фаерят). Поэтому play/pause и выбор качества выносим в панель ПОД
+        # видео — там обычное Flet-пространство, всё кликается.
+
         def toggle_play(e):
-            # Клик по области видео = play/pause. Слой-перехватчик лежит ПОВЕРХ
-            # видео (media_kit иначе сам съедает тап), но не закрывает нижнюю
-            # полосу нативных контролов.
             try:
                 pl["v"].play_or_pause()
             except Exception:
                 pass
 
-        # Прозрачный слой тапа поверх видео (alpha 1/255 — иначе Flutter не
-        # делает хит-тест по пустому контейнеру). bottom=56 оставляет нативную
-        # панель контролов кликабельной.
-        tap_layer = ft.Container(
-            left=0, top=0, right=0, bottom=56,
-            bgcolor="#01000000",
-            on_click=toggle_play,
-        )
-
-        # Селектор качества НАЛОЖЕН на видео (верх-право) — визуально "внутри"
-        # плеера. В нативную панель media_kit встроить нельзя (нет API).
-        quality_dd = ft.Dropdown(
-            value="auto",
-            options=[ft.dropdown.Option("auto", "Авто")],
-            width=130,
-            dense=True,
-            bgcolor="#CC1E1E1E",
-            border_color="#555",
-            color=TEXT_WHITE,
-            text_size=13,
-        )
-        quality_overlay = ft.Container(right=12, top=12, content=quality_dd)
-
-        # Видео + слои в одном Stack фиксированного размера
-        video_stack = ft.Stack(
-            width=vw, height=vh,
-            controls=[pl["v"], tap_layer, quality_overlay],
-        )
         player_box = ft.Container(
             width=vw, height=vh, bgcolor="#000000",
             border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            content=video_stack,
+            content=pl["v"],
+        )
+
+        play_btn = ft.Container(
+            content=ft.Icon(ft.Icons.PLAY_ARROW, color=TEXT_WHITE, size=22),
+            width=40, height=40, border_radius=20, bgcolor="#3A3A3A",
+            alignment=ft.Alignment(0, 0), ink=True,
+            tooltip="Плей / Пауза",
+            on_click=toggle_play,
+        )
+
+        quality_dd = ft.Dropdown(
+            value="auto",
+            options=[ft.dropdown.Option("auto", "Авто")],
+            width=140,
+            dense=True,
+            bgcolor="#1E1E1E",
+            border_color="#555",
+            color=TEXT_WHITE,
+            text_size=13,
+            label="Качество",
+            label_style=ft.TextStyle(size=11, color=TEXT_GREY),
         )
 
         async def _apply_quality(sel: str):
@@ -2450,8 +2446,7 @@ class CyberLauncher:
                 backend_logger.warning(f"Quality switch failed: {ex}")
                 return
             pl["v"] = new_player
-            # Заменяем именно видео-слой (controls[0]) в Stack
-            video_stack.controls[0] = new_player
+            player_box.content = new_player
             self._safe_page_update()
 
         def on_quality_change(e):
@@ -2499,12 +2494,26 @@ class CyberLauncher:
             on_click=lambda e, u=url: webbrowser.open(u),
             right=72, top=18,
         )
+        # Панель управления ПОД видео (обычное Flet-пространство → кликается).
+        controls_bar = ft.Row(
+            controls=[play_btn, quality_dd],
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=14,
+        )
+        center_block = ft.Column(
+            controls=[player_box, ft.Container(height=12), controls_bar],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            tight=True,
+        )
+
         body = ft.Stack(
             expand=True,
             controls=[
                 ft.Container(expand=True, bgcolor="#F2000000",
                              on_click=lambda e: self._close_media_overlay()),
-                ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=player_box),
+                ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=center_block),
                 open_browser_btn,
                 close_x,
             ],

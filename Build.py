@@ -87,6 +87,7 @@ def build():
         "gamepad_manager",
         "bigpicture_view",
         "wishlist_manager",
+        "flet_video",
     ]
     
     # Формируем команду
@@ -105,6 +106,9 @@ def build():
         # не определяется. --collect-all гарантирует, что весь пакет
         # (исходники, .pyd, данные) попадёт в _internal/pygame/.
         "--collect-all", "pygame",
+        # flet_video — Python-сторона видео-контрола. Нативные media_kit/libmpv
+        # DLL уже лежат в flet_desktop/app/flet, так что нужен только пакет.
+        "--collect-all", "flet_video",
     ]
     
     # Добавляем данные

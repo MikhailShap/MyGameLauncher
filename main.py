@@ -33,8 +33,19 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.6.2"
+APP_VERSION = "1.7.0"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
+
+# Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
+# flet_desktop уже содержит libmpv/media_kit DLL, поэтому встроенное видео
+# работает без перехода на `flet build`. Если пакета нет — трейлеры просто
+# откроются в браузере (graceful fallback).
+try:
+    import flet_video as fv
+    HAS_VIDEO = True
+except Exception as _e:
+    fv = None
+    HAS_VIDEO = False
 
 # Опциональные модули геймпада и BigPicture
 try:
@@ -783,6 +794,10 @@ class CyberLauncher:
         # Wishlist detail (полный экран игры по клику на карточку).
         self._wishlist_detail_overlay: Optional["ft.Control"] = None
         self._wishlist_detail_close = None
+        # Медиа-лайтбокс (скриншот в полный экран / встроенный видео-плеер),
+        # открывается ПОВЕРХ detail. ESC закрывает его первым.
+        self._media_overlay: Optional["ft.Control"] = None
+        self._media_close = None
 
         # Window focus — нужен чтобы блокировать gamepad-события когда юзер
         # играет в запущенную игру. SDL читает гейпад даже когда окно не в
@@ -2211,6 +2226,136 @@ class CyberLauncher:
         except Exception:
             pass
 
+    def _close_media_overlay(self):
+        overlay = getattr(self, "_media_overlay", None)
+        if overlay is None:
+            return
+        try:
+            if overlay in self.page.overlay:
+                self.page.overlay.remove(overlay)
+        except Exception:
+            pass
+        self._media_overlay = None
+        self._media_close = None
+        self._safe_page_update()
+
+    def _show_screenshot_lightbox(self, shots: list, index: int):
+        """Полноэкранный просмотр скриншота с навигацией ◀ ▶ по всем шотам.
+        Встроенный, без браузера."""
+        if not shots:
+            return
+        state = {"i": max(0, min(index, len(shots) - 1))}
+
+        img = ft.Container(
+            expand=True,
+            alignment=ft.Alignment(0, 0),
+            image=ft.DecorationImage(src=shots[state["i"]], fit="contain"),
+        )
+        counter = ft.Text(f"{state['i'] + 1} / {len(shots)}", size=13, color=TEXT_WHITE)
+
+        def show(i):
+            state["i"] = i % len(shots)
+            img.image = ft.DecorationImage(src=shots[state["i"]], fit="contain")
+            counter.value = f"{state['i'] + 1} / {len(shots)}"
+            self._safe_page_update()
+
+        def nav(delta):
+            return lambda e: show(state["i"] + delta)
+
+        arrow_l = ft.IconButton(ft.Icons.CHEVRON_LEFT, icon_color=TEXT_WHITE, icon_size=44,
+                                on_click=nav(-1), visible=len(shots) > 1)
+        arrow_r = ft.IconButton(ft.Icons.CHEVRON_RIGHT, icon_color=TEXT_WHITE, icon_size=44,
+                                on_click=nav(1), visible=len(shots) > 1)
+        close_x = ft.Container(
+            content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=24),
+            width=44, height=44, border_radius=22, bgcolor="#3A3A3A",
+            alignment=ft.Alignment(0, 0), ink=True, tooltip="Закрыть (ESC)",
+            on_click=lambda e: self._close_media_overlay(),
+            right=16, top=16,
+        )
+
+        # Слой: затемнение (клик=закрыть) + картинка + стрелки + счётчик + X
+        body = ft.Stack(
+            expand=True,
+            controls=[
+                ft.Container(expand=True, bgcolor="#F2000000",
+                             on_click=lambda e: self._close_media_overlay()),
+                ft.Row(
+                    controls=[arrow_l, img, arrow_r],
+                    expand=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Container(bottom=18, left=0, right=0, alignment=ft.Alignment(0, 0),
+                             content=counter),
+                close_x,
+            ],
+        )
+        overlay = ft.Container(expand=True, content=body)
+        self._media_overlay = overlay
+        self._media_close = self._close_media_overlay
+        self.page.overlay.append(overlay)
+        self.page.update()
+
+    def _show_trailer_player(self, url: str, name: str = ""):
+        """Встроенный видео-плеер трейлера (flet_video / media_kit). Поверх
+        detail. Если flet_video недоступен — fallback в браузер."""
+        if not url:
+            return
+        if not HAS_VIDEO or fv is None:
+            webbrowser.open(url)
+            return
+
+        pw = self.page.width or 1280
+        ph = self.page.height or 800
+        vw = min(int(pw * 0.86), 1100)
+        vh = int(vw * 9 / 16)
+        if vh > ph * 0.8:
+            vh = int(ph * 0.8)
+            vw = int(vh * 16 / 9)
+
+        try:
+            player = fv.Video(
+                playlist=[fv.VideoMedia(resource=url)],
+                autoplay=True,
+                show_controls=True,
+                muted=False,
+                width=vw, height=vh,
+                fit="contain",
+                on_error=lambda e: backend_logger.warning(f"Trailer playback error: {getattr(e,'data',e)}"),
+            )
+        except Exception as ex:
+            backend_logger.warning(f"flet_video init failed, fallback to browser: {ex}")
+            webbrowser.open(url)
+            return
+
+        close_x = ft.Container(
+            content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=24),
+            width=44, height=44, border_radius=22, bgcolor="#3A3A3A",
+            alignment=ft.Alignment(0, 0), ink=True, tooltip="Закрыть (ESC)",
+            on_click=lambda e: self._close_media_overlay(),
+            right=16, top=16,
+        )
+        player_box = ft.Container(
+            width=vw, height=vh, bgcolor="#000000",
+            border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            on_click=lambda e: None,  # клик по видео не закрывает
+            content=player,
+        )
+        body = ft.Stack(
+            expand=True,
+            controls=[
+                ft.Container(expand=True, bgcolor="#F2000000",
+                             on_click=lambda e: self._close_media_overlay()),
+                ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=player_box),
+                close_x,
+            ],
+        )
+        overlay = ft.Container(expand=True, content=body)
+        self._media_overlay = overlay
+        self._media_close = self._close_media_overlay
+        self.page.overlay.append(overlay)
+        self.page.update()
+
     def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:
         """Скроллируемое тело детального экрана из нормализованных Steam-данных
         (dict из wishlist_manager.fetch_game_details)."""
@@ -2224,16 +2369,17 @@ class CyberLauncher:
 
         col = ft.Column(scroll=ft.ScrollMode.AUTO, spacing=14, expand=True)
 
-        # --- Hero (header image) ---
-        # DecorationImage на контейнере — надёжный full-bleed паттерн (так же
-        # сделана обложка карточки). ft.Image как ребёнок в этом Flet ведёт
-        # себя хуже (натуральный размер / коллапс).
-        if d.get("header_image"):
+        # --- Hero (баннер) ---
+        # Берём hero_image (library_hero 1920×620 / скриншот) — header_image
+        # всего 460×215 и мылит при растяжении. DecorationImage на контейнере —
+        # надёжный full-bleed паттерн (так же сделана обложка карточки).
+        hero_src = d.get("hero_image") or d.get("header_image")
+        if hero_src:
             col.controls.append(
                 ft.Container(
-                    height=230,
+                    height=280,
                     border_radius=10,
-                    image=ft.DecorationImage(src=d["header_image"], fit="cover"),
+                    image=ft.DecorationImage(src=hero_src, fit="cover"),
                 )
             )
 
@@ -2273,14 +2419,19 @@ class CyberLauncher:
             for t in trailers[:6]:
                 thumb = t.get("thumb") or ""
                 url = t.get("url") or ""
+                # Клик → встроенный плеер (если flet_video есть), иначе браузер.
+                if HAS_VIDEO:
+                    click = (lambda e, u=url, nm=t.get("name", ""): self._show_trailer_player(u, nm)) if url else None
+                else:
+                    click = (lambda e, u=url: webbrowser.open(u)) if url else None
                 trow.controls.append(
                     ft.Container(
                         width=320, height=180,
                         border_radius=8,
                         bgcolor="#000000",
                         image=ft.DecorationImage(src=thumb, fit="cover") if thumb else None,
-                        on_click=(lambda e, u=url: webbrowser.open(u)) if url else None,
-                        tooltip="Открыть трейлер",
+                        on_click=click,
+                        tooltip="Смотреть трейлер",
                         alignment=ft.Alignment(0, 0),
                         content=ft.Icon(ft.Icons.PLAY_CIRCLE_FILL, color="#EEFFFFFF", size=56),
                     )
@@ -2292,14 +2443,15 @@ class CyberLauncher:
         if shots:
             col.controls.append(ft.Text("Скриншоты", size=16, weight=ft.FontWeight.BOLD, color=TEXT_WHITE))
             srow = ft.Row(scroll=ft.ScrollMode.AUTO, spacing=10)
-            for url in shots[:12]:
+            for idx, url in enumerate(shots):
                 srow.controls.append(
                     ft.Container(
                         width=320, height=180,
                         border_radius=8,
                         bgcolor="#000000",
                         image=ft.DecorationImage(src=url, fit="cover"),
-                        on_click=lambda e, u=url: webbrowser.open(u),
+                        # Клик → встроенный лайтбокс с навигацией по всем шотам.
+                        on_click=lambda e, i=idx: self._show_screenshot_lightbox(shots, i),
                         tooltip="Открыть в полном размере",
                     )
                 )
@@ -3253,7 +3405,14 @@ class CyberLauncher:
             # ESC — приоритет: закрыть открытый wishlist-overlay, потом
             # выйти из BigPicture. В обычном режиме без open dialog — игнор.
             if key == "Escape":
-                # Приоритет закрытия: detail > add-dialog > BigPicture.
+                # Приоритет закрытия: media-lightbox > detail > add-dialog > BP.
+                if self._media_overlay is not None and self._media_close is not None:
+                    backend_logger.info("Media lightbox: ESC pressed")
+                    try:
+                        self._media_close()
+                    except Exception:
+                        pass
+                    return
                 if self._wishlist_detail_overlay is not None and self._wishlist_detail_close is not None:
                     backend_logger.info("Wishlist detail: ESC pressed")
                     try:

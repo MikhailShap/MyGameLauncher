@@ -100,6 +100,20 @@ class WishlistItem:
         return cls(**filtered)
 
 
+def _url_exists(url: str, timeout: float = 6.0) -> bool:
+    """HEAD-проверка доступности URL (200). Для выбора качественного баннера."""
+    if not url:
+        return False
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={
+            "User-Agent": "Mozilla/5.0 (CyberLauncher) Wishlist/1.0",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def _http_get_json(url: str, timeout: float = 10.0) -> Optional[Any]:
     """Простой HTTP GET → JSON. Возвращает None при любой ошибке."""
     try:
@@ -238,6 +252,18 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
         if url:
             screenshots.append(url)
 
+    # Качественный баннер для шапки. header_image всего 460×215 → мылит при
+    # растяжении. library_hero — 1920×620, специально под баннер. Если его нет
+    # (редкие игры) — первый скриншот (1920×1080), иначе header_image.
+    hero_image = ""
+    lib_hero = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/library_hero.jpg"
+    if _url_exists(lib_hero):
+        hero_image = lib_hero
+    elif screenshots:
+        hero_image = screenshots[0]
+    else:
+        hero_image = details.get("header_image") or ""
+
     trailers = []
     for m in (details.get("movies") or []):
         mp4 = m.get("mp4") or {}
@@ -253,6 +279,7 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
         "app_id": str(app_id),
         "title": details.get("name") or "",
         "header_image": details.get("header_image") or "",
+        "hero_image": hero_image,
         "background": details.get("background_raw") or details.get("background") or "",
         "about": about,
         "release_date": (details.get("release_date") or {}).get("date") or "",

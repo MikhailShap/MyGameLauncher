@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.5.9"
+APP_VERSION = "1.6.0"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональные модули геймпада и BigPicture
@@ -2261,13 +2261,24 @@ class CyberLauncher:
             on_click=lambda e: None,
             content=ft.Column(
                 controls=[
+                    # Заголовок + крестик закрытия справа (стандартный паттерн
+                    # модалки — место кнопки очевидное).
                     ft.Row(
                         controls=[
                             ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35", size=24),
                             ft.Text("Добавить в желаемое",
                                     weight=ft.FontWeight.BOLD, size=18, color=TEXT_WHITE),
+                            ft.Container(expand=True),
+                            ft.IconButton(
+                                ft.Icons.CLOSE,
+                                icon_color=TEXT_GREY,
+                                icon_size=22,
+                                tooltip="Закрыть (ESC)",
+                                on_click=on_close_btn,
+                            ),
                         ],
                         spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Container(height=4),
                     ft.Text("Поиск по Steam Store. Подсказки появляются после "
@@ -2289,17 +2300,6 @@ class CyberLauncher:
                             spacing=0,
                         ),
                     ),
-                    ft.Container(height=8),
-                    ft.Row(
-                        controls=[
-                            ft.Container(expand=True),
-                            ft.TextButton(
-                                "Закрыть",
-                                icon=ft.Icons.CLOSE,
-                                on_click=on_close_btn,
-                            ),
-                        ],
-                    ),
                 ],
                 spacing=0,
                 # expand=True у Column обязателен, чтобы expand=True у
@@ -2316,14 +2316,18 @@ class CyberLauncher:
             on_click=on_backdrop_click,
         )
 
-        # Центрирование карточки поверх backdrop через Row+Column. Можно было
-        # бы Stack+alignment, но Row/Column в Flet надёжнее центрируют поверх
-        # expand-родителя.
-        centered_card = ft.Row(
-            controls=[card],
-            alignment=ft.MainAxisAlignment.CENTER,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        # Центрирование карточки: ПРОЗРАЧНЫЙ Container(expand=True) с
+        # alignment=center. Раньше был Row(expand=True, vertical_alignment=
+        # CENTER) — но Row в Stack берёт высоту по контенту (640px), а не на
+        # весь экран, поэтому vertical-центрирование не работало и карточка
+        # липла к верху. Container.alignment центрирует контент в своих
+        # границах (весь экран) надёжно. Контейнер без bgcolor/on_click —
+        # его пустые зоны прозрачны для кликов, так что клик мимо карточки
+        # проваливается на backdrop под ним.
+        centered_card = ft.Container(
             expand=True,
+            alignment=ft.Alignment(0, 0),
+            content=card,
         )
 
         overlay = ft.Container(

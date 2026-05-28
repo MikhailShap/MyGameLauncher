@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональные модули геймпада и BigPicture
@@ -2269,12 +2269,18 @@ class CyberLauncher:
                             ft.Text("Добавить в желаемое",
                                     weight=ft.FontWeight.BOLD, size=18, color=TEXT_WHITE),
                             ft.Container(expand=True),
-                            ft.IconButton(
-                                ft.Icons.CLOSE,
-                                icon_color=TEXT_GREY,
-                                icon_size=22,
-                                tooltip="Закрыть (ESC)",
+                            # Явная круглая кнопка-крестик. Раньше был
+                            # IconButton с серой иконкой — на тёмном фоне почти
+                            # сливался, юзер думал что кнопка пропала. Делаем
+                            # белый значок на видимой подложке.
+                            ft.Container(
+                                content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=20),
+                                width=36, height=36, border_radius=18,
+                                bgcolor="#3A3A3A",
+                                alignment=ft.Alignment(0, 0),
                                 on_click=on_close_btn,
+                                ink=True,
+                                tooltip="Закрыть (ESC)",
                             ),
                         ],
                         spacing=10,

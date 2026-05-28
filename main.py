@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.5.6"
+APP_VERSION = "1.5.7"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональные модули геймпада и BigPicture
@@ -2002,10 +2002,15 @@ class CyberLauncher:
         actions.append(del_btn)
 
         body = ft.Container(
-            # bottom=0 → action-row впритык к низу карточки (просили опустить
-            # как можно ниже). Top=10 оставляем, чтобы заголовок не лип к
-            # нижнему краю cover'а.
-            padding=ft.Padding(left=14, right=14, top=10, bottom=0),
+            # expand=True ОБЯЗАТЕЛЕН: внешний Column[cover, body] растягивается
+            # на всю высоту карточки (340), cover фиксирован (160), а body без
+            # expand брал лишь натуральную высоту контента (~150) → под ним
+            # оставалась пустота ~30px, и внутренний spacer прижимал кнопки к
+            # низу body, а не к низу карточки. С expand body заполняет остаток
+            # (340-160=180) и spacer уводит actions к самому низу карточки.
+            expand=True,
+            # bottom=10 → небольшой отступ кнопок от нижней кромки карточки.
+            padding=ft.Padding(left=14, right=14, top=10, bottom=10),
             content=ft.Column(
                 controls=[
                     title_text,

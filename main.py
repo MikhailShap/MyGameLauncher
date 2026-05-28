@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.5.7"
+APP_VERSION = "1.5.8"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональные модули геймпада и BigPicture
@@ -2029,9 +2029,9 @@ class CyberLauncher:
             ),
         )
 
-        # Бордер высокого приоритета акцентируется тем же цветом огонька;
-        # medium/low — нейтральный тёмный, чтобы карточка не "кричала".
-        border_color = prio_icon_color if prio == "high" else "#333"
+        # Бордер всегда нейтральный тёмный — сплошная цветная обводка по всему
+        # периметру смотрелась грубо. Приоритет читается по цветному огоньку
+        # в углу cover'а, отдельная рамка не нужна.
         # ФИКСИРОВАННЫЕ размеры карточки. Раньше использовали GridView
         # max_extent + aspect_ratio — на узких окнах cell.width схлопывалась,
         # cell.height вместе с ней, и actions-row обрезался clip-зоной.
@@ -2043,7 +2043,7 @@ class CyberLauncher:
             height=340,
             bgcolor=CARD_BG,
             border_radius=8,
-            border=ft.Border.all(1, border_color),
+            border=ft.Border.all(1, "#333"),
             content=ft.Column(controls=[cover, body], spacing=0, expand=True),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )

@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.8.2"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2321,12 +2321,18 @@ class CyberLauncher:
         self.page.overlay.append(overlay)
         self.page.update()
 
-    def _make_video_player(self, resource: str, vw: int, vh: int):
+    def _make_video_player(self, resource: str, vw: int, vh: int,
+                           show_controls: bool = False, fullscreen: bool = False,
+                           on_load=None, on_exit_fullscreen=None):
         """Создаёт fv.Video для заданного ресурса (URL master / локальный
         temp-плейлист конкретного качества).
 
         http_headers: akamai (Steam CDN) часто отклоняет дефолтный UA
         ffmpeg → 'Failed to open'. Браузерный UA + Referer на стор.
+        show_controls: в фуллскрине включаем нативную панель media_kit (наша
+        Flet-панель не ложится поверх нативной fullscreen-поверхности).
+        configuration: HW-ускорение отключаем — частая причина «видео замерло,
+        звук идёт» (рассинхрон/дроп кадров аппаратного декодера) на HLS.
         """
         return fv.Video(
             playlist=[fv.VideoMedia(
@@ -2339,10 +2345,14 @@ class CyberLauncher:
                 },
             )],
             autoplay=True,
-            show_controls=False,   # нативную панель прячем — у нас своя
+            show_controls=show_controls,
+            fullscreen=fullscreen,
             muted=False,
             width=vw, height=vh,
             fit="contain",
+            configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
+            on_load=on_load,
+            on_exit_fullscreen=on_exit_fullscreen,
             on_error=lambda e: backend_logger.warning(f"Trailer playback error: {getattr(e,'data',e)}"),
         )
 
@@ -2390,7 +2400,21 @@ class CyberLauncher:
         # Прозрачный слой клика поверх видео (теперь нативные контролы off —
         # есть шанс что Flet поймает тап). on_click задаётся ниже.
         video_tap = ft.Container(left=0, top=0, right=0, bottom=0, bgcolor="#01000000")
-        video_stack = ft.Stack(width=vw, height=vh, controls=[pl["v"], video_tap])
+        # Спиннер загрузки — поверх чёрного, пока не пошло воспроизведение.
+        loading_spinner = ft.Container(
+            left=0, top=0, right=0, bottom=0,
+            alignment=ft.Alignment(0, 0),
+            content=ft.Column(
+                controls=[
+                    ft.ProgressRing(color=ACCENT_PURPLE),
+                    ft.Container(height=10),
+                    ft.Text("Загрузка трейлера…", size=13, color=TEXT_GREY),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+        )
+        video_stack = ft.Stack(width=vw, height=vh, controls=[pl["v"], video_tap, loading_spinner])
         player_box = ft.Container(
             width=vw, height=vh, bgcolor="#000000",
             border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
@@ -2441,7 +2465,7 @@ class CyberLauncher:
 
         def _set_play_icon():
             play_icon.name = ft.Icons.PAUSE if st["playing"] else ft.Icons.PLAY_ARROW
-            _u(play_icon)
+            _u(play_btn)   # обновляем контейнер — надёжнее вложенной иконки
 
         async def _do_toggle():
             try:
@@ -2456,7 +2480,7 @@ class CyberLauncher:
 
         def _set_mute_icon():
             mute_icon.name = ft.Icons.VOLUME_OFF if st["muted"] else ft.Icons.VOLUME_UP
-            _u(mute_icon)
+            _u(mute_btn)
 
         async def _apply_volume(vol: float, from_slider: bool):
             st["vol"] = vol
@@ -2482,14 +2506,24 @@ class CyberLauncher:
         vol_slider.on_change = lambda e: self.page.run_task(
             _apply_volume, float(vol_slider.value or 0), True)
 
-        async def _do_fullscreen():
-            try:
-                pl["v"].fullscreen = True
-                pl["v"].update()
-            except Exception as ex:
-                backend_logger.warning(f"fullscreen failed: {ex}")
+        # «Фуллскрин» = разворот видео на всё окно (in-app), а НЕ нативный
+        # media_kit-фуллскрин: тот рисует отдельной нативной поверхностью, где
+        # наши Flet-контролы и tap-слой не работают. Так контролы и клик
+        # остаются. controls_bar ставится ниже — on_click привяжем после.
+        def _toggle_max(e):
+            st["max"] = not st.get("max", False)
+            if st["max"]:
+                nw, nh = pw - 16, ph - 96
+            else:
+                nw, nh = vw, vh
+            for c in (pl["v"], video_stack, player_box):
+                c.width = nw
+                c.height = nh
+            controls_bar.width = nw
+            fs_icon.name = ft.Icons.FULLSCREEN_EXIT if st["max"] else ft.Icons.FULLSCREEN
+            self._safe_page_update()
 
-        fs_btn.on_click = lambda e: self.page.run_task(_do_fullscreen)
+        fs_btn.on_click = _toggle_max
 
         def _seek_start(e):
             st["dragging"] = True
@@ -2531,6 +2565,10 @@ class CyberLauncher:
                         if st["dur"] > 0:
                             seek.value = min(cur, st["dur"])
                         _u(cur_lbl); _u(seek)
+                        # Пошло воспроизведение → прячем спиннер загрузки
+                        if loading_spinner.visible and (ms > 0 or st["dur"] > 0):
+                            loading_spinner.visible = False
+                            _u(loading_spinner)
                 except Exception:
                     pass
                 await asyncio.sleep(0.25)
@@ -2560,11 +2598,15 @@ class CyberLauncher:
                 backend_logger.info(f"Trailer quality -> {sel}; resource={resource[:90]}")
                 if self._media_overlay is not overlay:
                     return
-                new_player = self._make_video_player(resource, vw, vh)
+                # Сохраняем текущее «макс»-состояние размеров
+                cur_w = pl["v"].width
+                cur_h = pl["v"].height
+                new_player = self._make_video_player(resource, cur_w, cur_h)
                 pl["v"] = new_player
                 video_stack.controls[0] = new_player
                 st["playing"] = True
                 st["dur"] = 0.0
+                loading_spinner.visible = True   # снова показать загрузку
                 _set_play_icon()
                 self._safe_page_update()
             except Exception as ex:

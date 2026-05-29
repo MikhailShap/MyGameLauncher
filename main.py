@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.1"
+APP_VERSION = "1.9.2"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -5374,21 +5374,48 @@ class CyberLauncher:
             return
 
         if res.get("mode") == "steam":
-            # Библиотеку не трогаем — Steam сам удалит, auto-sweep подчистит.
+            # Steam удаляет асинхронно (своё окно + время на удаление файлов).
+            # Не убираем карточку сразу — следим за папкой в фоне: исчезла →
+            # убираем; нажали «Отмена» в Steam → игра остаётся.
             self.page.update()
-            self.show_snackbar("Steam открыл окно удаления игры", bgcolor="#2196F3",
-                               duration=6000)
+            self.show_snackbar("Steam открыл окно удаления. Карточка исчезнет после "
+                               "завершения удаления.", bgcolor="#2196F3", duration=6000)
+            self.page.run_task(self._watch_steam_uninstall, game)
             return
 
         # System: игра удалена с диска и из библиотеки — обновляем UI
-        if game.uid in self._card_cache:
-            del self._card_cache[game.uid]
-        self._all_games_list = [g for g in self._all_games_list if g.uid != game.uid]
-        self._render_visible_cards()
-        self.refresh_collections_sidebar()
+        self._remove_game_card(game.uid)
         where = "в Корзину" if res.get("trash") else "безвозвратно"
         self.show_snackbar(f"🗑 «{res.get('title')}» удалена с компьютера ({where})",
                            bgcolor="#4CAF50")
+
+    def _remove_game_card(self, uid: str):
+        """Убирает карточку игры из сетки + сайдбара (UI уже после удаления)."""
+        if uid in self._card_cache:
+            del self._card_cache[uid]
+        self._all_games_list = [g for g in self._all_games_list if g.uid != uid]
+        self._render_visible_cards()
+        self.refresh_collections_sidebar()
+
+    async def _watch_steam_uninstall(self, game: GameModel):
+        """После steam://uninstall следим за install_path: когда Steam удалит
+        файлы — убираем игру из библиотеки и сетки. Если за отведённое время
+        папка не исчезла (юзер отменил / медленно) — оставляем как есть."""
+        install = game.install_path
+        if not install:
+            return
+        # ~3 минуты: 60 проверок по 3с
+        for _ in range(60):
+            await asyncio.sleep(3)
+            try:
+                if not os.path.exists(install):
+                    await self.game_manager.exclude_game(game.uid)  # удалить запись + save
+                    self._remove_game_card(game.uid)
+                    self.show_snackbar(f"🗑 «{game.title}» удалена через Steam",
+                                       bgcolor="#4CAF50")
+                    return
+            except Exception:
+                pass
 
     def show_manage_collection_games_dialog(self, collection_id: str):
         """Мульти-селект диалог: показать ВСЕ игры с чекбоксами, отмеченные —

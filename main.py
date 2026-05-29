@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.9.1"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -981,6 +981,45 @@ class CyberLauncher:
                 self.page.update()
             except Exception:
                 pass
+
+    def _open_card_modal(self, title_row, body, actions, width: int = 540):
+        """Кастомный модал на overlay (НЕ ft.AlertDialog — он в этой версии
+        Flet ненадёжно закрывается). Тот же паттерн что у wishlist-диалога:
+        backdrop(клик=закрыть) + центрированная карточка. Возвращает close()."""
+        holder = {}
+
+        def close():
+            ov = holder.get("ov")
+            if ov is not None:
+                try:
+                    if ov in self.page.overlay:
+                        self.page.overlay.remove(ov)
+                except Exception:
+                    pass
+                holder["ov"] = None
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+
+        card = ft.Container(
+            width=width, bgcolor="#2A2A2A", border_radius=14, padding=24,
+            on_click=lambda e: None,  # поглощаем клик внутри карточки
+            content=ft.Column(
+                controls=[title_row, ft.Container(height=14), body,
+                          ft.Container(height=18), actions],
+                tight=True, spacing=0,
+            ),
+        )
+        backdrop = ft.Container(expand=True, bgcolor="#CC000000",
+                                on_click=lambda e: close())
+        centered = ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=card)
+        overlay = ft.Container(expand=True,
+                               content=ft.Stack(expand=True, controls=[backdrop, centered]))
+        holder["ov"] = overlay
+        self.page.overlay.append(overlay)
+        self.page.update()
+        return close
 
     def _dismiss_dialog(self, dialog):
         """Закрывает AlertDialog и убирает его из page.overlay.
@@ -5143,11 +5182,15 @@ class CyberLauncher:
                 bgcolor="#4CAF50" if new_val else "#FF9800",
             )
 
+        close_ref = {}
+
         def on_close(e):
-            self._dismiss_dialog(dialog)
+            if close_ref.get("fn"):
+                close_ref["fn"]()
 
         def on_uninstall(e):
-            self._dismiss_dialog(dialog)
+            if close_ref.get("fn"):
+                close_ref["fn"]()
             self._confirm_uninstall_game(game)
 
         admin_switch = ft.Switch(
@@ -5190,65 +5233,61 @@ class CyberLauncher:
         # Усечь длинный заголовок
         short = game.title[:40] + "..." if len(game.title) > 40 else game.title
 
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Row(
-                controls=[
-                    ft.Icon(ft.Icons.SETTINGS, color=ACCENT_BLUE),
-                    ft.Text(f"Свойства: {short}", weight=ft.FontWeight.BOLD),
-                ],
-                spacing=10,
-            ),
-            content=ft.Container(
-                width=520,
-                content=ft.Column(
+        title_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.SETTINGS, color=ACCENT_BLUE),
+                ft.Text(f"Свойства: {short}", weight=ft.FontWeight.BOLD,
+                        size=18, color=TEXT_WHITE),
+            ],
+            spacing=10,
+        )
+        body = ft.Column(
+            controls=[
+                ft.Text("Платформа: " + (game.platform or "—"),
+                        size=12, color=TEXT_GREY),
+                ft.Container(height=12),
+                admin_row,
+                ft.Container(height=16),
+                ft.Divider(height=1, color="#333"),
+                ft.Container(height=12),
+                # ----- Удаление с компьютера -----
+                ft.Row(
                     controls=[
-                        ft.Text("Платформа: " + (game.platform or "—"),
-                                size=12, color=TEXT_GREY),
-                        ft.Container(height=12),
-                        admin_row,
-                        ft.Container(height=16),
-                        ft.Divider(height=1, color="#333"),
-                        ft.Container(height=12),
-                        # ----- Удаление с компьютера -----
-                        ft.Row(
+                        ft.Icon(ft.Icons.DELETE_FOREVER, color="#FF6B6B", size=22),
+                        ft.Column(
                             controls=[
-                                ft.Icon(ft.Icons.DELETE_FOREVER, color="#FF6B6B", size=22),
-                                ft.Column(
-                                    controls=[
-                                        ft.Text("Удалить игру с компьютера",
-                                                size=14, color=TEXT_WHITE,
-                                                weight=ft.FontWeight.W_500),
-                                        ft.Text(
-                                            "Steam откроет окно удаления."
-                                            if is_steam else
-                                            "Папка игры будет перемещена в Корзину.",
-                                            size=11, color=TEXT_GREY, max_lines=2),
-                                    ],
-                                    spacing=2, expand=True,
-                                ),
-                                ft.ElevatedButton(
-                                    "Удалить",
-                                    icon=ft.Icons.DELETE_FOREVER,
-                                    on_click=on_uninstall,
-                                    bgcolor="#B71C1C", color=TEXT_WHITE,
-                                ),
+                                ft.Text("Удалить игру с компьютера",
+                                        size=14, color=TEXT_WHITE,
+                                        weight=ft.FontWeight.W_500),
+                                ft.Text(
+                                    "Steam откроет окно удаления."
+                                    if is_steam else
+                                    "Папка игры будет перемещена в Корзину.",
+                                    size=11, color=TEXT_GREY, max_lines=2),
                             ],
-                            spacing=12,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=2, expand=True,
+                        ),
+                        ft.ElevatedButton(
+                            "Удалить",
+                            icon=ft.Icons.DELETE_FOREVER,
+                            on_click=on_uninstall,
+                            bgcolor="#B71C1C", color=TEXT_WHITE,
                         ),
                     ],
-                    spacing=0,
-                    tight=True,
+                    spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-            ),
-            actions=[
+            ],
+            spacing=0, tight=True,
+        )
+        actions = ft.Row(
+            controls=[
+                ft.Container(expand=True),
                 ft.ElevatedButton("Закрыть", on_click=on_close,
                                   bgcolor=ACCENT_BLUE, color=TEXT_WHITE),
             ],
         )
-
-        self._open_dialog(dialog)
+        close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=560)
 
     def _confirm_uninstall_game(self, game: GameModel):
         """Подтверждение удаления игры с компьютера. Для Steam — поясняем что
@@ -5287,24 +5326,28 @@ class CyberLauncher:
                 spacing=0, tight=True,
             )
 
+        close_ref = {}
+
         def on_confirm(e):
-            self._dismiss_dialog(dialog)
+            if close_ref.get("fn"):
+                close_ref["fn"]()
             self.page.run_task(self._do_uninstall_game, game)
 
         def on_cancel(e):
-            self._dismiss_dialog(dialog)
+            if close_ref.get("fn"):
+                close_ref["fn"]()
 
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Row(
-                controls=[
-                    ft.Icon(ft.Icons.WARNING_AMBER, color="#FF6B6B"),
-                    ft.Text("Удаление игры", weight=ft.FontWeight.BOLD),
-                ],
-                spacing=10,
-            ),
-            content=ft.Container(width=520, content=body),
-            actions=[
+        title_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.WARNING_AMBER, color="#FF6B6B"),
+                ft.Text("Удаление игры", weight=ft.FontWeight.BOLD,
+                        size=18, color=TEXT_WHITE),
+            ],
+            spacing=10,
+        )
+        actions = ft.Row(
+            controls=[
+                ft.Container(expand=True),
                 ft.TextButton("Отмена", on_click=on_cancel),
                 ft.ElevatedButton(
                     "Удалить Steam-игру" if is_steam else "Удалить с диска",
@@ -5313,8 +5356,9 @@ class CyberLauncher:
                     bgcolor="#B71C1C", color=TEXT_WHITE,
                 ),
             ],
+            spacing=8,
         )
-        self._open_dialog(dialog)
+        close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=560)
 
     async def _do_uninstall_game(self, game: GameModel):
         """Выполняет удаление через GameManager.uninstall_game и обновляет UI."""

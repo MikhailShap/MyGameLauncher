@@ -10,7 +10,7 @@
 ; и зарегистрирует деинсталлятор.
 
 #define MyAppName "CyberLauncher"
-#define MyAppVersion "1.9.0"
+#define MyAppVersion "1.9.1"
 #define MyAppPublisher "MikhailShap"
 #define MyAppURL "https://github.com/MikhailShap/MyGameLauncher"
 #define MyAppExeName "CyberLauncher.exe"

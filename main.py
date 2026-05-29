@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.8.2"
+APP_VERSION = "1.9.0"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -5146,6 +5146,10 @@ class CyberLauncher:
         def on_close(e):
             self._dismiss_dialog(dialog)
 
+        def on_uninstall(e):
+            self._dismiss_dialog(dialog)
+            self._confirm_uninstall_game(game)
+
         admin_switch = ft.Switch(
             value=bool(getattr(game, "run_as_admin", False)),
             active_color=ACCENT_PURPLE,
@@ -5203,6 +5207,36 @@ class CyberLauncher:
                                 size=12, color=TEXT_GREY),
                         ft.Container(height=12),
                         admin_row,
+                        ft.Container(height=16),
+                        ft.Divider(height=1, color="#333"),
+                        ft.Container(height=12),
+                        # ----- Удаление с компьютера -----
+                        ft.Row(
+                            controls=[
+                                ft.Icon(ft.Icons.DELETE_FOREVER, color="#FF6B6B", size=22),
+                                ft.Column(
+                                    controls=[
+                                        ft.Text("Удалить игру с компьютера",
+                                                size=14, color=TEXT_WHITE,
+                                                weight=ft.FontWeight.W_500),
+                                        ft.Text(
+                                            "Steam откроет окно удаления."
+                                            if is_steam else
+                                            "Папка игры будет перемещена в Корзину.",
+                                            size=11, color=TEXT_GREY, max_lines=2),
+                                    ],
+                                    spacing=2, expand=True,
+                                ),
+                                ft.ElevatedButton(
+                                    "Удалить",
+                                    icon=ft.Icons.DELETE_FOREVER,
+                                    on_click=on_uninstall,
+                                    bgcolor="#B71C1C", color=TEXT_WHITE,
+                                ),
+                            ],
+                            spacing=12,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                     ],
                     spacing=0,
                     tight=True,
@@ -5215,6 +5249,102 @@ class CyberLauncher:
         )
 
         self._open_dialog(dialog)
+
+    def _confirm_uninstall_game(self, game: GameModel):
+        """Подтверждение удаления игры с компьютера. Для Steam — поясняем что
+        откроется окно Steam; для system — что папка уйдёт в Корзину."""
+        is_steam = (game.exe_path or "").startswith("steam://") or game.platform == Platform.STEAM.value
+
+        if is_steam:
+            body = ft.Column(
+                controls=[
+                    ft.Text(f"Удалить «{game.title}» через Steam?", size=15,
+                            color=TEXT_WHITE, weight=ft.FontWeight.W_500),
+                    ft.Container(height=8),
+                    ft.Text("Откроется окно Steam с подтверждением удаления. "
+                            "После удаления игра пропадёт из лаунчера при "
+                            "следующем обновлении библиотеки.",
+                            size=12, color=TEXT_GREY),
+                ],
+                spacing=0, tight=True,
+            )
+        else:
+            path = game.install_path or "—"
+            body = ft.Column(
+                controls=[
+                    ft.Text(f"Удалить «{game.title}» с компьютера?", size=15,
+                            color=TEXT_WHITE, weight=ft.FontWeight.W_500),
+                    ft.Container(height=8),
+                    ft.Text("Папка игры будет перемещена в Корзину:",
+                            size=12, color=TEXT_GREY),
+                    ft.Container(height=4),
+                    ft.Container(
+                        content=ft.Text(path, size=12, color="#FFB74D",
+                                        selectable=True),
+                        padding=10, border_radius=8, bgcolor="#1E1E1E",
+                    ),
+                ],
+                spacing=0, tight=True,
+            )
+
+        def on_confirm(e):
+            self._dismiss_dialog(dialog)
+            self.page.run_task(self._do_uninstall_game, game)
+
+        def on_cancel(e):
+            self._dismiss_dialog(dialog)
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.WARNING_AMBER, color="#FF6B6B"),
+                    ft.Text("Удаление игры", weight=ft.FontWeight.BOLD),
+                ],
+                spacing=10,
+            ),
+            content=ft.Container(width=520, content=body),
+            actions=[
+                ft.TextButton("Отмена", on_click=on_cancel),
+                ft.ElevatedButton(
+                    "Удалить Steam-игру" if is_steam else "Удалить с диска",
+                    icon=ft.Icons.DELETE_FOREVER,
+                    on_click=on_confirm,
+                    bgcolor="#B71C1C", color=TEXT_WHITE,
+                ),
+            ],
+        )
+        self._open_dialog(dialog)
+
+    async def _do_uninstall_game(self, game: GameModel):
+        """Выполняет удаление через GameManager.uninstall_game и обновляет UI."""
+        self.loading_overlay.show("Удаление игры…")
+        self.page.update()
+        res = await self.game_manager.uninstall_game(game.uid)
+        self.loading_overlay.hide()
+
+        if not res.get("ok"):
+            self.page.update()
+            self.show_snackbar(f"❌ {res.get('error') or 'Не удалось удалить'}",
+                               bgcolor="#F44336")
+            return
+
+        if res.get("mode") == "steam":
+            # Библиотеку не трогаем — Steam сам удалит, auto-sweep подчистит.
+            self.page.update()
+            self.show_snackbar("Steam открыл окно удаления игры", bgcolor="#2196F3",
+                               duration=6000)
+            return
+
+        # System: игра удалена с диска и из библиотеки — обновляем UI
+        if game.uid in self._card_cache:
+            del self._card_cache[game.uid]
+        self._all_games_list = [g for g in self._all_games_list if g.uid != game.uid]
+        self._render_visible_cards()
+        self.refresh_collections_sidebar()
+        where = "в Корзину" if res.get("trash") else "безвозвратно"
+        self.show_snackbar(f"🗑 «{res.get('title')}» удалена с компьютера ({where})",
+                           bgcolor="#4CAF50")
 
     def show_manage_collection_games_dialog(self, collection_id: str):
         """Мульти-селект диалог: показать ВСЕ игры с чекбоксами, отмеченные —

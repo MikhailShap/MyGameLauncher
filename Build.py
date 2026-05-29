@@ -88,6 +88,10 @@ def build():
         "bigpicture_view",
         "wishlist_manager",
         "flet_video",
+        "send2trash",
+        "send2trash.win",
+        "send2trash.win.legacy",
+        "send2trash.util",
     ]
     
     # Формируем команду

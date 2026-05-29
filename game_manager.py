@@ -18,6 +18,7 @@ import logging
 import subprocess
 import urllib.request
 import urllib.parse
+import shutil  # удаление папок игр с диска
 import time  # <--- Добавлено для пауз
 import random # <--- Для случайных пауз
 from pathlib import Path
@@ -1860,6 +1861,132 @@ class GameManager:
             logger.info(f"Excluded game: {game.title} (path: {path})")
             return path
         return None
+
+    def _validate_deletable_dir(self, install_path: Optional[str],
+                                exe_path: Optional[str]) -> Optional[str]:
+        """Проверки безопасности перед удалением папки игры с диска.
+        Возвращает текст ошибки или None если удалять можно."""
+        if not install_path:
+            return "У игры нет пути установки на диске"
+        try:
+            p = Path(install_path).resolve()
+        except Exception:
+            return "Некорректный путь установки"
+        if not p.exists() or not p.is_dir():
+            return "Папка игры не найдена на диске"
+        # Не корень диска (C:\), не системные каталоги
+        if len(p.parts) < 2:
+            return "Отказ: путь указывает на корень диска"
+        low = str(p).lower().rstrip("\\")
+        forbidden = [
+            os.environ.get("SystemRoot", r"C:\Windows"),
+            r"C:\Program Files", r"C:\Program Files (x86)",
+            str(get_app_data_dir()), str(Path.home()),
+        ]
+        for f in forbidden:
+            fl = str(f).lower().rstrip("\\")
+            if low == fl or fl.startswith(low + "\\"):
+                # low == системный путь, ИЛИ low — родитель системного пути
+                return "Отказ: системный каталог (защита от случайного удаления)"
+        # Sanity: exe игры должен лежать ВНУТРИ install_path — иначе install_path
+        # подозрительно широкий, не удаляем.
+        if exe_path and not exe_path.startswith("steam://"):
+            try:
+                Path(exe_path).resolve().relative_to(p)
+            except Exception:
+                return ("Отказ: исполняемый файл игры вне папки установки "
+                        "(защита от неверного удаления)")
+        return None
+
+    def _cleanup_game_cache(self, uid: str, game: 'GameModel') -> None:
+        """Чистим кэш-арт удалённой игры (иконка + hero-файлы)."""
+        try:
+            # hero: <uid>.jpg, <uid>_<ts>.jpg, .miss + legacy uids
+            uids = [uid] + list(getattr(game, "legacy_uids", []) or [])
+            for u in uids:
+                for f in self.cache_heroes.glob(f"{u}*"):
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+            # icon: только если в нашем cache/icons
+            ip = getattr(game, "icon_path", None)
+            if ip:
+                ipath = Path(ip)
+                if ipath.exists() and "icons" in (q.lower() for q in ipath.parts):
+                    try:
+                        ipath.unlink()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"cache cleanup after uninstall failed: {e}")
+
+    async def uninstall_game(self, uid: str) -> Dict[str, Any]:
+        """Удаление игры С КОМПЬЮТЕРА (не просто из библиотеки).
+
+        Steam-игры: запускаем steam://uninstall/<appid> — Steam сам покажет
+          окно удаления и удалит файлы. Библиотеку НЕ трогаем: при следующем
+          сканировании/запуске auto-sweep уберёт игру, когда её папка исчезнет
+          (если юзер подтвердит удаление в Steam). Так не теряем данные если
+          в Steam нажали «Отмена».
+        System-игры: папку install_path → в Корзину (send2trash) либо, если
+          модуль недоступен, безвозвратно (shutil.rmtree). Затем убираем из
+          библиотеки и чистим кэш.
+
+        Возвращает {'ok': bool, 'mode': 'steam'|'system', 'trash': bool,
+                    'error': str|None, 'title': str}.
+        """
+        game = self._games.get(uid)
+        if not game:
+            return {"ok": False, "error": "Игра не найдена", "title": ""}
+        title = game.title
+        is_steam = (game.exe_path or "").startswith("steam://") or game.platform == Platform.STEAM.value
+
+        if is_steam:
+            aid = game.app_id
+            if not aid:
+                return {"ok": False, "mode": "steam", "error": "Нет Steam app_id", "title": title}
+            try:
+                os.startfile(f"steam://uninstall/{aid}")
+                logger.info(f"Steam uninstall triggered: '{title}' (appid={aid})")
+                return {"ok": True, "mode": "steam", "trash": False, "error": None, "title": title}
+            except Exception as e:
+                logger.error(f"Steam uninstall failed for {title}: {e}")
+                return {"ok": False, "mode": "steam", "error": str(e), "title": title}
+
+        # System
+        err = self._validate_deletable_dir(game.install_path, game.exe_path)
+        if err:
+            logger.warning(f"Uninstall refused for '{title}': {err}")
+            return {"ok": False, "mode": "system", "error": err, "title": title}
+
+        path = str(Path(game.install_path).resolve())
+
+        def _delete_dir() -> bool:
+            """True если ушло в Корзину, False если удалено безвозвратно.
+            Берём ИМЕННО legacy-бэкенд send2trash (чистый ctypes
+            SHFileOperationW) — modern тянет pywin32 (win32com.shell), который
+            в нашей сборке не бандлится и упал бы в безвозвратное удаление."""
+            try:
+                from send2trash.win.legacy import send2trash as _s2t
+                _s2t(path)
+                return True
+            except Exception as e:
+                logger.warning(f"send2trash(legacy) unavailable/failed ({e}); permanent delete")
+                shutil.rmtree(path, ignore_errors=False)
+                return False
+
+        try:
+            to_trash = await asyncio.to_thread(_delete_dir)
+            del self._games[uid]
+            await self.save_library()
+            self._cleanup_game_cache(uid, game)
+            logger.info(f"Uninstalled (system) '{title}' from {path} "
+                        f"({'recycle bin' if to_trash else 'permanent'})")
+            return {"ok": True, "mode": "system", "trash": to_trash, "error": None, "title": title}
+        except Exception as e:
+            logger.error(f"Uninstall failed for '{title}' ({path}): {e}")
+            return {"ok": False, "mode": "system", "error": str(e), "title": title}
 
     # ========== Collections Management ==========
 

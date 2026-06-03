@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.3"
+APP_VERSION = "1.9.4"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2487,9 +2487,19 @@ class CyberLauncher:
                           text_align=ft.TextAlign.CENTER)
         seek = ft.Slider(min=0, max=1, value=0, expand=True,
                          active_color=ACCENT_PURPLE, thumb_color=ACCENT_PURPLE)
+        # Заполняем сразу стандартным набором — динамическое обновление
+        # .options в этой Flet не диффится (как и .name у Icon), юзер видел бы
+        # только «Авто». Если у трейлера нет выбранного качества — _apply_quality
+        # откатится на «Авто» (master). Steam-трейлеры почти всегда 1080/720/480/360.
         quality_dd = ft.Dropdown(
             value="auto",
-            options=[ft.dropdown.Option("auto", "Авто")],
+            options=[
+                ft.dropdown.Option("auto", "Авто"),
+                ft.dropdown.Option("1080", "1080p"),
+                ft.dropdown.Option("720", "720p"),
+                ft.dropdown.Option("480", "480p"),
+                ft.dropdown.Option("360", "360p"),
+            ],
             width=120, dense=True, bgcolor="#1E1E1E",
             border_color="#555", color=TEXT_WHITE, text_size=13,
         )
@@ -2503,8 +2513,13 @@ class CyberLauncher:
                 pass
 
         def _set_play_icon():
-            play_icon.name = ft.Icons.PAUSE if st["playing"] else ft.Icons.PLAY_ARROW
-            _u(play_icon); _u(play_btn)
+            # Заменяем CONTENT новой иконкой — смена .name у ft.Icon в этой Flet
+            # не диффится (а .value у Text/Slider — да). Замена объекта content
+            # точно отправляется на рендер.
+            play_btn.content = ft.Icon(
+                ft.Icons.PAUSE if st["playing"] else ft.Icons.PLAY_ARROW,
+                color=TEXT_WHITE, size=24)
+            _u(play_btn)
 
         # ВАЖНО: обработчики назначаем как ПРЯМЫЕ async-функции, а не через
         # lambda: page.run_task(...). Проверено по логам — run_task из обработчика
@@ -2523,7 +2538,9 @@ class CyberLauncher:
         video_tap.on_click = _do_toggle
 
         def _set_mute_icon():
-            mute_icon.name = ft.Icons.VOLUME_OFF if st["muted"] else ft.Icons.VOLUME_UP
+            mute_btn.content = ft.Icon(
+                ft.Icons.VOLUME_OFF if st["muted"] else ft.Icons.VOLUME_UP,
+                color=TEXT_WHITE, size=22)
             _u(mute_btn)
 
         async def _apply_volume(vol: float, from_slider: bool):
@@ -2566,7 +2583,9 @@ class CyberLauncher:
                 c.width = nw
                 c.height = nh
             controls_bar.width = nw
-            fs_icon.name = ft.Icons.FULLSCREEN_EXIT if st["max"] else ft.Icons.FULLSCREEN
+            fs_btn.content = ft.Icon(
+                ft.Icons.FULLSCREEN_EXIT if st["max"] else ft.Icons.FULLSCREEN,
+                color=TEXT_WHITE, size=24)
             self._safe_page_update()
 
         fs_btn.on_click = _toggle_max
@@ -2659,24 +2678,10 @@ class CyberLauncher:
                 backend_logger.warning(f"Quality switch failed: {ex}")
 
         async def _on_quality_change(e=None):
+            backend_logger.info(f"Trailer quality dropdown on_change -> {quality_dd.value}")
             await _apply_quality(quality_dd.value)
 
         quality_dd.on_change = _on_quality_change
-
-        async def _load_variants():
-            info = await asyncio.to_thread(
-                self.game_manager.wishlist.get_trailer_quality_info, url
-            )
-            if self._media_overlay is not overlay:
-                return
-            if not info or not info.get("variants"):
-                return
-            opts = [ft.dropdown.Option("auto", "Авто")]
-            for v in info["variants"]:
-                if v["height"]:
-                    opts.append(ft.dropdown.Option(str(v["height"]), f"{v['height']}p"))
-            quality_dd.options = opts
-            self._safe_page_update()
 
         # ---- сборка панели ----
         controls_bar = ft.Container(
@@ -2735,7 +2740,6 @@ class CyberLauncher:
         self.page.overlay.append(overlay)
         self.page.update()
 
-        self.page.run_task(_load_variants)
         self.page.run_task(_poll_loop)
 
     def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:

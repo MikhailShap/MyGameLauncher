@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.5"
+APP_VERSION = "1.9.6"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2684,6 +2684,31 @@ class CyberLauncher:
         self.page.update()
 
         self.page.run_task(_poll_loop)
+
+        # Диагностика: какие варианты качества предлагает трейлер и какой
+        # максимальный (mpv по умолчанию hls-bitrate=max → играет именно его).
+        async def _log_quality_info():
+            try:
+                info = await asyncio.to_thread(
+                    self.game_manager.wishlist.get_trailer_quality_info, url
+                )
+                if info and info.get("variants"):
+                    vs = ", ".join(
+                        f"{v['height']}p({v['bandwidth'] // 1000}k)"
+                        for v in info["variants"]
+                    )
+                    top = info["variants"][0]["height"]  # отсортировано по убыванию
+                    backend_logger.info(
+                        f"Trailer HLS variants: {vs} | mpv default hls-bitrate=max "
+                        f"=> играет {top}p"
+                    )
+                else:
+                    backend_logger.info("Trailer HLS variants: не распознаны "
+                                        "(не HLS / прямой mp4)")
+            except Exception as e:
+                backend_logger.warning(f"quality info log failed: {e}")
+
+        self.page.run_task(_log_quality_info)
 
     def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:
         """Скроллируемое тело детального экрана из нормализованных Steam-данных

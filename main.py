@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.4"
+APP_VERSION = "1.9.5"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2487,22 +2487,10 @@ class CyberLauncher:
                           text_align=ft.TextAlign.CENTER)
         seek = ft.Slider(min=0, max=1, value=0, expand=True,
                          active_color=ACCENT_PURPLE, thumb_color=ACCENT_PURPLE)
-        # Заполняем сразу стандартным набором — динамическое обновление
-        # .options в этой Flet не диффится (как и .name у Icon), юзер видел бы
-        # только «Авто». Если у трейлера нет выбранного качества — _apply_quality
-        # откатится на «Авто» (master). Steam-трейлеры почти всегда 1080/720/480/360.
-        quality_dd = ft.Dropdown(
-            value="auto",
-            options=[
-                ft.dropdown.Option("auto", "Авто"),
-                ft.dropdown.Option("1080", "1080p"),
-                ft.dropdown.Option("720", "720p"),
-                ft.dropdown.Option("480", "480p"),
-                ft.dropdown.Option("360", "360p"),
-            ],
-            width=120, dense=True, bgcolor="#1E1E1E",
-            border_color="#555", color=TEXT_WHITE, text_size=13,
-        )
+        # Ручной выбор качества убран: Steam-трейлеры — HLS с ОТДЕЛЬНОЙ
+        # аудио-дорожкой, media_kit не парсит синтетический локальный плейлист
+        # ("Failed to recognize file format"). В режиме Авто media_kit и так
+        # играет лучшее доступное качество (ABR по полосе).
 
         def _u(ctrl):
             # Обновляем КОНКРЕТНЫЙ контрол — page.update() не освежает вложенные
@@ -2638,51 +2626,6 @@ class CyberLauncher:
                     pass
                 await asyncio.sleep(0.25)
 
-        # ---- смена качества ----
-        async def _apply_quality(sel: str):
-            backend_logger.info(f"Trailer quality change requested: {sel}")
-            try:
-                resource = url
-                if sel != "auto":
-                    try:
-                        h = int(sel)
-                    except ValueError:
-                        h = None
-                    if h is not None:
-                        info = await asyncio.to_thread(
-                            self.game_manager.wishlist.get_trailer_quality_info, url
-                        )
-                        variant = None
-                        if info:
-                            variant = next((v for v in info["variants"] if v["height"] == h), None)
-                        if variant:
-                            resource = await asyncio.to_thread(
-                                self.game_manager.wishlist.write_quality_playlist,
-                                variant, info["audio_media"],
-                            )
-                backend_logger.info(f"Trailer quality -> {sel}; resource={resource[:90]}")
-                if self._media_overlay is not overlay:
-                    return
-                # Сохраняем текущее «макс»-состояние размеров
-                cur_w = pl["v"].width
-                cur_h = pl["v"].height
-                new_player = self._make_video_player(resource, cur_w, cur_h)
-                pl["v"] = new_player
-                video_stack.controls[0] = new_player
-                st["playing"] = True
-                st["dur"] = 0.0
-                loading_spinner.visible = True   # снова показать загрузку
-                _set_play_icon()
-                self._safe_page_update()
-            except Exception as ex:
-                backend_logger.warning(f"Quality switch failed: {ex}")
-
-        async def _on_quality_change(e=None):
-            backend_logger.info(f"Trailer quality dropdown on_change -> {quality_dd.value}")
-            await _apply_quality(quality_dd.value)
-
-        quality_dd.on_change = _on_quality_change
-
         # ---- сборка панели ----
         controls_bar = ft.Container(
             width=vw,
@@ -2690,7 +2633,7 @@ class CyberLauncher:
             bgcolor="#1A1A1A", border_radius=10,
             content=ft.Row(
                 controls=[play_btn, cur_lbl, seek, dur_lbl,
-                          mute_btn, vol_slider, quality_dd, fs_btn],
+                          mute_btn, vol_slider, fs_btn],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8,
             ),

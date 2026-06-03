@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.2"
+APP_VERSION = "1.9.3"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2504,9 +2504,14 @@ class CyberLauncher:
 
         def _set_play_icon():
             play_icon.name = ft.Icons.PAUSE if st["playing"] else ft.Icons.PLAY_ARROW
-            _u(play_btn)   # обновляем контейнер — надёжнее вложенной иконки
+            _u(play_icon); _u(play_btn)
 
-        async def _do_toggle():
+        # ВАЖНО: обработчики назначаем как ПРЯМЫЕ async-функции, а не через
+        # lambda: page.run_task(...). Проверено по логам — run_task из обработчика
+        # не исполнял корутину (а прямой sync-обработчик fs_btn работал). Flet
+        # 0.80 сам awaitит async on_click/on_change.
+        async def _do_toggle(e=None):
+            backend_logger.info("Trailer: play/pause clicked")
             try:
                 await pl["v"].play_or_pause()
                 st["playing"] = not st["playing"]
@@ -2514,8 +2519,8 @@ class CyberLauncher:
             except Exception as ex:
                 backend_logger.warning(f"toggle play failed: {ex}")
 
-        play_btn.on_click = lambda e: self.page.run_task(_do_toggle)
-        video_tap.on_click = lambda e: self.page.run_task(_do_toggle)
+        play_btn.on_click = _do_toggle
+        video_tap.on_click = _do_toggle
 
         def _set_mute_icon():
             mute_icon.name = ft.Icons.VOLUME_OFF if st["muted"] else ft.Icons.VOLUME_UP
@@ -2534,16 +2539,18 @@ class CyberLauncher:
                 vol_slider.value = vol
                 _u(vol_slider)
 
-        async def _do_mute():
+        async def _do_mute(e=None):
             # Тоггл: если есть звук → в 0, иначе вернуть прошлую громкость
             if st["muted"] or st["vol"] <= 0:
                 await _apply_volume(100.0, from_slider=False)
             else:
                 await _apply_volume(0.0, from_slider=False)
 
-        mute_btn.on_click = lambda e: self.page.run_task(_do_mute)
-        vol_slider.on_change = lambda e: self.page.run_task(
-            _apply_volume, float(vol_slider.value or 0), True)
+        async def _on_vol_change(e=None):
+            await _apply_volume(float(vol_slider.value or 0), from_slider=True)
+
+        mute_btn.on_click = _do_mute
+        vol_slider.on_change = _on_vol_change
 
         # «Фуллскрин» = разворот видео на всё окно (in-app), а НЕ нативный
         # media_kit-фуллскрин: тот рисует отдельной нативной поверхностью, где
@@ -2567,15 +2574,15 @@ class CyberLauncher:
         def _seek_start(e):
             st["dragging"] = True
 
-        async def _do_seek(val):
+        async def _on_seek_end(e=None):
             try:
-                await pl["v"].seek(ft.Duration(seconds=int(val)))
+                await pl["v"].seek(ft.Duration(seconds=int(float(seek.value or 0))))
             except Exception as ex:
                 backend_logger.warning(f"seek failed: {ex}")
             st["dragging"] = False
 
         seek.on_change_start = _seek_start
-        seek.on_change_end = lambda e: self.page.run_task(_do_seek, float(seek.value or 0))
+        seek.on_change_end = _on_seek_end
         # На время перетаскивания обновляем подпись текущего времени
         def _seek_changing(e):
             cur_lbl.value = self._fmt_time(float(seek.value or 0))
@@ -2651,7 +2658,10 @@ class CyberLauncher:
             except Exception as ex:
                 backend_logger.warning(f"Quality switch failed: {ex}")
 
-        quality_dd.on_change = lambda e: self.page.run_task(_apply_quality, quality_dd.value)
+        async def _on_quality_change(e=None):
+            await _apply_quality(quality_dd.value)
+
+        quality_dd.on_change = _on_quality_change
 
         async def _load_variants():
             info = await asyncio.to_thread(

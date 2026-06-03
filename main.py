@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.6"
+APP_VERSION = "1.9.7"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2301,6 +2301,13 @@ class CyberLauncher:
             pass
         self._media_overlay = None
         self._media_close = None
+        # Если плеер был в полноэкранном режиме — вернуть окно из fullscreen.
+        if getattr(self, "_video_fullscreen", False):
+            try:
+                self.page.window.full_screen = False
+            except Exception:
+                pass
+            self._video_fullscreen = False
         self._safe_page_update()
 
     def _show_screenshot_lightbox(self, shots: list, index: int):
@@ -2557,15 +2564,30 @@ class CyberLauncher:
         mute_btn.on_click = _do_mute
         vol_slider.on_change = _on_vol_change
 
-        # «Фуллскрин» = разворот видео на всё окно (in-app), а НЕ нативный
-        # media_kit-фуллскрин: тот рисует отдельной нативной поверхностью, где
-        # наши Flet-контролы и tap-слой не работают. Так контролы и клик
-        # остаются. controls_bar ставится ниже — on_click привяжем после.
+        # Настоящий полноэкранный режим: окно приложения уходит в OS-fullscreen
+        # (без заголовка, на весь монитор), видео ресайзим под размер экрана.
+        # НЕ нативный media_kit-фуллскрин (там наши Flet-контролы не работают) —
+        # окно фуллскрин + наша панель остаются кликабельны.
         def _toggle_max(e):
             st["max"] = not st.get("max", False)
             if st["max"]:
-                nw, nh = pw - 16, ph - 96
+                try:
+                    self.page.window.full_screen = True
+                except Exception:
+                    pass
+                self._video_fullscreen = True
+                try:
+                    sw = ctypes.windll.user32.GetSystemMetrics(0)
+                    sh = ctypes.windll.user32.GetSystemMetrics(1)
+                except Exception:
+                    sw, sh = pw, ph
+                nw, nh = sw, max(240, sh - 80)   # 80px под нашу панель
             else:
+                try:
+                    self.page.window.full_screen = False
+                except Exception:
+                    pass
+                self._video_fullscreen = False
                 nw, nh = vw, vh
             for c in (pl["v"], video_stack, player_box):
                 c.width = nw
@@ -2574,7 +2596,7 @@ class CyberLauncher:
             fs_btn.content = ft.Icon(
                 ft.Icons.FULLSCREEN_EXIT if st["max"] else ft.Icons.FULLSCREEN,
                 color=TEXT_WHITE, size=24)
-            self._safe_page_update()
+            self.page.update()   # полный update — нужно применить смену окна
 
         fs_btn.on_click = _toggle_max
 

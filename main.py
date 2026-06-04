@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.8"
+APP_VERSION = "1.9.9"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2572,9 +2572,13 @@ class CyberLauncher:
         # (без заголовка, на весь монитор), видео ресайзим под размер экрана.
         # НЕ нативный media_kit-фуллскрин (там наши Flet-контролы не работают) —
         # окно фуллскрин + наша панель остаются кликабельны.
-        BAR_H = 74  # панель (~58) + верхний спейсер (10) + запас
+        BAR_H = 74  # панель (~58) + верхний спейсер (10) + запас (логич. px)
 
-        def _toggle_max(e):
+        async def _toggle_max(e=None):
+            # ВАЖНО: размеры берём из page.width/height (ЛОГИЧЕСКИЕ пиксели Flet),
+            # а НЕ GetSystemMetrics (физические) — иначе при DPI≠100% видео
+            # получается больше экрана и панель уезжает за край. После перехода
+            # в fullscreen ждём, пока окно перестроится и page.* обновятся.
             st["max"] = not st.get("max", False)
             cw = layout.get("centered")
             if st["max"]:
@@ -2583,23 +2587,23 @@ class CyberLauncher:
                 except Exception:
                     pass
                 self._video_fullscreen = True
-                try:
-                    sw = ctypes.windll.user32.GetSystemMetrics(0)
-                    sh = ctypes.windll.user32.GetSystemMetrics(1)
-                except Exception:
-                    sw, sh = pw, ph
-                nw, nh = sw, max(240, sh - BAR_H)   # видео на весь экран минус панель
                 if cw is not None:
                     cw.alignment = ft.Alignment(0, -1)   # прижать к верху
+                self.page.update()
+                await asyncio.sleep(0.3)                  # окну нужно развернуться
+                nw = int(self.page.width or pw)
+                nh = max(240, int(self.page.height or ph) - BAR_H)
             else:
                 try:
                     self.page.window.full_screen = False
                 except Exception:
                     pass
                 self._video_fullscreen = False
-                nw, nh = vw, vh
                 if cw is not None:
                     cw.alignment = ft.Alignment(0, 0)    # обратно по центру
+                nw, nh = vw, vh
+                self.page.update()
+                await asyncio.sleep(0.1)
             for c in (pl["v"], video_stack, player_box):
                 c.width = nw
                 c.height = nh
@@ -2607,7 +2611,7 @@ class CyberLauncher:
             fs_btn.content = ft.Icon(
                 ft.Icons.FULLSCREEN_EXIT if st["max"] else ft.Icons.FULLSCREEN,
                 color=TEXT_WHITE, size=24)
-            self.page.update()   # полный update — нужно применить смену окна
+            self.page.update()
 
         fs_btn.on_click = _toggle_max
 

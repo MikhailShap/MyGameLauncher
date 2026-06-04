@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.7"
+APP_VERSION = "1.9.8"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -2395,7 +2395,10 @@ class CyberLauncher:
             fullscreen=fullscreen,
             muted=False,
             width=vw, height=vh,
-            fit="contain",
+            # cover — заполняет область целиком. В оконном режиме область строго
+            # 16:9 (vw×vh), так что подрезки нет; в фуллскрине (область шире 16:9)
+            # видео заполняет край-в-край, чуть подрезая сверху/снизу.
+            fit="cover",
             configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
             on_load=on_load,
             on_exit_fullscreen=on_exit_fullscreen,
@@ -2442,6 +2445,7 @@ class CyberLauncher:
 
         pl = {"v": player}                       # плеер пересоздаётся при смене качества
         st = {"playing": True, "muted": False, "dragging": False, "dur": 0.0, "vol": 100.0}
+        layout = {}                              # ссылки на контейнеры для фуллскрина
 
         # Прозрачный слой клика поверх видео (теперь нативные контролы off —
         # есть шанс что Flet поймает тап). on_click задаётся ниже.
@@ -2568,8 +2572,11 @@ class CyberLauncher:
         # (без заголовка, на весь монитор), видео ресайзим под размер экрана.
         # НЕ нативный media_kit-фуллскрин (там наши Flet-контролы не работают) —
         # окно фуллскрин + наша панель остаются кликабельны.
+        BAR_H = 74  # панель (~58) + верхний спейсер (10) + запас
+
         def _toggle_max(e):
             st["max"] = not st.get("max", False)
+            cw = layout.get("centered")
             if st["max"]:
                 try:
                     self.page.window.full_screen = True
@@ -2581,7 +2588,9 @@ class CyberLauncher:
                     sh = ctypes.windll.user32.GetSystemMetrics(1)
                 except Exception:
                     sw, sh = pw, ph
-                nw, nh = sw, max(240, sh - 80)   # 80px под нашу панель
+                nw, nh = sw, max(240, sh - BAR_H)   # видео на весь экран минус панель
+                if cw is not None:
+                    cw.alignment = ft.Alignment(0, -1)   # прижать к верху
             else:
                 try:
                     self.page.window.full_screen = False
@@ -2589,6 +2598,8 @@ class CyberLauncher:
                     pass
                 self._video_fullscreen = False
                 nw, nh = vw, vh
+                if cw is not None:
+                    cw.alignment = ft.Alignment(0, 0)    # обратно по центру
             for c in (pl["v"], video_stack, player_box):
                 c.width = nw
                 c.height = nh
@@ -2689,12 +2700,18 @@ class CyberLauncher:
             right=72, top=18,
         )
 
+        # Контейнер центрирования — в фуллскрине прижимаем к верху (alignment
+        # меняется в _toggle_max через layout["centered"]), чтобы видео шло
+        # от самого верха экрана, а панель — у нижнего края.
+        centered_wrap = ft.Container(expand=True, alignment=ft.Alignment(0, 0),
+                                     content=center_block)
+        layout["centered"] = centered_wrap
         body = ft.Stack(
             expand=True,
             controls=[
                 ft.Container(expand=True, bgcolor="#F2000000",
                              on_click=lambda e: self._close_media_overlay()),
-                ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=center_block),
+                centered_wrap,
                 open_browser_btn,
                 close_x,
             ],

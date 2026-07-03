@@ -1,3 +1,8 @@
+# Secrets — НЕ коммитить (ключи API). Если уже попали в историю —
+# перевыпустить их (см. BUG_ANALYSIS.md §1.7).
+.env
+.gemini/
+
 # Python
 __pycache__/
 *.py[cod]

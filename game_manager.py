@@ -28,6 +28,7 @@ from enum import Enum
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
+import threading  # общий lock для атомарной записи library.json
 
 # Windows-specific imports
 import winreg
@@ -763,6 +764,12 @@ class CoverValidator:
         if self.cache_dir.exists():
             for cache_file in self.cache_dir.glob('*.jpg'):
                 total += 1
+                # Загруженные пользователем обложки (custom_<hash>_<ts>.jpg)
+                # НЕ удаляем никогда — иначе при временном отвале диска (игра
+                # исчезла из library.json → файл стал "сиротой") пропадёт
+                # ручная обложка. Их восстанавливает merge при возврате игры.
+                if cache_file.name.startswith('custom_'):
+                    continue
                 if cache_file.name not in referenced_files:
                     try:
                         cache_file.unlink()
@@ -773,6 +780,8 @@ class CoverValidator:
 
             for cache_file in self.cache_dir.glob('*.png'):
                 total += 1
+                if cache_file.name.startswith('custom_'):
+                    continue
                 if cache_file.name not in referenced_files:
                     try:
                         cache_file.unlink()
@@ -829,11 +838,40 @@ class CoverAPIManager:
         return False
 
     
+    def cover_cache_path(self, game_title: str, app_id: str = None) -> Path:
+        """Каноническое имя кэш-файла обложки. ЕДИНСТВЕННОЕ место, где оно
+        вычисляется — сканеры и get_cover обязаны использовать эту функцию,
+        иначе проверка кэша промахивается и каскад API дёргается на каждый
+        скан (для system-игр имя раньше считалось двумя разными способами)."""
+        clean_name = self.icon_extractor._clean_name(game_title)
+        key_id = app_id if app_id else hashlib.md5(clean_name.encode()).hexdigest()
+        name = hashlib.md5(str(key_id).lower().encode()).hexdigest()[:12]
+        return self.cache_dir / f"{name}.jpg"
+
+    def find_cached_cover(self, game_title: str, app_id: str = None) -> Optional[Path]:
+        """Существующий кэш-файл обложки: каноничный <name>.jpg ЛИБО его
+        ts-вариант <name>_<ts>.jpg (refresh_cover переименовывает файл, чтобы
+        обойти Flutter ImageCache). None если валидного файла нет. Так сканер
+        не перекачивает обложку, у которой на диске лежит ts-версия."""
+        canon = self.cover_cache_path(game_title, app_id)
+        try:
+            if canon.exists() and canon.stat().st_size > 2048:
+                return canon
+        except OSError:
+            pass
+        # Fallback: ts-варианты (берём самый свежий по имени = по времени)
+        for v in sorted(self.cache_dir.glob(f"{canon.stem}_*.jpg"), reverse=True):
+            try:
+                if v.stat().st_size > 2048:
+                    return v
+            except OSError:
+                continue
+        return None
+
     def get_cover(self, game_title: str, app_id: str = None, exe_path: str = None) -> Tuple[Optional[str], str]:
         """Main cover retrieval with 7-tier fallback. Returns (path, source)"""
         clean_name = self.icon_extractor._clean_name(game_title)
-        key_id = app_id if app_id else hashlib.md5(clean_name.encode()).hexdigest()
-        cache_path = self.cache_dir / f"{hashlib.md5(str(key_id).lower().encode()).hexdigest()[:12]}.jpg"
+        cache_path = self.cover_cache_path(game_title, app_id)
 
         # Tier 1: Cache (already validated by caller, but if we are here, we are fetching new)
 
@@ -922,8 +960,16 @@ class CoverUploader:
                 logger.error(f"Invalid image file: {source_path}")
                 return None
 
-            # Generate cache filename
-            cache_name = hashlib.md5(game_uid.encode()).hexdigest()[:12] + ".jpg"
+            # Имя файла: custom_<hash>_<ts>.jpg
+            #  - смена имени на каждую загрузку обходит Flutter ImageCache
+            #    (движок ключует картинку по ПУТИ — та же грабля, что у hero,
+            #    см. set_custom_hero_art). Без смены имени повторная загрузка
+            #    обложки не отображалась до перезапуска приложения.
+            #  - префикс custom_ защищает файл от cleanup_orphaned_cache, чтобы
+            #    он не пропал при временном отвале диска (игра исчезает из
+            #    library.json → её файл становится "сиротой" и его сносят).
+            base = hashlib.md5(game_uid.encode()).hexdigest()[:12]
+            cache_name = f"custom_{base}_{int(time.time() * 1000)}.jpg"
             cache_path = self.cache_dir / cache_name
 
             # Re-open after verify and convert
@@ -949,6 +995,21 @@ class CoverUploader:
 
             # Save as JPEG
             img.save(cache_path, 'JPEG', quality=90)
+
+            # Убираем прежние версии этой обложки, чтобы не копились:
+            # старые custom_<base>_*.jpg и файл легаси-формата <base>.jpg.
+            for old in self.cache_dir.glob(f"custom_{base}_*.jpg"):
+                if old != cache_path:
+                    try:
+                        old.unlink()
+                    except OSError:
+                        pass
+            legacy = self.cache_dir / f"{base}.jpg"
+            if legacy.exists():
+                try:
+                    legacy.unlink()
+                except OSError:
+                    pass
 
             logger.info(f"Uploaded cover for game {game_uid}: {cache_path}")
             return str(cache_path)
@@ -1052,11 +1113,12 @@ class SteamScanner:
                                     logger.info(f"Skipping excluded Steam game: {n}")
                                     continue
                                 
-                                # OPTIMIZATION: Check cache first before API calls
-                                cache_key = hashlib.md5(aid.lower().encode()).hexdigest()[:12]
-                                cache_path = cover_manager.cache_dir / f"{cache_key}.jpg"
-                                if cache_path.exists() and cache_path.stat().st_size > 2048:
-                                    icon = str(cache_path)
+                                # OPTIMIZATION: Check cache first before API calls.
+                                # find_cached_cover — единый источник имени +
+                                # ловит ts-варианты от refresh_cover.
+                                cached = cover_manager.find_cached_cover(n, app_id=aid)
+                                if cached is not None:
+                                    icon = str(cached)
                                 else:
                                     icon, _ = cover_manager.get_cover(n, app_id=aid) # Unpack tuple
                                 
@@ -1237,15 +1299,16 @@ class DiskScanner:
 
                             name = item.name # Используем имя папки как название игры
                             
-                            # Clean name heuristic
-                            clean_name = cover_manager.icon_extractor._clean_name(name)
-                            
-                            # Cache check
-                            cache_key = hashlib.md5(clean_name.encode()).hexdigest()[:12]
-                            cache_path = cover_manager.cache_dir / f"{cache_key}.jpg"
-                            
-                            if cache_path.exists() and cache_path.stat().st_size > 2048:
-                                icon = str(cache_path)
+                            # Cache check — find_cached_cover (единый источник
+                            # имени, как в get_cover; + ловит ts-варианты).
+                            # Раньше имя тут считалось как md5(clean_name), а
+                            # get_cover писал в md5(md5(clean_name)) → кэш
+                            # system-игр НИКОГДА не находился и каскад API
+                            # гонялся на каждом скане.
+                            cached = cover_manager.find_cached_cover(name)
+
+                            if cached is not None:
+                                icon = str(cached)
                             else:
                                 icon, _ = cover_manager.get_cover(name, exe_path=str(game_exe)) # Unpack tuple
                             
@@ -1309,6 +1372,12 @@ class GameManager:
         # --- Persistence: atomic save + lock + debounce ---
         # Защищает от параллельной записи library.json и от частичной записи при kill
         self._save_lock: Optional[asyncio.Lock] = None  # ленивый, на первом use
+        # Общий thread-lock для САМОЙ записи файла. asyncio.Lock не защищает от
+        # гонки async save_library() (пишет из to_thread) с sync
+        # save_library_sync() (вызывается из чужих потоков) — оба писали в общий
+        # .json.tmp, и os.replace мог опубликовать битый JSON. Этот lock +
+        # уникальное имя tmp закрывают гонку.
+        self._file_write_lock = threading.Lock()
         self._save_dirty: bool = False
         self._pending_save_task: Optional[asyncio.Task] = None
         self._debounce_seconds: float = 1.0
@@ -1324,13 +1393,56 @@ class GameManager:
     def set_progress_callback(self, cb):
         self._on_progress = cb
 
+    @staticmethod
+    def steam_install_present(game) -> bool:
+        """True если Steam-игра ещё установлена.
+
+        Steam при деинсталляции удаляет appmanifest_<appid>.acf, но иногда
+        оставляет огрызок-папку в steamapps/common/<dir> (напр. BF6 — файлы
+        EA AntiCheat *.dll_b/*.exe_b ~63МБ). Поэтому НЕЛЬЗЯ судить только по
+        наличию папки — главный признак установленности это appmanifest.
+        Манифест проверяем лишь при стандартной раскладке (…/steamapps/common/
+        <dir>), иначе fallback на папку — защита от ложного удаления при
+        нестандартном install_path."""
+        install = getattr(game, "install_path", None)
+        if not install:
+            return False
+        try:
+            if not Path(install).exists():
+                return False
+            appid = getattr(game, "app_id", None)
+            steamapps = Path(install).parent.parent  # …/common/<dir> → …/steamapps
+            if appid and steamapps.name.lower() == "steamapps":
+                return (steamapps / f"appmanifest_{appid}.acf").exists()
+            return True  # нестандартная раскладка — судим по наличию папки
+        except Exception:
+            return True  # ошибка проверки — не удаляем (fail-safe)
+
+    @staticmethod
+    def _drive_available(path_str: str) -> bool:
+        """True если корень диска пути доступен. Нужно чтобы отличить
+        'игру удалили' от 'диск отвалился/спит/сменил букву'. Во втором
+        случае exists() тоже вернёт False, и auto-sweep снёс бы игру из
+        library.json, а следом cleanup_orphaned_cache — её обложку с диска
+        (см. баг 'иконки слетели'). Пустой anchor (UNC/относительный) →
+        считаем доступным, чтобы не блокировать легитимную чистку."""
+        try:
+            anchor = Path(path_str).anchor  # 'D:\\' для D:\\Games\\...
+            if not anchor:
+                return True
+            return Path(anchor).exists()
+        except OSError:
+            return False
+
     async def load_library(self):
-        # Подчищаем хвост от прерванной записи
-        tmp_path = self.library_file.with_suffix('.json.tmp')
-        if tmp_path.exists():
+        # Подчищаем хвосты от прерванной записи. Ловим и старое фиксированное
+        # имя, и новые уникальные .json.<pid>.<tid>.tmp.
+        for tmp_path in [self.library_file.with_suffix('.json.tmp'),
+                         *self.data_dir.glob('library.json.*.tmp')]:
             try:
-                tmp_path.unlink()
-                logger.info("Removed stale library.json.tmp")
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                    logger.info(f"Removed stale tmp: {tmp_path.name}")
             except OSError:
                 pass
 
@@ -1412,12 +1524,22 @@ class GameManager:
                     to_remove = []
                     for uid, game in self._games.items():
                         if game.exe_path and game.exe_path.startswith("steam://"):
-                            # Steam — проверяем install_path
-                            if game.install_path and not Path(game.install_path).exists():
+                            # Steam — удалена, если Steam снёс appmanifest (папка
+                            # может остаться огрызком после деинсталляции).
+                            if game.install_path and not self.steam_install_present(game):
+                                # Диск офлайн? Тогда это не удаление — пропускаем.
+                                if not self._drive_available(game.install_path):
+                                    logger.info(f"Sweep skip (drive offline): '{game.title}'")
+                                    continue
                                 to_remove.append((uid, game.title))
                         else:
                             # System — проверяем сам exe
                             if game.exe_path and not Path(game.exe_path).exists():
+                                # Диск офлайн/спит/сменил букву → exists() врёт.
+                                # Не трогаем игру и её обложку.
+                                if not self._drive_available(game.exe_path):
+                                    logger.info(f"Sweep skip (drive offline): '{game.title}'")
+                                    continue
                                 to_remove.append((uid, game.title))
                     return to_remove
 
@@ -1463,15 +1585,19 @@ class GameManager:
             }
 
             def _write_sync():
-                tmp_path = self.library_file.with_suffix('.json.tmp')
-                with open(tmp_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                    f.flush()
-                    try:
-                        os.fsync(f.fileno())
-                    except OSError:
-                        pass
-                os.replace(tmp_path, self.library_file)
+                # Уникальное имя tmp (pid+tid) + общий thread-lock — чтобы
+                # sync-запись из другого потока не перетёрла наш tmp до replace.
+                tmp_path = self.library_file.with_suffix(
+                    f'.json.{os.getpid()}.{threading.get_ident()}.tmp')
+                with self._file_write_lock:
+                    with open(tmp_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                        f.flush()
+                        try:
+                            os.fsync(f.fileno())
+                        except OSError:
+                            pass
+                    os.replace(tmp_path, self.library_file)
 
             await asyncio.to_thread(_write_sync)
             self._save_dirty = False
@@ -1547,15 +1673,19 @@ class GameManager:
                 'games': [g.to_dict() for g in self._games.values()],
                 'collections': self._collections,
             }
-            tmp_path = self.library_file.with_suffix('.json.tmp')
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()
-                try:
-                    os.fsync(f.fileno())
-                except OSError:
-                    pass
-            os.replace(tmp_path, self.library_file)
+            # Уникальное имя tmp + общий thread-lock — не даём async-записи
+            # (save_library → to_thread) и этой sync-записи затереть общий tmp.
+            tmp_path = self.library_file.with_suffix(
+                f'.json.{os.getpid()}.{threading.get_ident()}.tmp')
+            with self._file_write_lock:
+                with open(tmp_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except OSError:
+                        pass
+                os.replace(tmp_path, self.library_file)
             self._save_dirty = False
             logger.info(f"Sync save: {len(self._games)} games, {len(self._collections)} collections")
             return True
@@ -1586,15 +1716,23 @@ class GameManager:
         def _check_removed_games_sync():
             to_remove = []
             for uid, game in self._games.items():
-                # Для Steam игр проверяем install_path (папку установки)
+                # Для Steam игр — признак удаления это отсутствие appmanifest
+                # (Steam может оставить огрызок-папку в common/).
                 if game.exe_path.startswith("steam://"):
-                    # Проверяем существует ли папка установки
-                    if game.install_path and not Path(game.install_path).exists():
+                    if game.install_path and not self.steam_install_present(game):
+                        if not self._drive_available(game.install_path):
+                            logger.info(f"Rescan skip (drive offline): '{game.title}'")
+                            continue
                         to_remove.append(uid)
                         logger.info(f"Steam игра удалена с диска: {game.title} ({game.install_path})")
                 else:
                     # Для системных игр проверяем exe файл
                     if not Path(game.exe_path).exists():
+                        # Диск офлайн → не считаем игру удалённой (иначе
+                        # потеряем метаданные и обложку).
+                        if not self._drive_available(game.exe_path):
+                            logger.info(f"Rescan skip (drive offline): '{game.title}'")
+                            continue
                         to_remove.append(uid)
                         logger.info(f"Игра удалена с диска: {game.title}")
             return to_remove
@@ -1694,6 +1832,18 @@ class GameManager:
                 if old_game.icon_path and self.cover_validator.validate_cache_file(old_game.icon_path):
                     game.icon_path = old_game.icon_path
 
+            # Кастомная обложка переживает sweep/reinstall (файл custom_* не
+            # чистится cleanup'ом). Если у игры нет валидной иконки, но её
+            # ручная обложка лежит на диске (ключ md5(uid)) — цепляем ссылку.
+            # Покрывает случай, когда игру снесло auto-sweep'ом, а потом она
+            # вернулась (old_game было None → блок выше не сработал).
+            if not game.icon_path or not self.cover_validator.validate_cache_file(game.icon_path):
+                base = hashlib.md5(game.uid.encode()).hexdigest()[:12]
+                customs = sorted(self.cover_api_manager.cache_dir.glob(f"custom_{base}_*.jpg"))
+                if customs:
+                    game.icon_path = str(customs[-1])
+                    logger.info(f"Recovered custom cover for '{game.title}': {customs[-1].name}")
+
             new_games_dict[game.uid] = game
 
         # Заменяем библиотеку
@@ -1754,8 +1904,12 @@ class GameManager:
                     return False
                 logger.info(f"Launched '{game.title}' as admin via ShellExecuteW")
             else:
-                # Обычный системный запуск — через subprocess.Popen
-                popen = subprocess.Popen(game.exe_path, cwd=game.install_path, shell=True)
+                # Обычный системный запуск — через subprocess.Popen.
+                # Список аргументов + без shell: CreateProcess сам корректно
+                # квотит путь. С shell=True cmd.exe ломался на путях со спец-
+                # символами (& % и т.п.) — напр. 'D:\\Game Install\\S&BOX\\
+                # sbox.exe': & разрывал команду и игра не запускалась.
+                popen = subprocess.Popen([game.exe_path], cwd=game.install_path)
         except Exception as e:
             logger.error(f"Launch failed for {game.title}: {e}")
             return False
@@ -2138,11 +2292,11 @@ class GameManager:
         # Generate UID
         uid = GameModel.generate_uid(str(path_obj))
         
-        # Try to find icon in cache or extract new
+        # Try to find icon in cache or extract new. Имя файла — через единый
+        # cover_cache_path, чтобы совпадало с тем, что пишет get_cover.
         icon = None
-        cache_key = hashlib.md5(name.encode()).hexdigest()[:12]
-        cache_path = self.cover_api_manager.cache_dir / f"{cache_key}.jpg"
-        
+        cache_path = self.cover_api_manager.cover_cache_path(name)
+
         if cache_path.exists():
              icon = str(cache_path)
         else:

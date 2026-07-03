@@ -25,7 +25,6 @@ import urllib.request
 import re
 import time
 import html as _html
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
@@ -272,9 +271,18 @@ def build_wishlist_item(app_id: str) -> Optional[WishlistItem]:
     if movies:
         chosen = next((m for m in movies if m.get("highlight")), movies[0])
         item.trailer_thumb_url = chosen.get("thumbnail") or ""
-        mp4 = chosen.get("mp4") or {}
-        # max → 480 fallback
-        item.trailer_url = mp4.get("max") or mp4.get("480") or ""
+        mp4 = chosen.get("mp4") if isinstance(chosen.get("mp4"), dict) else {}
+        webm = chosen.get("webm") if isinstance(chosen.get("webm"), dict) else {}
+        # Старая схема: mp4/webm {480,max}. Новая (2024+): только hls/dash-
+        # манифест (строка-URL). Без HLS-fallback у новых игр trailer_url
+        # оставался пустым → кнопки "Трейлер" на карточке не было, хотя
+        # детальный экран (fetch_game_details) трейлер показывал.
+        item.trailer_url = (
+            mp4.get("max") or mp4.get("480")
+            or webm.get("max") or webm.get("480")
+            or chosen.get("hls_h264") or chosen.get("dash_h264")
+            or chosen.get("dash_av1") or ""
+        )
     # Дата релиза
     rd = details.get("release_date") or {}
     item.release_date = rd.get("date") or ""
@@ -416,8 +424,6 @@ class WishlistManager:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.file = self.data_dir / "wishlist.json"
         self._items: Dict[str, WishlistItem] = {}   # app_id → item
-        # Параллельный пул для fetch'а метаданных (несколько add сразу)
-        self._executor = ThreadPoolExecutor(max_workers=3)
         # Кэш детальных данных: память (на сессию) + диск (между запусками).
         # Диск: <app_data>/cache/wishlist_details/<app_id>.json
         self._details_cache_dir = self.data_dir.parent / "cache" / "wishlist_details"
@@ -475,7 +481,15 @@ class WishlistManager:
         if data:
             self._details_mem[app_id] = data
             self._write_details_disk(app_id, data)
-        return data
+            return data
+        # Сеть не дала данных (офлайн/Steam недоступен) — отдаём протухший
+        # диск-кэш, если он есть: показать устаревшие данные лучше, чем экран
+        # "Не удалось загрузить" при полном кэше на диске.
+        stale = self._read_details_disk(app_id, ignore_ttl=True)
+        if stale is not None:
+            logger.info(f"Details: network failed, serving stale cache for {app_id}")
+            self._details_mem[app_id] = stale
+        return stale
 
     def get_details_cached(self, app_id: str) -> Optional[Dict[str, Any]]:
         """Только из памяти/свежего диска, БЕЗ сети. Для мгновенного показа
@@ -489,7 +503,7 @@ class WishlistManager:
             self._details_mem[app_id] = disk
         return disk
 
-    def _read_details_disk(self, app_id: str) -> Optional[Dict[str, Any]]:
+    def _read_details_disk(self, app_id: str, ignore_ttl: bool = False) -> Optional[Dict[str, Any]]:
         f = self._details_cache_dir / f"{app_id}.json"
         if not f.exists():
             return None
@@ -497,7 +511,8 @@ class WishlistManager:
             with open(f, "r", encoding="utf-8") as fp:
                 raw = json.load(fp)
             ts = raw.get("_cached_at", 0)
-            if (time.time() - ts) > self.DETAILS_TTL_SECONDS:
+            # ignore_ttl=True — отдать даже протухший кэш (fallback при офлайне).
+            if not ignore_ttl and (time.time() - ts) > self.DETAILS_TTL_SECONDS:
                 return None  # устарело → перезапросим из сети
             return raw.get("data")
         except Exception:

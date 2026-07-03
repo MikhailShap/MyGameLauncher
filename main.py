@@ -376,7 +376,7 @@ class GameCard(ft.Container):
     _BORDER_NORMAL = ft.Border.all(1, "#333333")
     _BORDER_HOVER = ft.Border.all(2, ACCENT_BLUE)
 
-    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, on_properties=None, show_size=False, enable_animations=False):
+    def __init__(self, game: GameModel, on_click=None, on_favorite=None, on_upload=None, on_exclude=None, on_properties=None, show_size=False, size_text: Optional[str] = None, enable_animations=False):
         super().__init__()
         self.game = game
         self._on_click = on_click
@@ -475,22 +475,25 @@ class GameCard(ft.Container):
             overflow=ft.TextOverflow.ELLIPSIS,
         )
         
-        # Размер игры
+        # Бейдж размера игры — показывается при сортировке по размеру (size_text
+        # приходит готовой строкой из лаунчера). В левом-верхнем углу под бейджем
+        # платформы, чтобы не перекрывать название (снизу) и сердечко (справа).
         size_badge = None
-        if show_size and game.install_path:
-            game_size = self.get_folder_size(game.install_path)
-            if game_size:
-                size_badge = ft.Container(
-                    content=ft.Text(
-                        game_size,
-                        size=10,
-                        color="#FFFFFF",
-                        weight=ft.FontWeight.W_500
-                    ),
-                    bgcolor="#80000000",
-                    padding=ft.Padding(left=8, right=8, top=4, bottom=4),
-                    border_radius=8,
-                )
+        if size_text:
+            size_badge = ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.STORAGE, size=11, color="#D0D0D0"),
+                        ft.Text(size_text, size=10, color="#FFFFFF",
+                                weight=ft.FontWeight.W_600),
+                    ],
+                    spacing=4, tight=True,
+                ),
+                bgcolor="#CC000000",
+                padding=ft.Padding(left=7, right=8, top=3, bottom=3),
+                border_radius=8,
+                left=10, top=40,
+            )
         
         # Собираем Stack - УПРОЩЁННАЯ СТРУКТУРА
         # Кликабельные кнопки используют Container с on_click напрямую
@@ -556,14 +559,8 @@ class GameCard(ft.Container):
         ]
         
         if size_badge:
-            stack_controls.append(
-                ft.Container(
-                    content=size_badge,
-                    left=10,
-                    bottom=40,
-                )
-            )
-        
+            stack_controls.append(size_badge)
+
         self.content = ft.Stack(
             controls=stack_controls,
             expand=True,
@@ -798,6 +795,9 @@ class CyberLauncher:
         # открывается ПОВЕРХ detail. ESC закрывает его первым.
         self._media_overlay: Optional["ft.Control"] = None
         self._media_close = None
+        # Reveal-функция авто-скрытой панели плеера трейлера (страховка с
+        # клавиатуры — на случай если тап/hover над видео не доходят до Flet).
+        self._trailer_reveal = None
 
         # Window focus — нужен чтобы блокировать gamepad-события когда юзер
         # играет в запущенную игру. SDL читает гейпад даже когда окно не в
@@ -817,6 +817,16 @@ class CyberLauncher:
         # process-scan возвращает пусто. В этом случае мы оцениваем
         # play_time по времени между запуском и возвратом фокуса в лаунчер.
         self._pending_play_sessions: dict = {}
+
+        # Кэш размеров игр (uid → байты) для сортировки по размеру. Считается
+        # лениво в фоне при первом выборе сортировки «по размеру», т.к. обход
+        # папок медленный. Чистится при пересканировании библиотеки.
+        self._size_cache: dict = {}
+
+        # Ожидающие Steam-удаления: uid → install_path. После steam://uninstall
+        # следим за папкой; когда Steam её удалит — убираем игру из лаунчера.
+        # Перепроверяется и при возврате фокуса в окно (юзер вернулся из Steam).
+        self._pending_steam_uninstalls: dict = {}
 
         # Screensaver: после N сек бездействия в BigPicture показывает фоны
         # игр поочерёдно. Cross-fade между двумя image-слоями.
@@ -948,13 +958,28 @@ class CyberLauncher:
 
 
     def show_snackbar(self, message: str, bgcolor: str = "#333333", duration: int = 4000):
-        """Helper to show snackbar compatible with Flet 0.80+"""
+        """Helper to show snackbar compatible with Flet 0.80+.
+        Снимает себя с page.overlay после закрытия — иначе каждый вызов
+        (загрузка обложки, приоритет, скан…) навсегда оставлял мёртвый контрол
+        в overlay, дерево пухло и page.update() деградировал по ходу сессии."""
         snackbar = ft.SnackBar(
             content=ft.Text(message),
             bgcolor=bgcolor,
             duration=duration,
         )
-        # Add to overlay if not already there
+
+        def _cleanup(e=None):
+            try:
+                if snackbar in self.page.overlay:
+                    self.page.overlay.remove(snackbar)
+                    self.page.update()
+            except Exception:
+                pass
+
+        snackbar.on_dismiss = _cleanup
+        # Belt-and-suspenders: убираем прежние снекбары (on_dismiss может не
+        # сработать при авто-скрытии по duration) — overlay остаётся ограничен.
+        self.page.overlay[:] = [c for c in self.page.overlay if not isinstance(c, ft.SnackBar)]
         self.page.overlay.append(snackbar)
         snackbar.open = True
         self.page.update()
@@ -1288,6 +1313,8 @@ class CyberLauncher:
             "name_desc": "По названию (Я-А)",
             "date_desc": "По дате (новые)",
             "date_asc": "По дате (старые)",
+            "size_desc": "По размеру (большие)",
+            "size_asc": "По размеру (маленькие)",
         }
         
         self.sort_text = ft.Text(self.sort_labels[self.current_sort], size=12, color=TEXT_WHITE)
@@ -1312,6 +1339,8 @@ class CyberLauncher:
                 ft.PopupMenuItem("По названию (Я-А)", on_click=lambda _: self.set_sort("name_desc")),
                 ft.PopupMenuItem("По дате (новые)", on_click=lambda _: self.set_sort("date_desc")),
                 ft.PopupMenuItem("По дате (старые)", on_click=lambda _: self.set_sort("date_asc")),
+                ft.PopupMenuItem("По размеру (большие)", on_click=lambda _: self.set_sort("size_desc")),
+                ft.PopupMenuItem("По размеру (маленькие)", on_click=lambda _: self.set_sort("size_asc")),
             ],
         )
         
@@ -2015,13 +2044,17 @@ class CyberLauncher:
             color=TEXT_WHITE,
         )
 
-        # Trailer button (если есть)
+        # Trailer button (если есть) — открывает ВСТРОЕННЫЙ плеер (media_kit
+        # играет и mp4, и HLS). _show_trailer_player сам падает в браузер, если
+        # flet_video недоступен. Раньше кнопка звала webbrowser.open(url), что
+        # для HLS-ссылок просто скачивало .m3u8.
         trailer_btn = None
         if item.trailer_url:
             trailer_btn = ft.ElevatedButton(
                 "Трейлер",
                 icon=ft.Icons.PLAY_CIRCLE_OUTLINE,
-                on_click=lambda e, url=item.trailer_url: webbrowser.open(url),
+                on_click=lambda e, url=item.trailer_url, nm=item.title, su=item.store_url: (
+                    self._show_trailer_player(url, nm, su)),
                 bgcolor="#333",
                 color=TEXT_WHITE,
             )
@@ -2301,6 +2334,7 @@ class CyberLauncher:
             pass
         self._media_overlay = None
         self._media_close = None
+        self._trailer_reveal = None
         # Если плеер был в полноэкранном режиме — вернуть окно из fullscreen.
         if getattr(self, "_video_fullscreen", False):
             try:
@@ -2367,391 +2401,145 @@ class CyberLauncher:
         self.page.overlay.append(overlay)
         self.page.update()
 
-    def _make_video_player(self, resource: str, vw: int, vh: int,
-                           show_controls: bool = False, fullscreen: bool = False,
-                           on_load=None, on_exit_fullscreen=None):
-        """Создаёт fv.Video для заданного ресурса (URL master / локальный
-        temp-плейлист конкретного качества).
+    def _open_trailer_in_browser(self, url: str, store_url: str = ""):
+        """Открыть трейлер в браузере. HLS/DASH-манифест браузер НЕ проигрывает,
+        а скачивает .m3u8/.mpd файлом — для таких ссылок открываем страницу
+        игры в Steam (там трейлер точно играет). Прямой mp4 открываем как есть."""
+        if url and any(t in url for t in (".m3u8", ".mpd", "/hls_", "/dash_")):
+            webbrowser.open(store_url or url)
+        elif url:
+            webbrowser.open(url)
+        elif store_url:
+            webbrowser.open(store_url)
 
-        http_headers: akamai (Steam CDN) часто отклоняет дефолтный UA
-        ffmpeg → 'Failed to open'. Браузерный UA + Referer на стор.
-        show_controls: в фуллскрине включаем нативную панель media_kit (наша
-        Flet-панель не ложится поверх нативной fullscreen-поверхности).
-        configuration: HW-ускорение отключаем — частая причина «видео замерло,
-        звук идёт» (рассинхрон/дроп кадров аппаратного декодера) на HLS.
-        """
-        return fv.Video(
-            playlist=[fv.VideoMedia(
-                resource=resource,
-                http_headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                  "Chrome/124.0 Safari/537.36",
-                    "Referer": "https://store.steampowered.com/",
-                },
-            )],
-            autoplay=True,
-            show_controls=show_controls,
-            fullscreen=fullscreen,
-            muted=False,
-            width=vw, height=vh,
-            # cover — заполняет область целиком. В оконном режиме область строго
-            # 16:9 (vw×vh), так что подрезки нет; в фуллскрине (область шире 16:9)
-            # видео заполняет край-в-край, чуть подрезая сверху/снизу.
-            fit="cover",
-            configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
-            on_load=on_load,
-            on_exit_fullscreen=on_exit_fullscreen,
-            on_error=lambda e: backend_logger.warning(f"Trailer playback error: {getattr(e,'data',e)}"),
-        )
-
-    @staticmethod
-    def _fmt_time(seconds: float) -> str:
-        try:
-            s = int(max(0, seconds))
-        except Exception:
-            s = 0
-        return f"{s // 60:d}:{s % 60:02d}"
-
-    def _show_trailer_player(self, url: str, name: str = ""):
-        """КАСТОМНЫЙ видео-плеер трейлера. Видео-поверхность — media_kit
-        (других способов рисовать видео в Flet нет), но нативная панель
-        media_kit отключена (show_controls=False) — она ломала ввод и вёрстку.
-        Вся панель управления — наша, на чистом Flet, ПОД видео:
-        play/pause, перемотка (slider+время), звук, качество.
-        Методы плеера async → зовём через page.run_task."""
+    def _show_trailer_player(self, url: str, name: str = "", store_url: str = ""):
+        """Трейлер в отдельном модале с РОДНОЙ панелью управления media_kit
+        (show_controls=True): перемотка, громкость, скорость, фуллскрин — всё
+        с авто-скрытием, как в обычном плеере. Свою Flet-панель больше не рисуем:
+        нативная полноценная, а Flet-контролы поверх видео-поверхности всё равно
+        не получают ввод. Шапка с ✕ — НАД видео (не поверх), поэтому кликается.
+        Закрытие: ✕ или ESC. Фуллскрин — родной кнопкой плеера."""
         if not url:
             return
         if not HAS_VIDEO or fv is None:
-            webbrowser.open(url)
+            self._open_trailer_in_browser(url, store_url)
             return
 
         pw = self.page.width or 1280
         ph = self.page.height or 800
-        vw = min(int(pw * 0.86), 1100)
-        vh = int(vw * 9 / 16)
-        # Оставляем место под нашу панель (~70px) и крестик сверху
-        max_vh = int(ph * 0.9) - 90
-        if vh > max_vh:
-            vh = max(180, max_vh)
-            vw = int(vh * 16 / 9)
+        card_w = min(int(pw * 0.92), 1400)
+        card_h = min(int(ph * 0.92), 860)
+        vid_w = card_w - 24          # минус padding карточки
+        vid_h = card_h - 72          # минус padding + шапка + спейсер
 
         try:
-            player = self._make_video_player(url, vw, vh)
+            player = fv.Video(
+                width=vid_w, height=vid_h,
+                playlist=[fv.VideoMedia(
+                    resource=url,
+                    http_headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                      "Chrome/124.0 Safari/537.36",
+                        "Referer": "https://store.steampowered.com/",
+                    },
+                )],
+                autoplay=True,
+                show_controls=True,                 # родная панель media_kit
+                muted=False,
+                fit=ft.BoxFit.CONTAIN,              # кадр целиком, без обрезки
+                configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
+                on_error=lambda e: backend_logger.warning(
+                    f"Trailer playback error: {getattr(e, 'data', e)}"),
+            )
         except Exception as ex:
             backend_logger.warning(f"flet_video init failed, fallback to browser: {ex}")
-            webbrowser.open(url)
+            self._open_trailer_in_browser(url, store_url)
             return
 
-        pl = {"v": player}                       # плеер пересоздаётся при смене качества
-        st = {"playing": True, "muted": False, "dragging": False, "dur": 0.0, "vol": 100.0}
-        layout = {}                              # ссылки на контейнеры для фуллскрина
-
-        # Прозрачный слой клика поверх видео (теперь нативные контролы off —
-        # есть шанс что Flet поймает тап). on_click задаётся ниже.
-        video_tap = ft.Container(left=0, top=0, right=0, bottom=0, bgcolor="#01000000")
-        # Спиннер загрузки — поверх чёрного, пока не пошло воспроизведение.
-        loading_spinner = ft.Container(
-            left=0, top=0, right=0, bottom=0,
-            alignment=ft.Alignment(0, 0),
-            content=ft.Column(
-                controls=[
-                    ft.ProgressRing(color=ACCENT_PURPLE),
-                    ft.Container(height=10),
-                    ft.Text("Загрузка трейлера…", size=13, color=TEXT_GREY),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                alignment=ft.MainAxisAlignment.CENTER,
-            ),
-        )
-        video_stack = ft.Stack(width=vw, height=vh, controls=[pl["v"], video_tap, loading_spinner])
-        player_box = ft.Container(
-            width=vw, height=vh, bgcolor="#000000",
-            border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            content=video_stack,
-        )
-
-        # ---- наши контролы ----
-        play_icon = ft.Icon(ft.Icons.PAUSE, color=TEXT_WHITE, size=24)
-        play_btn = ft.Container(
-            content=play_icon, width=42, height=42, border_radius=21,
-            bgcolor="#3A3A3A", alignment=ft.Alignment(0, 0), ink=True,
-            tooltip="Плей / Пауза",
-        )
-        mute_icon = ft.Icon(ft.Icons.VOLUME_UP, color=TEXT_WHITE, size=22)
-        mute_btn = ft.Container(
-            content=mute_icon, width=42, height=42, border_radius=21,
-            bgcolor="#3A3A3A", alignment=ft.Alignment(0, 0), ink=True,
-            tooltip="Звук вкл/выкл",
-        )
-        vol_slider = ft.Slider(min=0, max=100, value=100, width=90,
-                               active_color=TEXT_WHITE, thumb_color=TEXT_WHITE)
-        fs_icon = ft.Icon(ft.Icons.FULLSCREEN, color=TEXT_WHITE, size=24)
-        fs_btn = ft.Container(
-            content=fs_icon, width=42, height=42, border_radius=21,
-            bgcolor="#3A3A3A", alignment=ft.Alignment(0, 0), ink=True,
-            tooltip="Полный экран",
-        )
-        cur_lbl = ft.Text("0:00", size=12, color=TEXT_WHITE, width=44,
-                          text_align=ft.TextAlign.CENTER)
-        dur_lbl = ft.Text("0:00", size=12, color=TEXT_WHITE, width=44,
-                          text_align=ft.TextAlign.CENTER)
-        seek = ft.Slider(min=0, max=1, value=0, expand=True,
-                         active_color=ACCENT_PURPLE, thumb_color=ACCENT_PURPLE)
-        # Ручной выбор качества убран: Steam-трейлеры — HLS с ОТДЕЛЬНОЙ
-        # аудио-дорожкой, media_kit не парсит синтетический локальный плейлист
-        # ("Failed to recognize file format"). В режиме Авто media_kit и так
-        # играет лучшее доступное качество (ABR по полосе).
-
-        def _u(ctrl):
-            # Обновляем КОНКРЕТНЫЙ контрол — page.update() не освежает вложенные
-            # в overlay контролы надёжно.
+        def _close():
+            ov = getattr(self, "_media_overlay", None)
+            if ov is None:
+                return
             try:
-                ctrl.update()
+                if ov in self.page.overlay:
+                    self.page.overlay.remove(ov)
             except Exception:
                 pass
-
-        def _set_play_icon():
-            # Заменяем CONTENT новой иконкой — смена .name у ft.Icon в этой Flet
-            # не диффится (а .value у Text/Slider — да). Замена объекта content
-            # точно отправляется на рендер.
-            play_btn.content = ft.Icon(
-                ft.Icons.PAUSE if st["playing"] else ft.Icons.PLAY_ARROW,
-                color=TEXT_WHITE, size=24)
-            _u(play_btn)
-
-        # ВАЖНО: обработчики назначаем как ПРЯМЫЕ async-функции, а не через
-        # lambda: page.run_task(...). Проверено по логам — run_task из обработчика
-        # не исполнял корутину (а прямой sync-обработчик fs_btn работал). Flet
-        # 0.80 сам awaitит async on_click/on_change.
-        async def _do_toggle(e=None):
-            backend_logger.info("Trailer: play/pause clicked")
-            try:
-                await pl["v"].play_or_pause()
-                st["playing"] = not st["playing"]
-                _set_play_icon()
-            except Exception as ex:
-                backend_logger.warning(f"toggle play failed: {ex}")
-
-        play_btn.on_click = _do_toggle
-        video_tap.on_click = _do_toggle
-
-        def _set_mute_icon():
-            mute_btn.content = ft.Icon(
-                ft.Icons.VOLUME_OFF if st["muted"] else ft.Icons.VOLUME_UP,
-                color=TEXT_WHITE, size=22)
-            _u(mute_btn)
-
-        async def _apply_volume(vol: float, from_slider: bool):
-            st["vol"] = vol
-            st["muted"] = vol <= 0
-            try:
-                pl["v"].volume = vol
-                pl["v"].update()
-            except Exception as ex:
-                backend_logger.warning(f"set volume failed: {ex}")
-            _set_mute_icon()
-            if not from_slider:
-                vol_slider.value = vol
-                _u(vol_slider)
-
-        async def _do_mute(e=None):
-            # Тоггл: если есть звук → в 0, иначе вернуть прошлую громкость
-            if st["muted"] or st["vol"] <= 0:
-                await _apply_volume(100.0, from_slider=False)
-            else:
-                await _apply_volume(0.0, from_slider=False)
-
-        async def _on_vol_change(e=None):
-            await _apply_volume(float(vol_slider.value or 0), from_slider=True)
-
-        mute_btn.on_click = _do_mute
-        vol_slider.on_change = _on_vol_change
-
-        # Настоящий полноэкранный режим: окно приложения уходит в OS-fullscreen
-        # (без заголовка, на весь монитор), видео ресайзим под размер экрана.
-        # НЕ нативный media_kit-фуллскрин (там наши Flet-контролы не работают) —
-        # окно фуллскрин + наша панель остаются кликабельны.
-        BAR_H = 74  # панель (~58) + верхний спейсер (10) + запас (логич. px)
-
-        async def _toggle_max(e=None):
-            # ВАЖНО: размеры берём из page.width/height (ЛОГИЧЕСКИЕ пиксели Flet),
-            # а НЕ GetSystemMetrics (физические) — иначе при DPI≠100% видео
-            # получается больше экрана и панель уезжает за край. После перехода
-            # в fullscreen ждём, пока окно перестроится и page.* обновятся.
-            st["max"] = not st.get("max", False)
-            cw = layout.get("centered")
-            if st["max"]:
-                try:
-                    self.page.window.full_screen = True
-                except Exception:
-                    pass
-                self._video_fullscreen = True
-                if cw is not None:
-                    cw.alignment = ft.Alignment(0, -1)   # прижать к верху
-                self.page.update()
-                await asyncio.sleep(0.3)                  # окну нужно развернуться
-                nw = int(self.page.width or pw)
-                nh = max(240, int(self.page.height or ph) - BAR_H)
-            else:
+            self._media_overlay = None
+            self._media_close = None
+            self._trailer_reveal = None
+            if getattr(self, "_video_fullscreen", False):
                 try:
                     self.page.window.full_screen = False
                 except Exception:
                     pass
                 self._video_fullscreen = False
-                if cw is not None:
-                    cw.alignment = ft.Alignment(0, 0)    # обратно по центру
-                nw, nh = vw, vh
-                self.page.update()
-                await asyncio.sleep(0.1)
-            for c in (pl["v"], video_stack, player_box):
-                c.width = nw
-                c.height = nh
-            controls_bar.width = nw
-            fs_btn.content = ft.Icon(
-                ft.Icons.FULLSCREEN_EXIT if st["max"] else ft.Icons.FULLSCREEN,
-                color=TEXT_WHITE, size=24)
-            self.page.update()
+            self._safe_page_update()
 
-        fs_btn.on_click = _toggle_max
-
-        def _seek_start(e):
-            st["dragging"] = True
-
-        async def _on_seek_end(e=None):
-            try:
-                await pl["v"].seek(ft.Duration(seconds=int(float(seek.value or 0))))
-            except Exception as ex:
-                backend_logger.warning(f"seek failed: {ex}")
-            st["dragging"] = False
-
-        seek.on_change_start = _seek_start
-        seek.on_change_end = _on_seek_end
-        # На время перетаскивания обновляем подпись текущего времени
-        def _seek_changing(e):
-            cur_lbl.value = self._fmt_time(float(seek.value or 0))
-            _u(cur_lbl)
-        seek.on_change = _seek_changing
-
-        # Опрос позиции/длительности (нативных событий позиции нет).
-        # Используем миллисекунды и шаг 0.25с — ползунок идёт плавнее.
-        async def _poll_loop():
-            while self._media_overlay is overlay:
-                try:
-                    v = pl["v"]
-                    if st["dur"] <= 0:
-                        d = await v.get_duration()
-                        ms = (d.in_milliseconds if d else 0) or 0
-                        if ms > 0:
-                            st["dur"] = ms / 1000.0
-                            seek.max = st["dur"]
-                            dur_lbl.value = self._fmt_time(st["dur"])
-                            _u(dur_lbl); _u(seek)
-                    if not st["dragging"]:
-                        p = await v.get_current_position()
-                        ms = (p.in_milliseconds if p else 0) or 0
-                        cur = ms / 1000.0
-                        cur_lbl.value = self._fmt_time(cur)
-                        if st["dur"] > 0:
-                            seek.value = min(cur, st["dur"])
-                        _u(cur_lbl); _u(seek)
-                        # Пошло воспроизведение → прячем спиннер загрузки
-                        if loading_spinner.visible and (ms > 0 or st["dur"] > 0):
-                            loading_spinner.visible = False
-                            _u(loading_spinner)
-                except Exception:
-                    pass
-                await asyncio.sleep(0.25)
-
-        # ---- сборка панели ----
-        controls_bar = ft.Container(
-            width=vw,
-            padding=ft.Padding(left=12, right=12, top=8, bottom=8),
-            bgcolor="#1A1A1A", border_radius=10,
-            content=ft.Row(
-                controls=[play_btn, cur_lbl, seek, dur_lbl,
-                          mute_btn, vol_slider, fs_btn],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=8,
-            ),
-        )
-        center_block = ft.Column(
-            controls=[player_box, ft.Container(height=10), controls_bar],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            alignment=ft.MainAxisAlignment.CENTER,
-            tight=True,
-        )
-
-        close_x = ft.Container(
-            content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=24),
-            width=44, height=44, border_radius=22, bgcolor="#3A3A3A",
-            alignment=ft.Alignment(0, 0), ink=True, tooltip="Закрыть (ESC)",
-            on_click=lambda e: self._close_media_overlay(),
-            right=16, top=16,
-        )
-        open_browser_btn = ft.Container(
+        browser_btn = ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.OPEN_IN_NEW, color=TEXT_WHITE, size=18),
+                    ft.Icon(ft.Icons.OPEN_IN_NEW, color=TEXT_WHITE, size=16),
                     ft.Text("В браузере", size=13, color=TEXT_WHITE),
                 ],
                 spacing=6, tight=True,
             ),
-            padding=ft.Padding(left=12, right=12, top=8, bottom=8),
+            padding=ft.Padding(left=12, right=12, top=7, bottom=7),
             border_radius=8, bgcolor="#3A3A3A", ink=True,
             tooltip="Открыть трейлер в браузере",
-            on_click=lambda e, u=url: webbrowser.open(u),
-            right=72, top=18,
+            on_click=lambda e, u=url, su=store_url: self._open_trailer_in_browser(u, su),
+        )
+        close_btn = ft.Container(
+            content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=22),
+            width=40, height=40, border_radius=20, bgcolor="#3A3A3A",
+            alignment=ft.Alignment(0, 0), ink=True, tooltip="Закрыть (ESC)",
+            on_click=lambda e: _close(),
+        )
+        header = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.PLAY_CIRCLE_FILL, color="#FF6B35", size=22),
+                ft.Text(name or "Трейлер", size=16, weight=ft.FontWeight.BOLD,
+                        color=TEXT_WHITE, max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                browser_btn,
+                close_btn,
+            ],
+            spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        # Контейнер центрирования — в фуллскрине прижимаем к верху (alignment
-        # меняется в _toggle_max через layout["centered"]), чтобы видео шло
-        # от самого верха экрана, а панель — у нижнего края.
-        centered_wrap = ft.Container(expand=True, alignment=ft.Alignment(0, 0),
-                                     content=center_block)
-        layout["centered"] = centered_wrap
-        body = ft.Stack(
-            expand=True,
-            controls=[
-                ft.Container(expand=True, bgcolor="#F2000000",
-                             on_click=lambda e: self._close_media_overlay()),
-                centered_wrap,
-                open_browser_btn,
-                close_x,
-            ],
+        # Видео в чёрной рамке под шапкой. Родные контролы media_kit рисуются
+        # нативной поверхностью ПОВЕРХ видео (в той же области) — поэтому ввод
+        # до них доходит, в отличие от Flet-контролов над видео.
+        video_box = ft.Container(
+            expand=True, bgcolor="#000000",
+            alignment=ft.Alignment(0, 0),
+            border_radius=8, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            content=player,
         )
-        overlay = ft.Container(expand=True, content=body)
+        card = ft.Container(
+            width=card_w, height=card_h, bgcolor="#141414",
+            border_radius=12, padding=12,
+            on_click=lambda e: None,          # поглощаем клик внутри карточки
+            content=ft.Column(
+                controls=[header, ft.Container(height=8), video_box],
+                spacing=0, expand=True,
+            ),
+        )
+        backdrop = ft.Container(expand=True, bgcolor="#E6000000",
+                                on_click=lambda e: _close())
+        centered = ft.Container(expand=True, alignment=ft.Alignment(0, 0),
+                                content=card)
+        overlay = ft.Container(
+            expand=True,
+            content=ft.Stack(expand=True, controls=[backdrop, centered]),
+        )
         self._media_overlay = overlay
-        self._media_close = self._close_media_overlay
+        self._media_close = _close
+        self._trailer_reveal = None
         self.page.overlay.append(overlay)
         self.page.update()
-
-        self.page.run_task(_poll_loop)
-
-        # Диагностика: какие варианты качества предлагает трейлер и какой
-        # максимальный (mpv по умолчанию hls-bitrate=max → играет именно его).
-        async def _log_quality_info():
-            try:
-                info = await asyncio.to_thread(
-                    self.game_manager.wishlist.get_trailer_quality_info, url
-                )
-                if info and info.get("variants"):
-                    vs = ", ".join(
-                        f"{v['height']}p({v['bandwidth'] // 1000}k)"
-                        for v in info["variants"]
-                    )
-                    top = info["variants"][0]["height"]  # отсортировано по убыванию
-                    backend_logger.info(
-                        f"Trailer HLS variants: {vs} | mpv default hls-bitrate=max "
-                        f"=> играет {top}p"
-                    )
-                else:
-                    backend_logger.info("Trailer HLS variants: не распознаны "
-                                        "(не HLS / прямой mp4)")
-            except Exception as e:
-                backend_logger.warning(f"quality info log failed: {e}")
-
-        self.page.run_task(_log_quality_info)
+        backend_logger.info(f"Trailer player opened (native controls): '{name}'")
 
     def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:
         """Скроллируемое тело детального экрана из нормализованных Steam-данных
@@ -2817,10 +2605,12 @@ class CyberLauncher:
                 thumb = t.get("thumb") or ""
                 url = t.get("url") or ""
                 # Клик → встроенный плеер (если flet_video есть), иначе браузер.
+                # store_url прокидываем для корректного fallback'а на HLS.
+                su = d.get("store_url", "")
                 if HAS_VIDEO:
-                    click = (lambda e, u=url, nm=t.get("name", ""): self._show_trailer_player(u, nm)) if url else None
+                    click = (lambda e, u=url, nm=t.get("name", ""), s=su: self._show_trailer_player(u, nm, s)) if url else None
                 else:
-                    click = (lambda e, u=url: webbrowser.open(u)) if url else None
+                    click = (lambda e, u=url, s=su: self._open_trailer_in_browser(u, s)) if url else None
                 trow.controls.append(
                     ft.Container(
                         width=320, height=180,
@@ -3602,6 +3392,13 @@ class CyberLauncher:
                     self._finalize_pending_play_session(pending_uid)
             except Exception:
                 pass
+        # Вернулись в лаунчер (часто — из Steam после подтверждения удаления):
+        # перепроверяем ожидающие Steam-удаления, чтобы карточка пропала сразу.
+        if data in ("restore", "unminimize", "focus"):
+            try:
+                self._recheck_steam_uninstalls()
+            except Exception:
+                pass
         # При возврате окна (alt-tab из игры) и активном BP — снова в fullscreen.
         # NB: gamepad-гейтинг идёт через _is_launcher_foreground() (WinAPI),
         # не через этот обработчик — Flet ненадёжно фаерит focus/blur при
@@ -3795,10 +3592,22 @@ class CyberLauncher:
             key = getattr(e, "key", None)
             if key is None:
                 return
-            # F11 — toggle BigPicture
+            # F11 — toggle BigPicture. НЕ срабатывает при открытом плеере
+            # трейлера / лайтбоксе — иначе BigPicture поднялся бы ПОД оверлеем.
             if key == "F11":
+                if getattr(self, "_media_overlay", None) is not None:
+                    return
                 self.toggle_bigpicture()
                 return
+            # Плеер трейлера открыт: любая клавиша (кроме ESC/F11) показывает
+            # авто-скрытую панель — страховка на случай, если тап/hover над
+            # видео не доходят до Flet (media_kit перехватывает ввод нативной
+            # поверхностью). ESC ниже закрывает плеер.
+            if self._trailer_reveal is not None and key not in ("Escape", "F11"):
+                try:
+                    self._trailer_reveal()
+                except Exception:
+                    pass
             # ESC — приоритет: закрыть открытый wishlist-overlay, потом
             # выйти из BigPicture. В обычном режиме без open dialog — игнор.
             if key == "Escape":
@@ -4254,6 +4063,8 @@ class CyberLauncher:
 
     async def refresh_library(self):
         backend_logger.info("UI: refresh_library async task started")
+        # Размеры могли измениться (обновления/новые игры) — сбрасываем кэш.
+        self._size_cache.clear()
         self.loading_overlay.show("Сканирование игр...")
         self.page.update()  # ВАЖНО: показать оверлей СРАЗУ
         await asyncio.sleep(0.1) # Give UI time to render
@@ -4267,6 +4078,11 @@ class CyberLauncher:
         await process() # Call the async process function
         self.loading_overlay.hide()
         self.page.update()  # Скрыть оверлей
+        # Рескан пересоздал объекты GameModel и мог изменить файлы обложек по
+        # тем же путям — старые карточки и exists-кэш больше не валидны. Без
+        # сброса карточки показывают устаревшие icon_path/заглушки до перезапуска.
+        self._card_cache.clear()
+        GameCard._icon_exists_cache.clear()
         # Сайдбар с коллекциями нужно освежить — после rescan-а
         # счётчики игр в коллекциях могут измениться
         self.refresh_collections_sidebar()
@@ -4318,13 +4134,26 @@ class CyberLauncher:
                 self._all_games_list.sort(key=lambda g: g.added_date or "", reverse=True)
             elif self.current_sort == "date_asc":
                 self._all_games_list.sort(key=lambda g: g.added_date or "")
-        
+            elif self.current_sort == "size_desc":
+                # Размеры берём из кэша (заполняется в _sort_by_size_async).
+                self._all_games_list.sort(key=lambda g: self._size_cache.get(g.uid, 0), reverse=True)
+            elif self.current_sort == "size_asc":
+                self._all_games_list.sort(key=lambda g: self._size_cache.get(g.uid, 0))
+
         self._render_visible_cards()
     
     def _render_visible_cards(self):
         """Рендерит только видимые карточки с пагинацией - ОПТИМИЗИРОВАНО"""
         show_size = self.settings.get("show_game_size", False)
         enable_animations = self.settings.get("enable_animations", False)  # Default OFF for speed
+
+        # Размер показываем на карточке при сортировке по размеру. Когда режим
+        # переключается — сбрасываем кэш карточек, чтобы бейдж размера появился/
+        # исчез (карточки кэшируются по uid и не пересоздаются сами).
+        sort_by_size = self.current_sort in ("size_desc", "size_asc")
+        if getattr(self, "_cards_show_size", None) != sort_by_size:
+            self._card_cache.clear()
+            self._cards_show_size = sort_by_size
 
         # Количество карточек для отображения
         cards_to_show = (self._current_page + 1) * self._page_size
@@ -4337,6 +4166,11 @@ class CyberLauncher:
             if game.uid in self._card_cache:
                 card = self._card_cache[game.uid]
             else:
+                size_text = None
+                if sort_by_size:
+                    b = self._size_cache.get(game.uid)
+                    if b:
+                        size_text = self._fmt_size(b)
                 card = GameCard(
                     game=game,
                     on_click=self.on_game_click,
@@ -4345,6 +4179,7 @@ class CyberLauncher:
                     on_exclude=self.exclude_game,
                     on_properties=self.show_game_properties_dialog,
                     show_size=show_size,
+                    size_text=size_text,
                     enable_animations=enable_animations
                 )
                 self._card_cache[game.uid] = card
@@ -4493,6 +4328,71 @@ class CyberLauncher:
         self.current_sort = sort_key
         self.sort_text.value = self.sort_labels.get(sort_key, "Стандартная")
         self.sort_text.update()
+        # Сортировка по размеру требует обхода папок (медленно) — считаем в фоне
+        # с индикатором, затем рендерим. Остальные сортировки мгновенные.
+        if sort_key in ("size_desc", "size_asc"):
+            self.page.run_task(self._sort_by_size_async)
+        else:
+            self.update_game_grid()
+
+    @staticmethod
+    def _fmt_size(num_bytes: int) -> str:
+        """Байты → человекочитаемая строка: '12.4 ГБ', '850 МБ'."""
+        if not num_bytes or num_bytes <= 0:
+            return ""
+        units = ["Б", "КБ", "МБ", "ГБ", "ТБ"]
+        size = float(num_bytes)
+        i = 0
+        while size >= 1024 and i < len(units) - 1:
+            size /= 1024.0
+            i += 1
+        # ГБ/ТБ — с десятым знаком, мельче — целое
+        return f"{size:.1f} {units[i]}" if i >= 3 else f"{size:.0f} {units[i]}"
+
+    @staticmethod
+    def _folder_size_bytes(path: str) -> int:
+        """Суммарный размер файлов в папке (рекурсивно, через scandir).
+        Симлинки не разворачиваем — защита от циклов и двойного счёта."""
+        total = 0
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                        elif entry.is_dir(follow_symlinks=False):
+                            total += CyberLauncher._folder_size_bytes(entry.path)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return total
+
+    def _compute_sizes(self, games: list) -> dict:
+        """Считает размеры install_path для списка игр (для thread-пула)."""
+        result = {}
+        for g in games:
+            try:
+                p = g.install_path
+                result[g.uid] = self._folder_size_bytes(p) if (p and os.path.isdir(p)) else 0
+            except Exception:
+                result[g.uid] = 0
+        return result
+
+    async def _sort_by_size_async(self):
+        """Лениво считает размеры игр (что ещё не в кэше) в фоне, затем
+        пересортировывает сетку. Считаем по всей библиотеке один раз — кэш
+        переживает переключение фильтров."""
+        all_games = self.game_manager.get_all_games()
+        todo = [g for g in all_games if g.install_path and g.uid not in self._size_cache]
+        if todo:
+            self.loading_overlay.show(f"Подсчёт размеров игр… ({len(todo)})")
+            self.page.update()
+            sizes = await asyncio.to_thread(self._compute_sizes, todo)
+            self._size_cache.update(sizes)
+            self.loading_overlay.hide()
         self.update_game_grid()
     
     def on_game_click(self, game: GameModel):
@@ -4777,7 +4677,14 @@ class CyberLauncher:
             shape=ft.RoundedRectangleBorder(radius=15),
         )
 
-        # ИСПРАВЛЕНИЕ: В новых версиях Flet диалоги добавляются через overlay
+        # ИСПРАВЛЕНИЕ: В новых версиях Flet диалоги добавляются через overlay.
+        # Сначала убираем ЗАКРЫТЫЕ диалоги из прошлых открытий — иначе (объект
+        # каждый раз новый) в overlay копятся мёртвые AlertDialog'и. Открытые
+        # (.open=True) не трогаем — модальность и так не даст открыть два сразу.
+        self.page.overlay[:] = [
+            c for c in self.page.overlay
+            if not (isinstance(c, ft.AlertDialog) and not getattr(c, "open", False))
+        ]
         if self.upload_dialog not in self.page.overlay:
             self.page.overlay.append(self.upload_dialog)
         self.upload_dialog.open = True
@@ -4876,19 +4783,19 @@ class CyberLauncher:
         self.page.update()
 
     async def refresh_cover(self, game: GameModel):
-        """Force re-download cover from APIs"""
+        """Force re-download cover from APIs. Старый файл удаляем ТОЛЬКО после
+        успешного скачивания нового — иначе при неудаче каскада (в логах бывает
+        'All tiers failed') игра осталась бы вообще без обложки, а кастомная
+        была бы потеряна безвозвратно."""
         self.loading_overlay.show("Поиск обложки...")
         self.page.update()
         await asyncio.sleep(0.05)  # Give UI time to render
 
-        # Delete existing cache
-        if game.icon_path:
-            try:
-                Path(game.icon_path).unlink()
-            except:
-                pass
+        old_path = game.icon_path
 
-        # Re-fetch using CoverAPIManager in background thread (non-blocking)
+        # Re-fetch using CoverAPIManager in background thread (non-blocking).
+        # get_cover пишет в фиксированное имя (cover_cache_path), текущий файл
+        # заранее НЕ трогаем.
         new_path, source = await asyncio.to_thread(
             self.game_manager.cover_api_manager.get_cover,
             game.title,
@@ -4899,6 +4806,32 @@ class CyberLauncher:
         self.loading_overlay.hide()
 
         if new_path:
+            # Cache-bust: переименовываем в <name>_<ts>.jpg. Иначе Flutter
+            # ImageCache (ключует по пути) покажет старую картинку — get_cover
+            # перезаписал тот же путь. Тот же приём, что у hero/custom-обложки.
+            try:
+                p = Path(new_path)
+                busted = p.with_name(f"{p.stem}_{int(time.time() * 1000)}{p.suffix}")
+                os.replace(str(p), str(busted))
+                new_path = str(busted)
+                # не копим прошлые ts-версии этой же обложки
+                for old in p.parent.glob(f"{p.stem}_*{p.suffix}"):
+                    if str(old) != new_path:
+                        try:
+                            old.unlink()
+                        except OSError:
+                            pass
+            except OSError:
+                pass  # не смогли переименовать — используем как есть
+
+            # Старый файл сносим ТОЛЬКО теперь и только если это не он же
+            if old_path and old_path != new_path:
+                try:
+                    Path(old_path).unlink()
+                except OSError:
+                    pass
+                GameCard._icon_exists_cache.pop(old_path, None)
+
             game.icon_path = new_path
             self.game_manager._games[game.uid] = game
             await self.game_manager.save_library()
@@ -4907,8 +4840,6 @@ class CyberLauncher:
             if game.uid in self._card_cache:
                 del self._card_cache[game.uid]
             # Инвалидируем кеш существования иконки
-            if new_path in GameCard._icon_exists_cache:
-                del GameCard._icon_exists_cache[new_path]
             GameCard._icon_exists_cache[new_path] = True
             self.update_game_grid(reset_page=False)
 
@@ -5422,23 +5353,68 @@ class CyberLauncher:
         self._render_visible_cards()
         self.refresh_collections_sidebar()
 
+    def _is_steam_game_gone(self, uid: str, install: str) -> bool:
+        """True если Steam-игра деинсталлирована. Делегирует в канонический
+        GameManager.steam_install_present (сигнал удаления — отсутствие
+        appmanifest_<appid>.acf, т.к. Steam оставляет огрызок-папку). Если игры
+        уже нет в библиотеке — fallback на существование папки."""
+        game = self.game_manager._games.get(uid)
+        if game is None:
+            return bool(install) and not os.path.exists(install)
+        return not self.game_manager.steam_install_present(game)
+
     async def _watch_steam_uninstall(self, game: GameModel):
-        """После steam://uninstall следим за install_path: когда Steam удалит
-        файлы — убираем игру из библиотеки и сетки. Если за отведённое время
-        папка не исчезла (юзер отменил / медленно) — оставляем как есть."""
+        """После steam://uninstall следим: когда Steam удалит игру — убираем её
+        из лаунчера. Сигнал удаления — отсутствие appmanifest_<appid>.acf (см.
+        _is_steam_game_gone), а НЕ исчезновение папки (Steam оставляет огрызки).
+        Окно слежения длинное (~30 мин) + перепроверка при возврате фокуса."""
         install = game.install_path
         if not install:
             return
-        # ~3 минуты: 60 проверок по 3с
-        for _ in range(60):
+        self._pending_steam_uninstalls[game.uid] = install
+        # ~30 минут: 600 проверок по 3с. Раньше было 3 мин — юзер не успевал
+        # подтвердить удаление в Steam, окно истекало, карточка оставалась.
+        for _ in range(600):
             await asyncio.sleep(3)
+            if game.uid not in self._pending_steam_uninstalls:
+                return  # уже финализировано (через перепроверку по фокусу)
             try:
-                if not os.path.exists(install):
-                    await self.game_manager.exclude_game(game.uid)  # удалить запись + save
-                    self._remove_game_card(game.uid)
-                    self.show_snackbar(f"🗑 «{game.title}» удалена через Steam",
-                                       bgcolor="#4CAF50")
+                if self._is_steam_game_gone(game.uid, install):
+                    await self._finalize_steam_uninstall(game.uid)
                     return
+            except Exception:
+                pass
+
+    async def _finalize_steam_uninstall(self, uid: str):
+        """Убирает игру из библиотеки и сетки, когда её папка действительно
+        исчезла после Steam-удаления. Идемпотентно (пер-uid через pending-dict)."""
+        install = self._pending_steam_uninstalls.get(uid)
+        if install is None:
+            return
+        if not self._is_steam_game_gone(uid, install):
+            return  # ещё не удалена (Steam не закончил / нажали «Отмена»)
+        # Снимаем из pending ДО await — защита от двойного срабатывания
+        # (watch-loop + focus-recheck могут сойтись).
+        self._pending_steam_uninstalls.pop(uid, None)
+        game = self.game_manager._games.get(uid)
+        title = game.title if game else "Игра"
+        try:
+            await self.game_manager.exclude_game(uid)  # удалить запись + save
+        except Exception as ex:
+            backend_logger.warning(f"Steam uninstall finalize failed for {uid}: {ex}")
+        self._remove_game_card(uid)
+        self.show_snackbar(f"🗑 «{title}» удалена через Steam", bgcolor="#4CAF50")
+
+    def _recheck_steam_uninstalls(self):
+        """Быстрая перепроверка ожидающих Steam-удалений (вызывается при возврате
+        фокуса в окно). Если папка игры исчезла — финализируем удаление сразу,
+        не дожидаясь следующего тика watch-loop."""
+        if not self._pending_steam_uninstalls:
+            return
+        for uid, install in list(self._pending_steam_uninstalls.items()):
+            try:
+                if self._is_steam_game_gone(uid, install):
+                    self.page.run_task(self._finalize_steam_uninstall, uid)
             except Exception:
                 pass
 

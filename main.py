@@ -47,6 +47,17 @@ except Exception as _e:
     fv = None
     HAS_VIDEO = False
 
+# Локальный HLS-прокси: качает сегменты трейлера у akamai с ретраями и отдаёт
+# их mpv через 127.0.0.1 — лечит TCP-таймауты CDN (ffurl_read ETIMEDOUT),
+# которые mpv сам не переподключает. Только stdlib; если не импортнётся —
+# играем прямой URL (graceful fallback).
+try:
+    from trailer_proxy import TrailerProxy
+    HAS_TRAILER_PROXY = True
+except Exception as _e:
+    TrailerProxy = None
+    HAS_TRAILER_PROXY = False
+
 # Опциональные модули геймпада и BigPicture
 try:
     from gamepad_manager import GamepadManager
@@ -802,6 +813,11 @@ class CyberLauncher:
         # снимается событиями on_enter_fullscreen/on_exit_fullscreen самого
         # плеера — по нему закрытие корректно выходит из fullscreen.
         self._video_fullscreen = False
+        # Локальный HLS-прокси (лениво стартует при первом трейлере). id текущей
+        # прокси-сессии + ссылки на плеер/карточку для ресайза при ресайзе окна.
+        self._trailer_proxy = TrailerProxy() if HAS_TRAILER_PROXY else None
+        self._trailer_proxy_sid = None
+        self._trailer_sizing = None
 
         # Window focus — нужен чтобы блокировать gamepad-события когда юзер
         # играет в запущенную игру. SDL читает гейпад даже когда окно не в
@@ -1458,6 +1474,8 @@ class CyberLauncher:
 
         # Hotkey F11 для toggle BigPicture (помимо кнопки геймпада)
         self.page.on_keyboard_event = self._on_keyboard_event
+        # Ресайз окна → подстроить открытый плеер трейлера (no-op если закрыт)
+        self.page.on_resize = self._on_page_resized
 
         # Запуск геймпада (опционально)
         self._init_gamepad()
@@ -2434,25 +2452,38 @@ class CyberLauncher:
         vid_w = card_w - 24          # минус padding карточки
         vid_h = card_h - 72          # минус padding + шапка + спейсер
 
+        http_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/124.0 Safari/537.36",
+            "Referer": "https://store.steampowered.com/",
+        }
+        # HLS → играем через локальный прокси (ретраи против ETIMEDOUT akamai).
+        # mp4/webm/DASH — напрямую (mp4 стабилен; DASH-манифест прокси не
+        # переписывает). Прокси не завёлся → фоллбек на прямой URL (не хуже, чем
+        # было). sid храним для end_session при закрытии.
+        self._trailer_proxy_sid = None
+        play_url = url
+        is_hls = any(t in url for t in (".m3u8", "/hls_"))
+        if is_hls and self._trailer_proxy is not None:
+            try:
+                play_url = self._trailer_proxy.start_session(url, http_headers)
+                self._trailer_proxy_sid = play_url.split("/s/")[1].split("/")[0]
+                backend_logger.info(f"Trailer via proxy: '{name}' (sid={self._trailer_proxy_sid})")
+            except Exception as ex:
+                backend_logger.warning(f"TrailerProxy failed, playing direct: {ex}")
+                play_url = url
+
         try:
             player = fv.Video(
                 width=vid_w, height=vid_h,
-                playlist=[fv.VideoMedia(
-                    resource=url,
-                    http_headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                      "Chrome/124.0 Safari/537.36",
-                        "Referer": "https://store.steampowered.com/",
-                    },
-                )],
+                playlist=[fv.VideoMedia(resource=play_url, http_headers=http_headers)],
                 autoplay=True,
                 show_controls=True,                 # родная панель media_kit
                 muted=False,
                 fit=ft.BoxFit.CONTAIN,              # кадр целиком, без обрезки
                 configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
-                on_error=lambda e: backend_logger.warning(
-                    f"Trailer playback error: {getattr(e, 'data', e)}"),
+                on_error=lambda e: self._on_trailer_error(e),
                 # media_kit сам управляет своим fullscreen (родная кнопка в
                 # show_controls). Отслеживаем состояние, чтобы при закрытии
                 # плеера гарантированно из него выйти (иначе fullscreen-
@@ -2462,6 +2493,9 @@ class CyberLauncher:
             )
         except Exception as ex:
             backend_logger.warning(f"flet_video init failed, fallback to browser: {ex}")
+            if self._trailer_proxy_sid and self._trailer_proxy is not None:
+                self._trailer_proxy.end_session(self._trailer_proxy_sid)
+                self._trailer_proxy_sid = None
             self._open_trailer_in_browser(url, store_url)
             return
 
@@ -2487,6 +2521,14 @@ class CyberLauncher:
                 pass
             self._media_overlay = None
             self._media_close = None
+            self._trailer_sizing = None
+            # Закрыть прокси-сессию (снять маппинги/кэш сегментов этого трейлера).
+            if self._trailer_proxy_sid and self._trailer_proxy is not None:
+                try:
+                    self._trailer_proxy.end_session(self._trailer_proxy_sid)
+                except Exception:
+                    pass
+                self._trailer_proxy_sid = None
             self._safe_page_update()
 
         browser_btn = ft.Container(
@@ -2549,9 +2591,44 @@ class CyberLauncher:
         self._media_overlay = overlay
         self._media_close = _close
         self._video_fullscreen = False
+        # Ссылки для пересчёта размеров при ресайзе окна (см. _on_page_resized).
+        self._trailer_sizing = {"card": card, "player": player}
         self.page.overlay.append(overlay)
         self.page.update()
         backend_logger.info(f"Trailer player opened (native controls): '{name}'")
+
+    def _on_trailer_error(self, e):
+        """Ошибка воспроизведения трейлера. Не закрываем плеер (mpv иногда
+        восстанавливается сам), но даём человеку понятный выход вместо чёрного
+        кадра. Типичная причина — сеть/CDN (proxy отдал 502 после ретраев)."""
+        backend_logger.warning(f"Trailer playback error: {getattr(e, 'data', e)}")
+        try:
+            self.show_snackbar("⚠ Проблема с воспроизведением — попробуйте «В браузере»",
+                               bgcolor="#E65100")
+        except Exception:
+            pass
+
+    def _on_page_resized(self, e=None):
+        """Пересчитывает размеры открытого плеера трейлера при ресайзе окна
+        (размеры считаются при открытии — без этого видео не подстраивалось)."""
+        sizing = getattr(self, "_trailer_sizing", None)
+        if not sizing:
+            return
+        try:
+            pw = self.page.width or 1280
+            ph = self.page.height or 800
+            card_w = min(int(pw * 0.92), 1400)
+            card_h = min(int(ph * 0.92), 860)
+            card = sizing.get("card")
+            player = sizing.get("player")
+            if card is not None:
+                card.width, card.height = card_w, card_h
+                card.update()
+            if player is not None:
+                player.width, player.height = card_w - 24, card_h - 72
+                player.update()
+        except Exception as ex:
+            backend_logger.debug(f"Trailer resize skipped: {ex}")
 
     def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:
         """Скроллируемое тело детального экрана из нормализованных Steam-данных
@@ -3489,6 +3566,11 @@ class CyberLauncher:
             await self.game_manager.shutdown()
         except Exception as ex:
             backend_logger.error(f"GameManager shutdown error: {ex}")
+        try:
+            if self._trailer_proxy is not None:
+                self._trailer_proxy.stop()
+        except Exception as ex:
+            backend_logger.warning(f"TrailerProxy shutdown error: {ex}")
         backend_logger.info("CyberLauncher shutdown finished")
 
     # ========== Gamepad + BigPicture ==========

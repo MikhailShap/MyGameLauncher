@@ -795,9 +795,13 @@ class CyberLauncher:
         # открывается ПОВЕРХ detail. ESC закрывает его первым.
         self._media_overlay: Optional["ft.Control"] = None
         self._media_close = None
-        # Reveal-функция авто-скрытой панели плеера трейлера (страховка с
-        # клавиатуры — на случай если тап/hover над видео не доходят до Flet).
-        self._trailer_reveal = None
+        # Кастомный card-модал (_open_card_modal): свойства игры, подтверждения.
+        # Всегда топовый оверлей, пока открыт → ESC закрывает его первым.
+        self._card_modal_close = None  # callable, ставится при открытии
+        # True пока плеер трейлера в нативном fullscreen media_kit. Ставится/
+        # снимается событиями on_enter_fullscreen/on_exit_fullscreen самого
+        # плеера — по нему закрытие корректно выходит из fullscreen.
+        self._video_fullscreen = False
 
         # Window focus — нужен чтобы блокировать gamepad-события когда юзер
         # играет в запущенную игру. SDL читает гейпад даже когда окно не в
@@ -1022,6 +1026,10 @@ class CyberLauncher:
                 except Exception:
                     pass
                 holder["ov"] = None
+                # Снимаем себя с ESC-трекера, только если это всё ещё мы (не
+                # затёрли поверх открытым позже другим модалом).
+                if self._card_modal_close is close:
+                    self._card_modal_close = None
                 try:
                     self.page.update()
                 except Exception:
@@ -1042,6 +1050,8 @@ class CyberLauncher:
         overlay = ft.Container(expand=True,
                                content=ft.Stack(expand=True, controls=[backdrop, centered]))
         holder["ov"] = overlay
+        # ESC закрывает card-модал первым (он топовый). Трекер — эта же close().
+        self._card_modal_close = close
         self.page.overlay.append(overlay)
         self.page.update()
         return close
@@ -2334,14 +2344,6 @@ class CyberLauncher:
             pass
         self._media_overlay = None
         self._media_close = None
-        self._trailer_reveal = None
-        # Если плеер был в полноэкранном режиме — вернуть окно из fullscreen.
-        if getattr(self, "_video_fullscreen", False):
-            try:
-                self.page.window.full_screen = False
-            except Exception:
-                pass
-            self._video_fullscreen = False
         self._safe_page_update()
 
     def _show_screenshot_lightbox(self, shots: list, index: int):
@@ -2451,6 +2453,12 @@ class CyberLauncher:
                 configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
                 on_error=lambda e: backend_logger.warning(
                     f"Trailer playback error: {getattr(e, 'data', e)}"),
+                # media_kit сам управляет своим fullscreen (родная кнопка в
+                # show_controls). Отслеживаем состояние, чтобы при закрытии
+                # плеера гарантированно из него выйти (иначе fullscreen-
+                # поверхность остаётся, а наш overlay исчезает).
+                on_enter_fullscreen=lambda e: setattr(self, "_video_fullscreen", True),
+                on_exit_fullscreen=lambda e: setattr(self, "_video_fullscreen", False),
             )
         except Exception as ex:
             backend_logger.warning(f"flet_video init failed, fallback to browser: {ex}")
@@ -2461,6 +2469,17 @@ class CyberLauncher:
             ov = getattr(self, "_media_overlay", None)
             if ov is None:
                 return
+            # Плеер мог быть в нативном fullscreen media_kit — выйти ДО удаления
+            # виджета его же API (page.window.full_screen тут ни при чём: это
+            # fullscreen плеера, не окна). Иначе полноэкранная поверхность
+            # останется висеть, когда наш overlay уже снят.
+            if getattr(self, "_video_fullscreen", False):
+                try:
+                    player.fullscreen = False
+                    player.update()
+                except Exception:
+                    pass
+                self._video_fullscreen = False
             try:
                 if ov in self.page.overlay:
                     self.page.overlay.remove(ov)
@@ -2468,13 +2487,6 @@ class CyberLauncher:
                 pass
             self._media_overlay = None
             self._media_close = None
-            self._trailer_reveal = None
-            if getattr(self, "_video_fullscreen", False):
-                try:
-                    self.page.window.full_screen = False
-                except Exception:
-                    pass
-                self._video_fullscreen = False
             self._safe_page_update()
 
         browser_btn = ft.Container(
@@ -2536,7 +2548,7 @@ class CyberLauncher:
         )
         self._media_overlay = overlay
         self._media_close = _close
-        self._trailer_reveal = None
+        self._video_fullscreen = False
         self.page.overlay.append(overlay)
         self.page.update()
         backend_logger.info(f"Trailer player opened (native controls): '{name}'")
@@ -2684,25 +2696,43 @@ class CyberLauncher:
         return col
 
     def _wishlist_confirm_delete(self, app_id: str, title: str):
+        # Кастомный overlay-модал вместо ft.AlertDialog: в этой версии Flet
+        # AlertDialog ненадёжно закрывается (грабля №2), а _open_card_modal
+        # закрывается по кнопке/backdrop/ESC как остальные модалки wishlist.
+        close_ref = {}
+
+        def _close():
+            if close_ref.get("fn"):
+                close_ref["fn"]()
+
         def on_confirm(e):
-            self._dismiss_dialog(dialog)
+            _close()
             self.game_manager.wishlist.remove(app_id)
             self._refresh_wishlist_view()
             self.show_snackbar(f"'{title}' удалена из желаемого", bgcolor="#FF9800")
 
-        def on_cancel(e):
-            self._dismiss_dialog(dialog)
-
-        dialog = ft.AlertDialog(
-            title=ft.Text("Удалить из желаемого?"),
-            content=ft.Text(f"'{title}' будет удалена из списка."),
-            actions=[
-                ft.TextButton("Отмена", on_click=on_cancel),
-                ft.TextButton("Удалить", on_click=on_confirm,
-                              style=ft.ButtonStyle(color="#F44336")),
+        short = title if len(title) <= 48 else title[:45] + "..."
+        title_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.DELETE_OUTLINE, color="#FF5252", size=22),
+                ft.Text("Удалить из желаемого?", weight=ft.FontWeight.BOLD,
+                        size=18, color=TEXT_WHITE),
             ],
+            spacing=10,
         )
-        self._open_dialog(dialog)
+        body = ft.Text(f"«{short}» будет удалена из списка.",
+                       size=13, color=TEXT_GREY)
+        actions = ft.Row(
+            controls=[
+                ft.Container(expand=True),
+                ft.TextButton("Отмена", on_click=lambda e: _close()),
+                ft.ElevatedButton("Удалить", icon=ft.Icons.DELETE_OUTLINE,
+                                  on_click=on_confirm,
+                                  bgcolor="#B71C1C", color=TEXT_WHITE),
+            ],
+            spacing=8,
+        )
+        close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=460)
 
     def show_wishlist_add_dialog(self):
         """Диалог поиска и добавления игры через Steam Store API."""
@@ -3599,19 +3629,19 @@ class CyberLauncher:
                     return
                 self.toggle_bigpicture()
                 return
-            # Плеер трейлера открыт: любая клавиша (кроме ESC/F11) показывает
-            # авто-скрытую панель — страховка на случай, если тап/hover над
-            # видео не доходят до Flet (media_kit перехватывает ввод нативной
-            # поверхностью). ESC ниже закрывает плеер.
-            if self._trailer_reveal is not None and key not in ("Escape", "F11"):
-                try:
-                    self._trailer_reveal()
-                except Exception:
-                    pass
             # ESC — приоритет: закрыть открытый wishlist-overlay, потом
             # выйти из BigPicture. В обычном режиме без open dialog — игнор.
             if key == "Escape":
-                # Приоритет закрытия: media-lightbox > detail > add-dialog > BP.
+                # Приоритет закрытия: card-модал > media-lightbox > detail >
+                # add-dialog > BP. Card-модал (свойства игры/подтверждения)
+                # всегда топовый, пока открыт → закрываем его первым.
+                if self._card_modal_close is not None:
+                    backend_logger.info("Card modal: ESC pressed")
+                    try:
+                        self._card_modal_close()
+                    except Exception:
+                        pass
+                    return
                 if self._media_overlay is not None and self._media_close is not None:
                     backend_logger.info("Media lightbox: ESC pressed")
                     try:

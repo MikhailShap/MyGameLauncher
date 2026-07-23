@@ -473,16 +473,23 @@ class TrailerProxy:
 
     def handle_dash_master(self, sid: str,
                            height: Optional[int] = None) -> Optional[Tuple[bytes, str]]:
-        """DASH: отдать MPD как есть (сегменты относительные — mpv сам придёт
-        к нам, переписывание не нужно). height → оставить один видео-вариант."""
+        """DASH: отдать MPD (сегменты относительные — mpv сам придёт к нам,
+        переписывание не нужно), оставив ОДИН видео-вариант.
+
+        ⚠️ Всегда фильтруем, даже без ?q=: dash-демуксер ffmpeg не делает ABR —
+        он параллельно КАЧАЕТ ЧАНКИ ВСЕХ Representation (по логу: 1080+720+480+
+        360+trickplay одновременно, ~11 Мбит/с и 6 соединений впустую). «Авто»
+        для DASH = максимальное качество."""
         sess = self._session(sid)
         if sess is None or not sess.is_dash:
             return None
         raw, _ = self._fetch(sess.master_url, sess.headers)
         text = raw.decode("utf-8", errors="replace")
+        if height is None and sess.heights:
+            height = sess.heights[0]
         if height:
             text = _filter_mpd_by_height(text, height)
-            logger.info(f"TrailerProxy: MPD отфильтрован до {height}p (session {sid})")
+            logger.info(f"TrailerProxy: MPD → один вариант {height}p (session {sid})")
         return text.encode("utf-8"), "application/dash+xml"
 
     def handle_dash_segment(self, sid: str, relpath: str,

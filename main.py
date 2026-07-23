@@ -2661,8 +2661,17 @@ class CyberLauncher:
         self._trailer_sizing = {"card": card, "player": player}
 
         # Смена качества: пересоздаём плеер с ?q=<height> (media_kit не меняет
-        # источник на лету) и восстанавливаем позицию. Событие Dropdown в Flet
-        # 0.80 — on_select (НЕ on_change). Async-обработчик Flet сам awaitит.
+        # источник на лету). Событие Dropdown в Flet 0.80 — on_select (НЕ
+        # on_change). Async-обработчик Flet сам awaitит.
+        #
+        # ⚠️ Порядок КРИТИЧЕН (краш 2026-07-24, flet.exe умирал нативно):
+        # 1) старый плеер ОСТАНОВИТЬ до замены — dispose играющего mpv
+        #    (активный демуксер + AV1-декод + сеть) роняет процесс;
+        # 2) пауза 150мс — дать mpv завершить shutdown до dart-dispose;
+        # 3) seek нового плеера ТОЛЬКО из on_load — немедленный seek бьёт в
+        #    неинициализированный нативный плеер;
+        # 4) все await со straховочными таймаутами — зависший вызов к мёртвому
+        #    плееру не должен вешать UI.
         if quality_dd is not None:
             async def on_quality_select(e):
                 sz = getattr(self, "_trailer_sizing", None)
@@ -2670,11 +2679,16 @@ class CyberLauncher:
                     return
                 old = sz.get("player")
                 pos = None
-                try:
-                    if old is not None:
-                        pos = await old.get_current_position()
-                except Exception:
-                    pos = None
+                if old is not None:
+                    try:
+                        pos = await asyncio.wait_for(old.get_current_position(), 1.0)
+                    except Exception:
+                        pos = None
+                    try:
+                        await asyncio.wait_for(old.stop(), 2.0)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.15)
                 val = quality_dd.value or "auto"
                 new_url = play_url if val == "auto" else f"{play_url}?q={val}"
                 cw = int(card.width or card_w)
@@ -2685,15 +2699,17 @@ class CyberLauncher:
                 except Exception as ex:
                     backend_logger.warning(f"Quality switch failed: {ex}")
                     return
+                if pos is not None:
+                    async def _restore_pos(ev, p=pos, np=new_player):
+                        try:
+                            await np.seek(p)
+                        except Exception:
+                            pass
+                    new_player.on_load = _restore_pos
                 video_box.content = new_player
                 video_box.update()
                 sz["player"] = new_player
                 backend_logger.info(f"Trailer quality → {val}")
-                if pos is not None:
-                    try:
-                        await new_player.seek(pos)   # вернуться на то же место
-                    except Exception:
-                        pass
             quality_dd.on_select = on_quality_select
 
         self.page.overlay.append(overlay)

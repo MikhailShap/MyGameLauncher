@@ -24,6 +24,7 @@ flet_video 0.80 не пробрасывает опции mpv (reconnect/timeout)
 from __future__ import annotations
 
 import logging
+import math
 import re
 import threading
 import time
@@ -80,6 +81,98 @@ def _parse_mpd_reps(xml: str) -> Dict[str, int]:
         if mid and h and bw and int(bw.group(1)) > 0:
             reps[mid.group(1)] = int(h.group(1))
     return reps
+
+
+def _parse_mpd_full(xml: str):
+    """Разбирает Steam-MPD в данные для генерации синтетического HLS:
+    (duration_sec, video_reps, audio_rep). Каждый rep — dict с id, bandwidth,
+    codecs, init (путь init-сегмента), media (шаблон чанка с $Number...$),
+    seg_dur (сек), start; у видео ещё height/width. Trickplay (bandwidth=0)
+    отбрасывается."""
+    dur = 0.0
+    m = re.search(
+        r'mediaPresentationDuration="PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?"', xml)
+    if m:
+        dur = (int(m.group(1) or 0) * 3600 + int(m.group(2) or 0) * 60
+               + float(m.group(3) or 0))
+    video: List[dict] = []
+    audio: Optional[dict] = None
+    for block in re.findall(r"<AdaptationSet\b.*?</AdaptationSet>", xml, re.S):
+        st = re.search(r"<SegmentTemplate\b[^>]*", block)
+        if not st:
+            continue
+        tag = st.group(0)
+
+        def a(name, default=None):
+            # \b обязателен: 'width' иначе матчится ВНУТРИ 'bandwidth'
+            mm = re.search(r"\b" + name + r'="([^"]+)"', tag)
+            return mm.group(1) if mm else default
+
+        ts = float(a("timescale", "1") or 1)
+        sd = float(a("duration", "0") or 0) / ts
+        init_t = a("initialization", "") or ""
+        media_t = a("media", "") or ""
+        start = int(a("startNumber", "1") or 1)
+        if not media_t or sd <= 0:
+            continue
+        for rep in re.findall(r"<Representation\b[^>]*", block):
+            def ra(name, _rep=rep):
+                # \b обязателен: 'width' иначе матчится ВНУТРИ 'bandwidth'
+                mm = re.search(r"\b" + name + r'="([^"]+)"', _rep)
+                return mm.group(1) if mm else None
+            rid = ra("id")
+            bw = int(ra("bandwidth") or 0)
+            h = ra("height")
+            if not rid or bw <= 0:
+                continue                     # trickplay (bw=0) / мусор
+            entry = {
+                "id": rid, "bandwidth": bw, "codecs": ra("codecs") or "",
+                "init": init_t.replace("$RepresentationID$", rid),
+                "media": media_t.replace("$RepresentationID$", rid),
+                "seg_dur": sd, "start": start,
+            }
+            if h:
+                entry["height"] = int(h)
+                entry["width"] = int(ra("width") or 0)
+                video.append(entry)
+            elif audio is None:
+                audio = entry
+    video.sort(key=lambda v: -v["height"])
+    return dur, video, audio
+
+
+def _expand_number(tpl: str, n: int) -> str:
+    """dash_av1/chunk-stream0-$Number%05d$.m4s + 7 → …-00007.m4s"""
+    m = re.search(r"\$Number(?:%0(\d+)d)?\$", tpl)
+    if not m:
+        return tpl
+    return tpl[: m.start()] + str(n).zfill(int(m.group(1) or 0)) + tpl[m.end():]
+
+
+def _build_hls_from_dash_media(rep: dict, total_dur: float) -> str:
+    """Медиа-плейлист HLS (fMP4) из DASH SegmentTemplate: #EXT-X-MAP на
+    init-сегмент + перечисление чанков по номерам. Пути ОТНОСИТЕЛЬНЫЕ — mpv
+    резолвит их против /s/<sid>/… и приходит в прокси, как и раньше."""
+    sd = rep["seg_dur"]
+    n = max(1, math.ceil(total_dur / sd)) if total_dur > 0 else 1
+    out = [
+        "#EXTM3U",
+        "#EXT-X-VERSION:7",
+        f"#EXT-X-TARGETDURATION:{math.ceil(sd)}",
+        "#EXT-X-PLAYLIST-TYPE:VOD",
+        "#EXT-X-INDEPENDENT-SEGMENTS",
+        f'#EXT-X-MAP:URI="{rep["init"]}"',
+    ]
+    for i in range(n):
+        dur_i = sd
+        if i == n - 1 and total_dur > 0:
+            rem = total_dur - sd * (n - 1)
+            if 0 < rem <= sd:
+                dur_i = rem
+        out.append(f"#EXTINF:{dur_i:.3f},")
+        out.append(_expand_number(rep["media"], rep["start"] + i))
+    out.append("#EXT-X-ENDLIST")
+    return "\n".join(out) + "\n"
 
 
 def _filter_mpd_by_height(xml: str, height: int) -> str:
@@ -194,11 +287,15 @@ class _Session:
         # Список высот вариантов (1080, 720, …) по убыванию — для дропдауна
         # выбора качества. Заполняется eager-парсом master в start_session.
         self.heights: List[int] = []
-        # DASH-сессия (Steam dash_av1/dash_h264): master = .mpd, сегменты
-        # приходят ОТНОСИТЕЛЬНЫМИ путями (mpv строит их из SegmentTemplate
-        # относительно нашего локального master.mpd) — переписывание не нужно.
+        # DASH-сессия (Steam dash_av1/dash_h264). ⚠️ dash-демуксер ffmpeg
+        # хрупкий (краши на seek, качает все Representation разом), поэтому
+        # DASH-сегменты отдаются mpv через СИНТЕТИЧЕСКИЙ HLS-плейлист
+        # (fMP4: #EXT-X-MAP + .m4s) — играет надёжный hls-демуксер.
         self.is_dash = False
         self.dash_reps: Dict[str, int] = {}   # Representation id → height
+        self.dash_duration = 0.0              # mediaPresentationDuration, сек
+        self.dash_video: List[dict] = []      # видео-варианты (см. _parse_mpd_full)
+        self.dash_audio: Optional[dict] = None
 
     def assign(self, abs_url: str) -> str:
         """url → локальный путь /r/<id>. Дедуплицирует одинаковые url."""
@@ -357,7 +454,9 @@ class TrailerProxy:
             text = raw.decode("utf-8", errors="replace")
             if sess.is_dash:
                 sess.dash_reps = _parse_mpd_reps(text)
-                sess.heights = sorted(set(sess.dash_reps.values()), reverse=True)
+                sess.dash_duration, sess.dash_video, sess.dash_audio = \
+                    _parse_mpd_full(text)
+                sess.heights = [v["height"] for v in sess.dash_video]
             else:
                 sess.heights = _parse_master_heights(text)
         except Exception as e:
@@ -365,8 +464,13 @@ class TrailerProxy:
         kind = "DASH" if sess.is_dash else "HLS"
         logger.info(f"TrailerProxy: сессия {sid} [{kind}] для {master_url.split('?', 1)[0]} "
                     f"(качества: {sess.heights or 'н/д'})")
-        local_name = "master.mpd" if sess.is_dash else "master.m3u8"
-        return f"{self._base_url()}/s/{sid}/{local_name}"
+        # DASH отдаём mpv как СИНТЕТИЧЕСКИЙ HLS (см. коммент в _Session):
+        # dash-демуксер ffmpeg крашится на seek и качает все варианты разом.
+        # Если MPD не разобрался в HLS-структуру — фоллбек на passthrough .mpd.
+        if sess.is_dash and not sess.dash_video:
+            logger.warning(f"TrailerProxy: MPD не разобран, passthrough .mpd (session {sid})")
+            return f"{self._base_url()}/s/{sid}/master.mpd"
+        return f"{self._base_url()}/s/{sid}/master.m3u8"
 
     def end_session(self, sid: str) -> None:
         with self._sessions_lock:
@@ -470,6 +574,72 @@ class TrailerProxy:
             logger.info(f"TrailerProxy: master отфильтрован до {height}p (session {sid})")
         rewritten, _ = self._rewrite_playlist(sess, sid, text, final_url)
         return rewritten.encode("utf-8"), "application/vnd.apple.mpegurl"
+
+    def handle_master_any(self, sid: str, rest: str,
+                          height: Optional[int] = None) -> Optional[Tuple[bytes, str]]:
+        """Диспетчер master-запроса: HLS-сессия → переписанный m3u8;
+        DASH-сессия → синтетический HLS (или passthrough .mpd, если MPD не
+        разобрался)."""
+        sess = self._session(sid)
+        if sess is None:
+            return None
+        if sess.is_dash:
+            if rest == "master.m3u8" and sess.dash_video:
+                return self.handle_dash_hls_master(sid, height)
+            return self.handle_dash_master(sid, height)
+        return self.handle_master(sid, height) if rest == "master.m3u8" else None
+
+    def handle_dash_hls_master(self, sid: str,
+                               height: Optional[int] = None) -> Optional[Tuple[bytes, str]]:
+        """Синтетический HLS-master поверх DASH-сегментов: одна видео-дорожка
+        (Авто = максимум, ?q= = выбранная) + аудио. mpv играет его hls-демуксером
+        (стабильный seek), сегменты .m4s — те же самые, с CDN через прокси."""
+        sess = self._session(sid)
+        if sess is None or not sess.dash_video:
+            return None
+        rep = None
+        if height:
+            rep = next((v for v in sess.dash_video if v["height"] == height), None)
+        if rep is None:
+            rep = sess.dash_video[0]        # Авто/не нашли → максимум
+        out = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-INDEPENDENT-SEGMENTS"]
+        codecs = [c for c in (rep.get("codecs"),
+                              (sess.dash_audio or {}).get("codecs")) if c]
+        audio_attr = ""
+        if sess.dash_audio is not None:
+            out.append('#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="audio",'
+                       'AUTOSELECT=YES,DEFAULT=YES,URI="audio.m3u8"')
+            audio_attr = ',AUDIO="a"'
+        inf = f"#EXT-X-STREAM-INF:BANDWIDTH={rep['bandwidth']}"
+        if rep.get("width") and rep.get("height"):
+            inf += f",RESOLUTION={rep['width']}x{rep['height']}"
+        if codecs:
+            inf += f",CODECS=\"{','.join(codecs)}\""
+        inf += audio_attr
+        out.append(inf)
+        out.append(f"v{rep['height']}.m3u8")
+        logger.info(f"TrailerProxy: DASH→HLS master, вариант {rep['height']}p "
+                    f"(session {sid})")
+        return ("\n".join(out) + "\n").encode("utf-8"), "application/vnd.apple.mpegurl"
+
+    def handle_dash_media_playlist(self, sid: str,
+                                   rest: str) -> Optional[Tuple[bytes, str]]:
+        """Медиа-плейлист синтетического HLS: v<height>.m3u8 / audio.m3u8."""
+        sess = self._session(sid)
+        if sess is None or not sess.is_dash:
+            return None
+        rep = None
+        if rest == "audio.m3u8":
+            rep = sess.dash_audio
+        else:
+            m = re.fullmatch(r"v(\d+)\.m3u8", rest)
+            if m:
+                h = int(m.group(1))
+                rep = next((v for v in sess.dash_video if v["height"] == h), None)
+        if rep is None:
+            return None
+        text = _build_hls_from_dash_media(rep, sess.dash_duration)
+        return text.encode("utf-8"), "application/vnd.apple.mpegurl"
 
     def handle_dash_master(self, sid: str,
                            height: Optional[int] = None) -> Optional[Tuple[bytes, str]]:
@@ -703,20 +873,21 @@ def _make_handler(proxy: TrailerProxy):
             # Фаза 1 — собрать тело (сеть). Провал = реальный сбой CDN → 502.
             try:
                 if rest in ("master.m3u8", "master.mpd"):
-                    # ?q=<height> — ручной выбор качества (иначе Авто/ABR).
+                    # ?q=<height> — ручной выбор качества (иначе Авто).
                     q = parse_qs(parts.query).get("q", [None])[0]
                     height = int(q) if q and q.isdigit() else None
-                    if rest == "master.mpd":
-                        res = proxy.handle_dash_master(sid, height)
-                    else:
-                        res = proxy.handle_master(sid, height)
+                    res = proxy.handle_master_any(sid, rest, height)
                     payload = None if res is None else (200, res[0], res[1], None)
                 elif rest.startswith("r/"):
                     rid = rest.split("/", 1)[1]
                     payload = proxy.handle_resource(sid, rid, self.headers.get("Range"))
+                elif re.fullmatch(r"(?:v\d+|audio)\.m3u8", rest):
+                    # Медиа-плейлисты синтетического HLS поверх DASH.
+                    res = proxy.handle_dash_media_playlist(sid, rest)
+                    payload = None if res is None else (200, res[0], res[1], None)
                 else:
                     # Относительный путь DASH-сегмента (mpv построил его из
-                    # SegmentTemplate относительно нашего master.mpd).
+                    # синтетического HLS-плейлиста относительно /s/<sid>/).
                     payload = proxy.handle_dash_segment(sid, rest, self.headers.get("Range"))
             except urllib.error.HTTPError as e:
                 # 404 от CDN (запрос за последний чанк DASH) — честный 404.

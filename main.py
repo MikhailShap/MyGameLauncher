@@ -2081,8 +2081,9 @@ class CyberLauncher:
             trailer_btn = ft.ElevatedButton(
                 "Трейлер",
                 icon=ft.Icons.PLAY_CIRCLE_OUTLINE,
-                on_click=lambda e, url=item.trailer_url, nm=item.title, su=item.store_url: (
-                    self._show_trailer_player(url, nm, su)),
+                on_click=lambda e, url=item.trailer_url, nm=item.title, su=item.store_url,
+                                fu=getattr(item, "trailer_url_hls", ""): (
+                    self._show_trailer_player(url, nm, su, fu)),
                 bgcolor="#333",
                 color=TEXT_WHITE,
             )
@@ -2475,18 +2476,32 @@ class CyberLauncher:
             on_exit_fullscreen=lambda e: setattr(self, "_video_fullscreen", False),
         )
 
-    def _show_trailer_player(self, url: str, name: str = "", store_url: str = ""):
+    def _show_trailer_player(self, url: str, name: str = "", store_url: str = "",
+                             fallback_url: str = ""):
         """Трейлер в отдельном модале с РОДНОЙ панелью управления media_kit
         (show_controls=True): перемотка, громкость, скорость, фуллскрин — всё
         с авто-скрытием, как в обычном плеере. Свою Flet-панель больше не рисуем:
         нативная полноценная, а Flet-контролы поверх видео-поверхности всё равно
         не получают ввод. Шапка с ✕ — НАД видео (не поверх), поэтому кликается.
-        Закрытие: ✕ или ESC. Фуллскрин — родной кнопкой плеера."""
+        Закрытие: ✕ или ESC. Фуллскрин — родной кнопкой плеера.
+
+        url — предпочтительный поток (у новых игр DASH AV1: при том же битрейте
+        заметно чище H.264 — так играет браузерный плеер Steam).
+        fallback_url — HLS H.264: авто-откат при ошибке AV1 (см.
+        _on_trailer_error) и принудительно через settings trailer_codec="hls"."""
         if not url:
             return
         if not HAS_VIDEO or fv is None:
             self._open_trailer_in_browser(url, store_url)
             return
+
+        # Принудительный H.264 из настроек (эскейп-хатч без пересборки, как
+        # trailer_filter_quality): data/settings.json → "trailer_codec": "hls".
+        if fallback_url and str(self.settings.get("trailer_codec", "av1")).lower() == "hls":
+            url, fallback_url = fallback_url, ""
+        # Контекст авто-отката: при ошибке DASH/AV1 переоткрываемся на HLS.
+        self._trailer_fallback = {"url": fallback_url, "name": name,
+                                  "store_url": store_url, "used": False}
 
         pw = self.page.width or 1280
         ph = self.page.height or 800
@@ -2501,14 +2516,14 @@ class CyberLauncher:
                           "Chrome/124.0 Safari/537.36",
             "Referer": "https://store.steampowered.com/",
         }
-        # HLS → играем через локальный прокси (ретраи против ETIMEDOUT akamai).
-        # mp4/webm/DASH — напрямую (mp4 стабилен; DASH-манифест прокси не
-        # переписывает). Прокси не завёлся → фоллбек на прямой URL (не хуже, чем
-        # было). sid храним для end_session при закрытии.
+        # HLS и DASH → через локальный прокси (ретраи против ETIMEDOUT akamai;
+        # для DASH манифест отдаётся как есть — сегменты приходят к прокси
+        # относительными путями). mp4/webm — напрямую (прямой файл стабилен).
+        # Прокси не завёлся → фоллбек на прямой URL (не хуже, чем было).
         self._trailer_proxy_sid = None
         play_url = url
-        is_hls = any(t in url for t in (".m3u8", "/hls_"))
-        if is_hls and self._trailer_proxy is not None:
+        is_streaming = any(t in url for t in (".m3u8", "/hls_", ".mpd", "/dash_"))
+        if is_streaming and self._trailer_proxy is not None:
             try:
                 play_url = self._trailer_proxy.start_session(url, http_headers)
                 self._trailer_proxy_sid = play_url.split("/s/")[1].split("/")[0]
@@ -2553,6 +2568,9 @@ class CyberLauncher:
             self._media_overlay = None
             self._media_close = None
             self._trailer_sizing = None
+            # Погасить контекст авто-отката: поздний on_error от уже закрытого
+            # плеера не должен самопроизвольно переоткрывать трейлер.
+            self._trailer_fallback = None
             # Закрыть прокси-сессию (снять маппинги/кэш сегментов этого трейлера).
             if self._trailer_proxy_sid and self._trailer_proxy is not None:
                 try:
@@ -2683,10 +2701,25 @@ class CyberLauncher:
         backend_logger.info(f"Trailer player opened (native controls): '{name}'")
 
     def _on_trailer_error(self, e):
-        """Ошибка воспроизведения трейлера. Не закрываем плеер (mpv иногда
-        восстанавливается сам), но даём человеку понятный выход вместо чёрного
-        кадра. Типичная причина — сеть/CDN (proxy отдал 502 после ретраев)."""
+        """Ошибка воспроизведения трейлера. Если играл предпочтительный поток
+        (DASH AV1) и есть HLS-фоллбек — ОДИН раз молча переоткрываемся на нём
+        (тот самый стабильный путь, что работал раньше). Иначе — снекбар:
+        плеер не закрываем, mpv иногда восстанавливается сам."""
         backend_logger.warning(f"Trailer playback error: {getattr(e, 'data', e)}")
+        fb = getattr(self, "_trailer_fallback", None)
+        if fb and fb.get("url") and not fb.get("used"):
+            fb["used"] = True
+            backend_logger.warning("Trailer: AV1/DASH не пошёл — авто-откат на HLS H.264")
+            try:
+                if self._media_close is not None:
+                    self._media_close()
+                self._show_trailer_player(fb["url"], fb.get("name", ""),
+                                          fb.get("store_url", ""))
+                self.show_snackbar("Трейлер переключён на H.264 (AV1 не воспроизвёлся)",
+                                   bgcolor="#E65100")
+                return
+            except Exception as ex:
+                backend_logger.warning(f"Trailer HLS fallback failed: {ex}")
         try:
             self.show_snackbar("⚠ Проблема с воспроизведением — попробуйте «В браузере»",
                                bgcolor="#E65100")
@@ -2782,7 +2815,9 @@ class CyberLauncher:
                 # store_url прокидываем для корректного fallback'а на HLS.
                 su = d.get("store_url", "")
                 if HAS_VIDEO:
-                    click = (lambda e, u=url, nm=t.get("name", ""), s=su: self._show_trailer_player(u, nm, s)) if url else None
+                    click = (lambda e, u=url, nm=t.get("name", ""), s=su,
+                                    fu=t.get("url_hls", ""): (
+                        self._show_trailer_player(u, nm, s, fu))) if url else None
                 else:
                     click = (lambda e, u=url, s=su: self._open_trailer_in_browser(u, s)) if url else None
                 trow.controls.append(

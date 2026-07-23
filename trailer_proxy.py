@@ -68,6 +68,58 @@ def _parse_master_heights(text: str) -> List[int]:
     return sorted(hs, reverse=True)
 
 
+def _parse_mpd_reps(xml: str) -> Dict[str, int]:
+    """DASH: Representation id → height. Только реальные видео-варианты
+    (height задан и bandwidth > 0 — отсекает trickplay/storyboard дорожки,
+    у Steam бывает 864p с bandwidth=0)."""
+    reps: Dict[str, int] = {}
+    for tag in re.findall(r"<Representation\b[^>]*", xml):
+        mid = re.search(r'id="([^"]+)"', tag)
+        h = re.search(r'height="(\d+)"', tag)
+        bw = re.search(r'bandwidth="(\d+)"', tag)
+        if mid and h and bw and int(bw.group(1)) > 0:
+            reps[mid.group(1)] = int(h.group(1))
+    return reps
+
+
+def _filter_mpd_by_height(xml: str, height: int) -> str:
+    """DASH-аналог _filter_master_by_height: оставить только видео-Representation
+    нужной высоты (аудио и блоки без height не трогаем). Работает и с одним
+    Representation на AdaptationSet (схема Steam), и с несколькими. Если
+    совпадений нет — исходный XML (фоллбек на Авто)."""
+    kept_any = False
+
+    def _h(tag: str):
+        m = re.search(r'height="(\d+)"', tag)
+        return int(m.group(1)) if m else None
+
+    def _bw(tag: str) -> int:
+        m = re.search(r'bandwidth="(\d+)"', tag)
+        return int(m.group(1)) if m else 0
+
+    def filter_set(mset):
+        nonlocal kept_any
+        block = mset.group(0)
+        reps = re.findall(r"<Representation\b[^>]*(?:/>|>.*?</Representation>)",
+                          block, re.S)
+        video_reps = [r for r in reps if _h(r) is not None]
+        if not video_reps:
+            return block                       # аудио и пр. — не трогаем
+        keep = [r for r in video_reps if _h(r) == height and _bw(r) > 0]
+        if not keep:
+            return ""                          # другая высота / trickplay
+        kept_any = True
+        out = block
+        for r in video_reps:
+            if r not in keep:
+                out = out.replace(r, "")
+        return out
+
+    new_xml = re.sub(r"<AdaptationSet\b.*?</AdaptationSet>", filter_set, xml,
+                     flags=re.S)
+    return new_xml if kept_any else xml
+
+
 def _filter_master_by_height(text: str, height: int) -> str:
     """Оставляет в master ТОЛЬКО вариант нужной высоты (+ аудио и прочие теги),
     выкидывая остальные #EXT-X-STREAM-INF с их URI. mpv тогда играет именно это
@@ -142,6 +194,11 @@ class _Session:
         # Список высот вариантов (1080, 720, …) по убыванию — для дропдауна
         # выбора качества. Заполняется eager-парсом master в start_session.
         self.heights: List[int] = []
+        # DASH-сессия (Steam dash_av1/dash_h264): master = .mpd, сегменты
+        # приходят ОТНОСИТЕЛЬНЫМИ путями (mpv строит их из SegmentTemplate
+        # относительно нашего локального master.mpd) — переписывание не нужно.
+        self.is_dash = False
+        self.dash_reps: Dict[str, int] = {}   # Representation id → height
 
     def assign(self, abs_url: str) -> str:
         """url → локальный путь /r/<id>. Дедуплицирует одинаковые url."""
@@ -290,18 +347,26 @@ class TrailerProxy:
         if http_headers:
             headers.update(http_headers)
         sess = _Session(master_url, headers)
+        sess.is_dash = master_url.split("?", 1)[0].lower().endswith(".mpd")
         with self._sessions_lock:
             self._sessions[sid] = sess
         # Eager-парс master → список качеств для дропдауна. Одна лёгкая загрузка
-        # (~1 КБ). Провал (офлайн) — не критично: дропдаун покажет только «Авто».
+        # (~1-3 КБ). Провал (офлайн) — не критично: дропдаун покажет только «Авто».
         try:
             raw, _ = self._fetch(master_url, headers)
-            sess.heights = _parse_master_heights(raw.decode("utf-8", errors="replace"))
+            text = raw.decode("utf-8", errors="replace")
+            if sess.is_dash:
+                sess.dash_reps = _parse_mpd_reps(text)
+                sess.heights = sorted(set(sess.dash_reps.values()), reverse=True)
+            else:
+                sess.heights = _parse_master_heights(text)
         except Exception as e:
             logger.debug(f"TrailerProxy: не удалось разобрать качества master: {e}")
-        logger.info(f"TrailerProxy: сессия {sid} для {master_url.split('?', 1)[0]} "
+        kind = "DASH" if sess.is_dash else "HLS"
+        logger.info(f"TrailerProxy: сессия {sid} [{kind}] для {master_url.split('?', 1)[0]} "
                     f"(качества: {sess.heights or 'н/д'})")
-        return f"{self._base_url()}/s/{sid}/master.m3u8"
+        local_name = "master.mpd" if sess.is_dash else "master.m3u8"
+        return f"{self._base_url()}/s/{sid}/{local_name}"
 
     def end_session(self, sid: str) -> None:
         with self._sessions_lock:
@@ -320,20 +385,26 @@ class TrailerProxy:
 
     def _fetch(self, url: str, headers: Dict[str, str]) -> Tuple[bytes, str]:
         """GET с ретраями. Возвращает (bytes, final_url для относительных URI).
-        Кидает последнее исключение, если все попытки провалились."""
+        Кидает последнее исключение, если все попытки провалились.
+        HTTP 404 НЕ ретраится: сервер ответил, файла просто нет (штатный случай
+        для DASH-префетча за последним чанком)."""
         last_exc: Optional[Exception] = None
         for attempt in range(self._retries):
             try:
                 req = urllib.request.Request(url, headers=headers)
                 with urllib.request.urlopen(req, timeout=12.0) as r:
                     return r.read(), r.geturl()
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    raise
+                last_exc = e
             except (urllib.error.URLError, OSError, TimeoutError) as e:
                 last_exc = e
-                tail = url.split("/")[-1].split("?", 1)[0]
-                logger.info(
-                    f"TrailerProxy retry {attempt + 1}/{self._retries}: {tail} ({e})")
-                if attempt + 1 < self._retries:
-                    time.sleep(0.5 * (2 ** attempt))   # 0.5 / 1.0 c
+            tail = url.split("/")[-1].split("?", 1)[0]
+            logger.info(
+                f"TrailerProxy retry {attempt + 1}/{self._retries}: {tail} ({last_exc})")
+            if attempt + 1 < self._retries:
+                time.sleep(0.5 * (2 ** attempt))   # 0.5 / 1.0 c
         raise last_exc if last_exc else RuntimeError("fetch failed")
 
     # ---------- Переписывание плейлистов ----------
@@ -399,6 +470,90 @@ class TrailerProxy:
             logger.info(f"TrailerProxy: master отфильтрован до {height}p (session {sid})")
         rewritten, _ = self._rewrite_playlist(sess, sid, text, final_url)
         return rewritten.encode("utf-8"), "application/vnd.apple.mpegurl"
+
+    def handle_dash_master(self, sid: str,
+                           height: Optional[int] = None) -> Optional[Tuple[bytes, str]]:
+        """DASH: отдать MPD как есть (сегменты относительные — mpv сам придёт
+        к нам, переписывание не нужно). height → оставить один видео-вариант."""
+        sess = self._session(sid)
+        if sess is None or not sess.is_dash:
+            return None
+        raw, _ = self._fetch(sess.master_url, sess.headers)
+        text = raw.decode("utf-8", errors="replace")
+        if height:
+            text = _filter_mpd_by_height(text, height)
+            logger.info(f"TrailerProxy: MPD отфильтрован до {height}p (session {sid})")
+        return text.encode("utf-8"), "application/dash+xml"
+
+    def handle_dash_segment(self, sid: str, relpath: str,
+                            rng: Optional[str]) -> Optional[Tuple[int, bytes, str, Optional[str]]]:
+        """DASH-сегмент по ОТНОСИТЕЛЬНОМУ пути (init-stream0.m4s,
+        dash_av1/chunk-stream0-00001.m4s …). Путь резолвится строго против
+        master_url сессии — наружу за пределы каталога трейлера не выйти."""
+        sess = self._session(sid)
+        if sess is None or not sess.is_dash:
+            return None
+        if (".." in relpath or relpath.startswith("/") or "\\" in relpath
+                or "://" in relpath):
+            return None
+        real_url = urljoin(sess.master_url, relpath)
+        blob = sess.cache_get(relpath)
+        if blob is None:
+            blob, _ = self._fetch(real_url, sess.headers)
+            sess.cache_put(relpath, blob)
+
+        # Лог реального качества: chunk-stream<repID>-… → высота из MPD.
+        m = re.search(r"chunk-stream([^-]+)-", relpath)
+        if m:
+            rep_id = m.group(1)
+            key = f"dash:{rep_id}"
+            with sess.lock:
+                first = key not in sess._logged_variants
+                if first:
+                    sess._logged_variants.add(key)
+            if first:
+                h = sess.dash_reps.get(rep_id)
+                label = f"{h}p" if h else f"stream{rep_id}"
+                logger.info(f"TrailerProxy: mpv играет качество {label} (DASH, session {sid})")
+
+        self._prefetch_dash(sess, relpath)
+        ctype = _guess_content_type(real_url)
+        if rng:
+            sliced = _apply_range(blob, rng)
+            if sliced is not None:
+                start, end, chunk = sliced
+                return 206, chunk, ctype, f"bytes {start}-{end}/{len(blob)}"
+        return 200, blob, ctype, None
+
+    def _prefetch_dash(self, sess: _Session, relpath: str) -> None:
+        """Префетч следующих чанков по номеру в имени (…-00007.m4s → 00008)."""
+        m = re.search(r"(\d+)(\.[A-Za-z0-9]+)$", relpath)
+        if not m:
+            return
+        num, ext = m.group(1), m.group(2)
+        for i in range(1, _PREFETCH_AHEAD + 1):
+            nxt = str(int(num) + i).zfill(len(num))
+            nrel = relpath[: m.start(1)] + nxt + ext
+            if sess.cache_get(nrel) is not None:
+                continue
+            with self._prefetch_lock:
+                if nrel in self._prefetch_inflight:
+                    continue
+                self._prefetch_inflight.add(nrel)
+            threading.Thread(target=self._prefetch_dash_one, args=(sess, nrel),
+                             daemon=True).start()
+
+    def _prefetch_dash_one(self, sess: _Session, nrel: str) -> None:
+        try:
+            if sess.cache_get(nrel) is None:
+                blob, _ = self._fetch(urljoin(sess.master_url, nrel), sess.headers)
+                sess.cache_put(nrel, blob)
+        except Exception as e:
+            # За последним чанком — ожидаемый 404, не шумим.
+            logger.debug(f"TrailerProxy dash prefetch {nrel}: {e}")
+        finally:
+            with self._prefetch_lock:
+                self._prefetch_inflight.discard(nrel)
 
     def handle_resource(self, sid: str, rid: str,
                         rng: Optional[str]) -> Optional[Tuple[int, bytes, str, Optional[str]]]:
@@ -498,8 +653,9 @@ def _apply_range(blob: bytes, rng: str) -> Optional[Tuple[int, int, bytes]]:
     return start, end, blob[start:end + 1]
 
 
-# Регэксп разбора пути: /s/<sid>/master.m3u8  или  /s/<sid>/r/<id>
-_PATH_RE = re.compile(r"^/s/(?P<sid>[0-9a-f]{12})/(?P<rest>master\.m3u8|r/[A-Za-z0-9]+)$")
+# Разбор пути: /s/<sid>/master.m3u8 | /s/<sid>/master.mpd | /s/<sid>/r/<id>
+# (HLS-ресурс) | /s/<sid>/<относительный путь DASH-сегмента>.
+_PATH_RE = re.compile(r"^/s/(?P<sid>[0-9a-f]{12})/(?P<rest>.+)$")
 
 
 def _make_handler(proxy: TrailerProxy):
@@ -539,15 +695,28 @@ def _make_handler(proxy: TrailerProxy):
 
             # Фаза 1 — собрать тело (сеть). Провал = реальный сбой CDN → 502.
             try:
-                if rest == "master.m3u8":
+                if rest in ("master.m3u8", "master.mpd"):
                     # ?q=<height> — ручной выбор качества (иначе Авто/ABR).
                     q = parse_qs(parts.query).get("q", [None])[0]
                     height = int(q) if q and q.isdigit() else None
-                    res = proxy.handle_master(sid, height)
+                    if rest == "master.mpd":
+                        res = proxy.handle_dash_master(sid, height)
+                    else:
+                        res = proxy.handle_master(sid, height)
                     payload = None if res is None else (200, res[0], res[1], None)
-                else:
+                elif rest.startswith("r/"):
                     rid = rest.split("/", 1)[1]
                     payload = proxy.handle_resource(sid, rid, self.headers.get("Range"))
+                else:
+                    # Относительный путь DASH-сегмента (mpv построил его из
+                    # SegmentTemplate относительно нашего master.mpd).
+                    payload = proxy.handle_dash_segment(sid, rest, self.headers.get("Range"))
+            except urllib.error.HTTPError as e:
+                # 404 от CDN (запрос за последний чанк DASH) — честный 404.
+                code = 404 if e.code == 404 else 502
+                logger.debug(f"TrailerProxy {code} (CDN HTTP {e.code}) for {self.path}")
+                self._fail(code)
+                return
             except ConnectionError as e:
                 # Оборвалось соединение К CDN — редко, но это сеть, не клиент.
                 logger.info(f"TrailerProxy 502 (CDN) for {self.path}: {e}")

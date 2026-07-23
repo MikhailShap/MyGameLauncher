@@ -159,7 +159,8 @@ class WishlistItem:
     header_image_url: str = ""                   # 460×215 — для карточки
     short_description: str = ""
     store_url: str = ""                          # https://store.steampowered.com/app/<id>/
-    trailer_url: str = ""                        # mp4 max-quality из movies[]
+    trailer_url: str = ""                        # предпочтительный трейлер (mp4 / dash_av1 / hls)
+    trailer_url_hls: str = ""                    # HLS-фоллбек, если trailer_url = DASH AV1
     trailer_thumb_url: str = ""                  # тубнейл трейлера
     release_date: str = ""
     developers: str = ""                         # "Dev1, Dev2"
@@ -274,15 +275,16 @@ def build_wishlist_item(app_id: str) -> Optional[WishlistItem]:
         mp4 = chosen.get("mp4") if isinstance(chosen.get("mp4"), dict) else {}
         webm = chosen.get("webm") if isinstance(chosen.get("webm"), dict) else {}
         # Старая схема: mp4/webm {480,max}. Новая (2024+): только hls/dash-
-        # манифест (строка-URL). Без HLS-fallback у новых игр trailer_url
-        # оставался пустым → кнопки "Трейлер" на карточке не было, хотя
-        # детальный экран (fetch_game_details) трейлер показывал.
+        # манифест (строка-URL). Предпочитаем dash_av1 (чище картинка при том
+        # же битрейте, см. fetch_game_details); HLS — фоллбек в trailer_url_hls.
         item.trailer_url = (
             mp4.get("max") or mp4.get("480")
             or webm.get("max") or webm.get("480")
-            or chosen.get("hls_h264") or chosen.get("dash_h264")
-            or chosen.get("dash_av1") or ""
+            or chosen.get("dash_av1") or chosen.get("hls_h264")
+            or chosen.get("dash_h264") or ""
         )
+        hls = chosen.get("hls_h264") or ""
+        item.trailer_url_hls = hls if hls != item.trailer_url else ""
     # Дата релиза
     rd = details.get("release_date") or {}
     item.release_date = rd.get("date") or ""
@@ -367,6 +369,7 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
         #  2) Новая (с 2024+): hls_h264 / dash_h264 / dash_av1 = строка-URL
         #     HLS/DASH-манифеста. media_kit/libmpv проигрывает HLS.
         url = ""
+        url_hls = ""
         mp4 = m.get("mp4")
         webm = m.get("webm")
         if isinstance(mp4, dict) and (mp4.get("max") or mp4.get("480")):
@@ -374,13 +377,23 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
         elif isinstance(webm, dict) and (webm.get("max") or webm.get("480")):
             url = webm.get("max") or webm.get("480")
         else:
-            # Новая схема: берём HLS (надёжнее всего для mpv), затем DASH.
-            url = m.get("hls_h264") or m.get("dash_h264") or m.get("dash_av1") or ""
+            # Новая схема: предпочитаем dash_av1 — при ТОМ ЖЕ битрейте (Steam
+            # кодирует оба в 5800k@1080p) AV1 заметно чище H.264; браузерный
+            # плеер Steam играет именно его — отсюда была разница «у нас
+            # мыльнее». libmpv умеет AV1 (dav1d в сборке flet_desktop, проверено).
+            # HLS оставляем фоллбеком (url_hls) — на него откатывается плеер
+            # при ошибке AV1 и настройка trailer_codec="hls".
+            url = (m.get("dash_av1") or m.get("hls_h264")
+                   or m.get("dash_h264") or "")
+            url_hls = m.get("hls_h264") or ""
+            if url == url_hls:
+                url_hls = ""     # фоллбек совпадает с основным — не дублируем
         if url:
             trailers.append({
                 "name": m.get("name", "") or "",
                 "thumb": m.get("thumbnail", "") or "",
                 "url": url,
+                "url_hls": url_hls,
             })
 
     return {
@@ -481,6 +494,7 @@ class WishlistManager:
         if data:
             self._details_mem[app_id] = data
             self._write_details_disk(app_id, data)
+            self._maybe_refresh_trailer_fields(app_id, data)
             return data
         # Сеть не дала данных (офлайн/Steam недоступен) — отдаём протухший
         # диск-кэш, если он есть: показать устаревшие данные лучше, чем экран
@@ -490,6 +504,31 @@ class WishlistManager:
             logger.info(f"Details: network failed, serving stale cache for {app_id}")
             self._details_mem[app_id] = stale
         return stale
+
+    def _maybe_refresh_trailer_fields(self, app_id: str, data: Dict[str, Any]) -> None:
+        """Тихая миграция: записи, добавленные до перехода на dash_av1, хранят
+        в wishlist.json старый HLS-URL. При успешном сетевом обновлении деталей
+        освежаем трейлер-поля карточки (тот же трейлер ищем по тумбнейлу)."""
+        try:
+            it = self._items.get(str(app_id))
+            trailers = data.get("trailers") or []
+            if not it or not trailers:
+                return
+            cand = next((t for t in trailers
+                         if t.get("thumb") and t.get("thumb") == it.trailer_thumb_url),
+                        trailers[0])
+            new_url = cand.get("url") or ""
+            new_hls = cand.get("url_hls") or ""
+            if new_url and (new_url != it.trailer_url or new_hls != it.trailer_url_hls):
+                it.trailer_url = new_url
+                it.trailer_url_hls = new_hls
+                if cand.get("thumb"):
+                    it.trailer_thumb_url = cand["thumb"]
+                self.save_sync()
+                logger.info(f"Wishlist: трейлер обновлён на предпочтительный формат "
+                            f"(app_id={app_id})")
+        except Exception as e:
+            logger.debug(f"Wishlist trailer refresh skipped: {e}")
 
     def get_details_cached(self, app_id: str) -> Optional[Dict[str, Any]]:
         """Только из памяти/свежего диска, БЕЗ сети. Для мгновенного показа

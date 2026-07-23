@@ -757,6 +757,16 @@ class CyberLauncher:
         self.settings = self.load_settings()
         self.current_theme = self.settings.get("theme", "dark")
 
+        # Регион Steam Store для поиска/деталей желаемого. Фоллбек нужен, т.к.
+        # часть игр не продаётся в RU (007 First Light) — без него их не найти
+        # и не добавить. settings.json: steam_cc / steam_cc_fallback.
+        try:
+            from wishlist_manager import set_steam_region
+            set_steam_region(self.settings.get("steam_cc", "RU"),
+                             self.settings.get("steam_cc_fallback", "KZ"))
+        except Exception as ex:
+            backend_logger.warning(f"Steam region setup failed: {ex}")
+
         # Extract API keys from settings
         api_keys = self.settings.get("api_keys", {})
         sgdb_key = api_keys.get("steamgriddb") or None
@@ -2309,10 +2319,19 @@ class CyberLauncher:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+        # Фон карточки — градиент активной темы приложения (как bg_container),
+        # чтобы деталка не выбивалась плоской серой плашкой. Чуть светлее фона
+        # окна за счёт наложенной полупрозрачной вуали + рамка для отделения.
+        theme_data = GRADIENT_THEMES.get(self.current_theme, GRADIENT_THEMES["dark"])
         card = ft.Container(
             width=card_w,
             height=card_h,
-            bgcolor="#1F1F1F",
+            gradient=ft.LinearGradient(
+                begin=ft.Alignment(-1, -1),
+                end=ft.Alignment(1, 1),
+                colors=theme_data["colors"],
+            ),
+            border=ft.Border.all(1, "#33FFFFFF"),
             border_radius=14,
             padding=20,
             on_click=lambda e: None,  # поглощаем клик внутри карточки

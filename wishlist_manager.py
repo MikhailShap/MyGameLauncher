@@ -216,44 +216,97 @@ def _http_get_json(url: str, timeout: float = 10.0) -> Optional[Any]:
     return None
 
 
-def steam_search(query: str, limit: int = 8) -> List[Dict[str, str]]:
-    """Steam Store autocomplete. Возвращает список {app_id, name, header_image}.
+# Регион Steam Store. ОСНОВНОЙ задаёт валюту/выдачу; ФОЛЛБЕК нужен потому, что
+# часть игр в RU не продаётся (напр. 007 First Light): storesearch их вообще не
+# показывает, а appdetails отвечает success=false — игру нельзя было ни найти,
+# ни добавить. Спрашиваем фоллбек-регион, чтобы игра была доступна (цена тогда
+# в валюте фоллбека — это лучше, чем «игры не существует»).
+# Переопределяются из settings.json: steam_cc / steam_cc_fallback.
+STEAM_CC = "RU"
+STEAM_CC_FALLBACK = "KZ"
 
-    Используется для подсказок в диалоге "Добавить в желаемое"."""
-    q = query.strip()
-    if len(q) < 2:
-        return []
+
+def set_steam_region(cc: str = "", cc_fallback: str = "") -> None:
+    """Задать регионы из настроек приложения (пустое = оставить как есть)."""
+    global STEAM_CC, STEAM_CC_FALLBACK
+    if cc:
+        STEAM_CC = cc.strip().upper()
+    # Пустой фоллбек — осознанное «искать только в основном регионе».
+    STEAM_CC_FALLBACK = cc_fallback.strip().upper() if cc_fallback is not None else ""
+    logger.info(f"Steam region: cc={STEAM_CC}, fallback={STEAM_CC_FALLBACK or '(нет)'}")
+
+
+def _search_one_region(q: str, cc: str, limit: int) -> List[Dict[str, str]]:
     url = (f"https://store.steampowered.com/api/storesearch/"
-           f"?term={urllib.parse.quote(q)}&l=russian&cc=RU")
+           f"?term={urllib.parse.quote(q)}&l=russian&cc={urllib.parse.quote(cc)}")
     data = _http_get_json(url, timeout=8.0)
     if not data or not isinstance(data, dict):
         return []
-    items: List[Dict[str, str]] = []
+    out: List[Dict[str, str]] = []
     for it in (data.get("items") or [])[:limit]:
         try:
-            items.append({
+            out.append({
                 "app_id": str(it.get("id", "")),
                 "name": it.get("name", "") or "",
                 "header_image": it.get("tiny_image", "") or "",
             })
         except Exception:
             continue
-    return items
+    return out
+
+
+def steam_search(query: str, limit: int = 8) -> List[Dict[str, str]]:
+    """Steam Store autocomplete. Возвращает список {app_id, name, header_image}.
+
+    Ищет в основном регионе, затем ДОБИРАЕТ из фоллбек-региона игры, которых
+    в основном нет (региональные ограничения). Порядок основного региона
+    сохраняется, дубли по app_id отсекаются."""
+    q = query.strip()
+    if len(q) < 2:
+        return []
+    primary = _search_one_region(q, STEAM_CC, limit * 2)
+    if not (STEAM_CC_FALLBACK and STEAM_CC_FALLBACK != STEAM_CC):
+        return primary[:limit]
+    fallback = _search_one_region(q, STEAM_CC_FALLBACK, limit * 2)
+
+    # Слияние ЧЕРЕДОВАНИЕМ ПО РАНГУ, а не «primary целиком, потом остатки»:
+    # Steam сортирует по релевантности, и в регионе с ограничением основная
+    # игра выпадает совсем (в RU по «007 First Light» — только DLC, они
+    # занимают весь лимит). Чередование поднимает топ-результат фоллбека
+    # (саму игру) на 2-е место вместо выпадения за лимит.
+    merged: List[Dict[str, str]] = []
+    seen = set()
+    for i in range(max(len(primary), len(fallback))):
+        for src in (primary, fallback):
+            if i < len(src) and src[i]["app_id"] not in seen:
+                seen.add(src[i]["app_id"])
+                merged.append(src[i])
+        if len(merged) >= limit:
+            break
+    return merged[:limit]
 
 
 def steam_appdetails(app_id: str, lang: str = "russian") -> Optional[Dict[str, Any]]:
-    """Steam appdetails API — полные метаданные одной игры."""
+    """Steam appdetails API — полные метаданные одной игры.
+    При success=false в основном регионе (игра там не продаётся) повторяет
+    запрос в фоллбек-регионе."""
     if not app_id:
         return None
-    url = (f"https://store.steampowered.com/api/appdetails"
-           f"?appids={urllib.parse.quote(str(app_id))}&l={lang}")
-    data = _http_get_json(url, timeout=12.0)
-    if not data or not isinstance(data, dict):
-        return None
-    entry = data.get(str(app_id))
-    if not entry or not entry.get("success"):
-        return None
-    return entry.get("data") or {}
+    for cc in (STEAM_CC, STEAM_CC_FALLBACK):
+        if not cc:
+            continue
+        url = (f"https://store.steampowered.com/api/appdetails"
+               f"?appids={urllib.parse.quote(str(app_id))}&l={lang}"
+               f"&cc={urllib.parse.quote(cc)}")
+        data = _http_get_json(url, timeout=12.0)
+        entry = (data or {}).get(str(app_id)) if isinstance(data, dict) else None
+        if entry and entry.get("success"):
+            return entry.get("data") or {}
+        if cc == STEAM_CC and STEAM_CC_FALLBACK and STEAM_CC_FALLBACK != STEAM_CC:
+            logger.info(f"appdetails {app_id}: нет в {cc}, пробуем {STEAM_CC_FALLBACK}")
+        if STEAM_CC_FALLBACK == STEAM_CC:
+            break
+    return None
 
 
 def build_wishlist_item(app_id: str) -> Optional[WishlistItem]:

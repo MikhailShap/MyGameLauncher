@@ -138,6 +138,7 @@ class _Session:
         # КАКОЕ качество реально запросил mpv (ответ на «а это точно 1080p?»).
         self._variant_label: Dict[str, str] = {}
         self._logged_variants: set = set()
+        self._seg_variant: Dict[str, str] = {}   # rid сегмента → rid варианта
         # Список высот вариантов (1080, 720, …) по убыванию — для дропдауна
         # выбора качества. Заполняется eager-парсом master в start_session.
         self.heights: List[int] = []
@@ -161,14 +162,30 @@ class _Session:
         with self.lock:
             self._variant_label[rid] = label
 
-    def variant_label_once(self, rid: str) -> Optional[str]:
-        """Метка качества варианта — ОДИН раз на rid (чтобы не спамить лог при
-        каждом повторном запросе плейлиста mpv'ом)."""
+    def variant_label(self, rid: str) -> Optional[str]:
         with self.lock:
-            if rid in self._variant_label and rid not in self._logged_variants:
-                self._logged_variants.add(rid)
-                return self._variant_label[rid]
-            return None
+            return self._variant_label.get(rid)
+
+    def map_segments_to_variant(self, variant_rid: str, seg_ids: List[str]) -> None:
+        """Сегмент → вариант, которому он принадлежит. Нужно, чтобы по первому
+        РЕАЛЬНО отданному сегменту залогировать играющее качество (mpv при
+        старте запрашивает плейлисты ВСЕХ вариантов — их запросы ничего не
+        говорят о том, что играет)."""
+        with self.lock:
+            for sid_ in seg_ids:
+                self._seg_variant.setdefault(sid_, variant_rid)
+
+    def playing_label_once(self, seg_rid: str) -> Optional[str]:
+        """Метка качества по сегменту — один раз на вариант (для лога)."""
+        with self.lock:
+            vr = self._seg_variant.get(seg_rid)
+            if vr is None or vr in self._logged_variants:
+                return None
+            label = self._variant_label.get(vr)
+            if label is None:
+                return None
+            self._logged_variants.add(vr)
+            return label
 
     def register_segment_order(self, ids: List[str]) -> None:
         """Запоминает порядок сегментов медиа-плейлиста для префетча."""
@@ -407,17 +424,21 @@ class TrailerProxy:
 
         # Вложенный медиа-плейлист → переписать его сегменты и отдать как m3u8.
         if _looks_like_m3u8(blob, real_url):
-            # Запрос медиа-плейлиста варианта = mpv ВЫБРАЛ это качество. Логируем
-            # факт (ответ на «а это точно высокое качество?»).
-            label = sess.variant_label_once(rid)
-            if label:
-                logger.info(f"TrailerProxy: mpv играет качество {label} (session {sid})")
+            # NB: запрос ПЛЕЙЛИСТА ничего не говорит о играющем качестве — mpv
+            # при старте пробует плейлисты ВСЕХ вариантов. Реальное качество
+            # логируем ниже, по первому отданному СЕГМЕНТУ варианта.
             text = blob.decode("utf-8", errors="replace")
             rewritten, seg_ids = self._rewrite_playlist(sess, sid, text, final_url)
             sess.register_segment_order(seg_ids)
+            if sess.variant_label(rid):
+                sess.map_segments_to_variant(rid, seg_ids)
             return 200, rewritten.encode("utf-8"), "application/vnd.apple.mpegurl", None
 
-        # Это сегмент → префетч следующих + отдать (с поддержкой Range).
+        # Это сегмент → значит вариант РЕАЛЬНО играет (лог один раз на вариант).
+        playing = sess.playing_label_once(rid)
+        if playing:
+            logger.info(f"TrailerProxy: mpv играет качество {playing} (session {sid})")
+        # Префетч следующих + отдать (с поддержкой Range).
         self._prefetch(sess, rid)
         ctype = _guess_content_type(real_url)
         if rng:

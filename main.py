@@ -2442,11 +2442,11 @@ class CyberLauncher:
             show_controls=True,                 # родная панель media_kit
             muted=False,
             fit=ft.BoxFit.CONTAIN,              # кадр целиком, без обрезки
-            # HIGH-фильтр текстуры: по умолчанию flet_video рендерит с
-            # filter_quality=LOW → билинейщина мылит 1080p при масштабе под
-            # окно (в браузере скейл качественнее — отсюда «тут хуже»).
-            # Предупреждение про блюр в доке касается только Android.
-            filter_quality=ft.FilterQuality.HIGH,
+            # ⚠️ filter_quality НЕ трогать: HIGH на Windows даёт ЧЁРНЫЙ экран
+            # (внешняя D3D-текстура media_kit не поддерживает mipmaps/cubic;
+            # предупреждение в доке про «блюр на Android» — мягкая версия той же
+            # проблемы). Проверено живым прогоном 2026-07-23: звук/таймлайн
+            # идут, кадр чёрный. Дефолт LOW — рабочий.
             configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
             on_error=lambda e: self._on_trailer_error(e),
             # media_kit сам управляет своим fullscreen (родная кнопка в

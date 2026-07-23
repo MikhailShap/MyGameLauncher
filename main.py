@@ -2482,6 +2482,11 @@ class CyberLauncher:
                 show_controls=True,                 # родная панель media_kit
                 muted=False,
                 fit=ft.BoxFit.CONTAIN,              # кадр целиком, без обрезки
+                # HIGH-фильтр текстуры: по умолчанию flet_video рендерит с
+                # filter_quality=LOW → билинейщина мылит 1080p при масштабе под
+                # окно (в браузере скейл качественнее — отсюда «тут хуже»).
+                # Предупреждение про блюр в доке касается только Android.
+                filter_quality=ft.FilterQuality.HIGH,
                 configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
                 on_error=lambda e: self._on_trailer_error(e),
                 # media_kit сам управляет своим fullscreen (родная кнопка в
@@ -3711,6 +3716,20 @@ class CyberLauncher:
                     return
                 self.toggle_bigpicture()
                 return
+            # Пробел = play/pause при открытом плеере трейлера. Клик по видео не
+            # работает (нативная поверхность media_kit не отдаёт события Flet —
+            # грабля §8.3), а клавиатура до нас доходит (как ESC). play_or_pause
+            # у плеера — async; зовём через run_task (рабочий паттерн: функция-
+            # корутина без предварительного вызова, как в остальном коде).
+            if key in (" ", "Space"):
+                sizing = getattr(self, "_trailer_sizing", None)
+                player = sizing.get("player") if sizing else None
+                if player is not None:
+                    try:
+                        self.page.run_task(player.play_or_pause)
+                    except Exception:
+                        pass
+                    return
             # ESC — приоритет: закрыть открытый wishlist-overlay, потом
             # выйти из BigPicture. В обычном режиме без open dialog — игнор.
             if key == "Escape":

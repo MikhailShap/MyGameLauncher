@@ -95,6 +95,11 @@ class _Session:
         # список id в порядке появления; и позиция каждого id.
         self._seg_order: List[str] = []
         self._seg_pos: Dict[str, int] = {}
+        # rid варианта (медиа-плейлиста из master) → метка качества ("1080p
+        # (5800k)"). Заполняется при разборе master. Нужно, чтобы залогировать,
+        # КАКОЕ качество реально запросил mpv (ответ на «а это точно 1080p?»).
+        self._variant_label: Dict[str, str] = {}
+        self._logged_variants: set = set()
 
     def assign(self, abs_url: str) -> str:
         """url → локальный путь /r/<id>. Дедуплицирует одинаковые url."""
@@ -110,6 +115,19 @@ class _Session:
     def url_for(self, rid: str) -> Optional[str]:
         with self.lock:
             return self._id_to_url.get(rid)
+
+    def set_variant_label(self, rid: str, label: str) -> None:
+        with self.lock:
+            self._variant_label[rid] = label
+
+    def variant_label_once(self, rid: str) -> Optional[str]:
+        """Метка качества варианта — ОДИН раз на rid (чтобы не спамить лог при
+        каждом повторном запросе плейлиста mpv'ом)."""
+        with self.lock:
+            if rid in self._variant_label and rid not in self._logged_variants:
+                self._logged_variants.add(rid)
+                return self._variant_label[rid]
+            return None
 
     def register_segment_order(self, ids: List[str]) -> None:
         """Запоминает порядок сегментов медиа-плейлиста для префетча."""
@@ -266,19 +284,32 @@ class TrailerProxy:
                           lambda m: f'URI="{assign(m.group(1))}"', line)
 
         out: List[str] = []
+        pending_inf = None   # последний #EXT-X-STREAM-INF (в master) — метка качества
         for line in text.splitlines():
             s = line.strip()
             if not s:
                 out.append(line)
                 continue
             if s.startswith("#"):
+                if s.startswith("#EXT-X-STREAM-INF:"):
+                    pending_inf = s
                 out.append(rewrite_uri_attr(line) if 'URI="' in s else line)
             else:
                 # Голая URI-строка = сегмент (в медиа-плейлисте) или вариант
                 # (в master). Оба заворачиваем на себя.
                 local = assign(s)
+                rid = local.rsplit("/", 1)[-1]
+                if pending_inf is not None:
+                    # Это вариант из master → запомнить его качество для лога.
+                    res = re.search(r"RESOLUTION=\d+x(\d+)", pending_inf)
+                    bw = re.search(r"BANDWIDTH=(\d+)", pending_inf)
+                    label = f"{res.group(1)}p" if res else "?"
+                    if bw:
+                        label += f" ({int(bw.group(1)) // 1000}k)"
+                    sess.set_variant_label(rid, label)
+                    pending_inf = None
                 out.append(local)
-                seg_ids.append(local.rsplit("/", 1)[-1])
+                seg_ids.append(rid)
         return "\n".join(out) + "\n", seg_ids
 
     # ---------- Обработка запросов от mpv ----------
@@ -316,6 +347,11 @@ class TrailerProxy:
 
         # Вложенный медиа-плейлист → переписать его сегменты и отдать как m3u8.
         if _looks_like_m3u8(blob, real_url):
+            # Запрос медиа-плейлиста варианта = mpv ВЫБРАЛ это качество. Логируем
+            # факт (ответ на «а это точно высокое качество?»).
+            label = sess.variant_label_once(rid)
+            if label:
+                logger.info(f"TrailerProxy: mpv играет качество {label} (session {sid})")
             text = blob.decode("utf-8", errors="replace")
             rewritten, seg_ids = self._rewrite_playlist(sess, sid, text, final_url)
             sess.register_segment_order(seg_ids)
@@ -418,28 +454,38 @@ def _make_handler(proxy: TrailerProxy):
                 return
             sid = m.group("sid")
             rest = m.group("rest")
+
+            # Фаза 1 — собрать тело (сеть). Провал = реальный сбой CDN → 502.
             try:
                 if rest == "master.m3u8":
                     res = proxy.handle_master(sid)
-                    if res is None:
-                        self._fail(404)
-                        return
-                    body, ctype = res
-                    self._send(200, body, ctype)
-                    return
-                rid = rest.split("/", 1)[1]
-                rng = self.headers.get("Range")
-                res = proxy.handle_resource(sid, rid, rng)
-                if res is None:
-                    self._fail(404)
-                    return
-                status, body, ctype, crange = res
-                self._send(status, body, ctype, crange)
+                    payload = None if res is None else (200, res[0], res[1], None)
+                else:
+                    rid = rest.split("/", 1)[1]
+                    payload = proxy.handle_resource(sid, rid, self.headers.get("Range"))
+            except ConnectionError as e:
+                # Оборвалось соединение К CDN — редко, но это сеть, не клиент.
+                logger.info(f"TrailerProxy 502 (CDN) for {self.path}: {e}")
+                self._fail(502)
+                return
             except Exception as e:
-                # Все ретраи провалились или CDN недоступен → 502.
-                # mpv поднимет on_error, приложение покажет снекбар.
+                # Ретраи провалились / CDN недоступен → 502. mpv поднимет
+                # on_error, приложение покажет снекбар.
                 logger.info(f"TrailerProxy 502 for {self.path}: {e}")
                 self._fail(502)
+                return
+
+            if payload is None:
+                self._fail(404)
+                return
+
+            # Фаза 2 — отдать. Обрыв ЗДЕСЬ = mpv сам закрыл запрос (seek/закрытие
+            # плеера, WinError 10053/10054) — это норма, не ошибка. Тихо в debug.
+            try:
+                status, body, ctype, crange = payload
+                self._send(status, body, ctype, crange)
+            except (ConnectionError, OSError) as e:
+                logger.debug(f"TrailerProxy: клиент закрыл запрос {self.path}: {e}")
 
         do_HEAD = do_GET
 

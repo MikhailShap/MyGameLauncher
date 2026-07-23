@@ -60,6 +60,7 @@ def build():
         f"gamepad_manager.py;.",   # Менеджер геймпада
         f"bigpicture_view.py;.",   # PS-стиль режим
         f"wishlist_manager.py;.",  # Раздел "Желаемое" (Steam wishlist)
+        f"trailer_proxy.py;.",     # Локальный HLS-прокси для трейлеров
         f"{icon_file};.",          # Копируем иконку
     ]
 
@@ -87,6 +88,7 @@ def build():
         "gamepad_manager",
         "bigpicture_view",
         "wishlist_manager",
+        "trailer_proxy",
         "flet_video",
         "send2trash",
         "send2trash.win",

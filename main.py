@@ -2432,6 +2432,20 @@ class CyberLauncher:
         elif store_url:
             webbrowser.open(store_url)
 
+    def _trailer_filter_quality(self):
+        """Фильтр текстуры плеера из настроек (см. коммент в _make_trailer_video).
+        Дефолт medium; low = откат к исходному поведению без пересборки."""
+        val = str(self.settings.get("trailer_filter_quality", "medium")).lower()
+        mapping = {
+            "none": ft.FilterQuality.NONE,
+            "low": ft.FilterQuality.LOW,
+            "medium": ft.FilterQuality.MEDIUM,
+            "high": ft.FilterQuality.HIGH,   # ⚠️ на Windows — чёрный экран
+        }
+        fq = mapping.get(val, ft.FilterQuality.MEDIUM)
+        backend_logger.info(f"Trailer filter_quality={val}")
+        return fq
+
     def _make_trailer_video(self, play_url: str, http_headers: dict, w: int, h: int):
         """Собирает fv.Video плеера трейлера. Вынесено, чтобы пересоздавать при
         смене качества (media_kit не меняет resource на лету — грабля 3b)."""
@@ -2442,11 +2456,15 @@ class CyberLauncher:
             show_controls=True,                 # родная панель media_kit
             muted=False,
             fit=ft.BoxFit.CONTAIN,              # кадр целиком, без обрезки
-            # ⚠️ filter_quality НЕ трогать: HIGH на Windows даёт ЧЁРНЫЙ экран
-            # (внешняя D3D-текстура media_kit не поддерживает mipmaps/cubic;
-            # предупреждение в доке про «блюр на Android» — мягкая версия той же
-            # проблемы). Проверено живым прогоном 2026-07-23: звук/таймлайн
-            # идут, кадр чёрный. Дефолт LOW — рабочий.
+            # Фильтрация текстуры при масштабировании 1920p → окно.
+            # ⚠️ HIGH на Windows даёт ЧЁРНЫЙ экран (cubic-путь не работает для
+            # внешней D3D-текстуры media_kit; проверено живьём 2026-07-23:
+            # звук/таймлайн идут, кадр чёрный). LOW (дефолт flet_video) мылит
+            # даунскейл. MEDIUM = трилинейная с mipmaps — целится в даунскейл;
+            # при неподдержке тихо деградирует до LOW (не в чёрный экран).
+            # Переключение БЕЗ пересборки: data/settings.json →
+            # "trailer_filter_quality": "low"|"medium"|"high" + перезапуск.
+            filter_quality=self._trailer_filter_quality(),
             configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
             on_error=lambda e: self._on_trailer_error(e),
             # media_kit сам управляет своим fullscreen (родная кнопка в
@@ -3778,20 +3796,14 @@ class CyberLauncher:
                     return
                 self.toggle_bigpicture()
                 return
-            # Пробел = play/pause при открытом плеере трейлера. Клик по видео не
-            # работает (нативная поверхность media_kit не отдаёт события Flet —
-            # грабля §8.3), а клавиатура до нас доходит (как ESC). play_or_pause
-            # у плеера — async; зовём через run_task (рабочий паттерн: функция-
-            # корутина без предварительного вызова, как в остальном коде).
-            if key in (" ", "Space"):
-                sizing = getattr(self, "_trailer_sizing", None)
-                player = sizing.get("player") if sizing else None
-                if player is not None:
-                    try:
-                        self.page.run_task(player.play_or_pause)
-                    except Exception:
-                        pass
-                    return
+            # Пробел при открытом плеере трейлера обрабатывает САМА панель
+            # media_kit (встроенные шорткаты: space=пауза, f=fullscreen, m=mute,
+            # стрелки=перемотка). Наш глобальный тоггл здесь ДУБЛИРОВАЛ его:
+            # пауза ставилась и тут же снималась («пробел не работает»).
+            # Поэтому только лог для диагностики — действия никакого.
+            if key in (" ", "Space") and getattr(self, "_trailer_sizing", None):
+                backend_logger.info("Trailer: Space pressed (native media_kit shortcut)")
+                return
             # ESC — приоритет: закрыть открытый wishlist-overlay, потом
             # выйти из BigPicture. В обычном режиме без open dialog — игнор.
             if key == "Escape":

@@ -26,7 +26,7 @@ import re
 import time
 import html as _html
 from dataclasses import dataclass, asdict, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -171,6 +171,11 @@ class WishlistItem:
     # Steam чаще ВРЕМЕННЫЙ (троттлинг при массовом импорте), а не «игры нет»:
     # сдаёмся только после DETAILS_MAX_ATTEMPTS попыток.
     details_attempts: int = 0
+    # Пользовательские коллекции желаемого (отдельные от коллекций библиотеки).
+    collections: List[str] = field(default_factory=list)
+    # True — об уже состоявшемся релизе этой игры уже уведомляли (чтобы не
+    # показывать одно и то же при каждом запуске). См. collect_new_releases.
+    release_notified: bool = False
     release_date: str = ""
     developers: str = ""                         # "Dev1, Dev2"
     genres: str = ""                             # "Action, RPG"
@@ -316,6 +321,96 @@ def steam_appdetails(app_id: str, lang: str = "russian") -> Optional[Dict[str, A
         if STEAM_CC_FALLBACK == STEAM_CC:
             break
     return None
+
+
+# --- Разбор даты выхода -------------------------------------------------
+# Steam отдаёт release_date ЛОКАЛИЗОВАННОЙ СТРОКОЙ, а не датой. Реальные
+# форматы в списке на 472 игры: «19 мар. 2026 г.» (377), «2026» (20),
+# «4 квартал 2026» (7), «Ноябрь 2026» (1), «Скоро выйдет»/«Ещё не объявлена»
+# (43). Нужен для фильтров, календаря и уведомлений о релизе.
+_RU_MONTH_PREFIX = {
+    "янв": 1, "фев": 2, "мар": 3, "апр": 4, "май": 5, "мая": 5,
+    "июн": 6, "июл": 7, "авг": 8, "сен": 9, "окт": 10, "ноя": 11, "дек": 12,
+}
+_EN_MONTH_PREFIX = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+# Точность даты: day > month > quarter > year > unknown
+PRECISION_DAY = "day"
+PRECISION_MONTH = "month"
+PRECISION_QUARTER = "quarter"
+PRECISION_YEAR = "year"
+PRECISION_UNKNOWN = "unknown"
+
+
+def _month_from_word(word: str) -> Optional[int]:
+    w = word.strip(".,").lower()
+    for table in (_RU_MONTH_PREFIX, _EN_MONTH_PREFIX):
+        if w[:3] in table:
+            return table[w[:3]]
+    return None
+
+
+def parse_release_date(raw: str) -> Tuple[Optional[date], str]:
+    """Строку релиза Steam → (date, точность). Для неполных дат возвращает
+    начало периода (месяц → 1-е число, квартал → 1-е число первого месяца,
+    год → 1 января), чтобы их можно было сортировать и класть в календарь."""
+    s = (raw or "").strip()
+    if not s:
+        return None, PRECISION_UNKNOWN
+    low = s.lower()
+
+    # «4 квартал 2026» / «Q4 2026»
+    m = re.search(r"(\d)\s*(?:квартал|kv|q)\w*\s*(\d{4})", low) or \
+        re.search(r"q(\d)\s*(\d{4})", low)
+    if m:
+        q, year = int(m.group(1)), int(m.group(2))
+        if 1 <= q <= 4 and 1970 <= year <= 2100:
+            try:
+                return date(year, (q - 1) * 3 + 1, 1), PRECISION_QUARTER
+            except ValueError:
+                pass
+
+    # «19 мар. 2026 г.» / «19 Mar, 2026»
+    m = re.search(r"(\d{1,2})\s+([^\s,]+)[\s,]+(\d{4})", s)
+    if m:
+        day, mon, year = int(m.group(1)), _month_from_word(m.group(2)), int(m.group(3))
+        if mon and 1 <= day <= 31 and 1970 <= year <= 2100:
+            try:
+                return date(year, mon, day), PRECISION_DAY
+            except ValueError:
+                pass
+
+    # «Mar 19, 2026» (день после месяца)
+    m = re.search(r"([A-Za-zА-Яа-я]+)\s+(\d{1,2}),?\s+(\d{4})", s)
+    if m:
+        mon, day, year = _month_from_word(m.group(1)), int(m.group(2)), int(m.group(3))
+        if mon and 1 <= day <= 31 and 1970 <= year <= 2100:
+            try:
+                return date(year, mon, day), PRECISION_DAY
+            except ValueError:
+                pass
+
+    # «Ноябрь 2026» / «November 2026»
+    m = re.search(r"([A-Za-zА-Яа-я]+)\.?\s+(\d{4})", s)
+    if m:
+        mon, year = _month_from_word(m.group(1)), int(m.group(2))
+        if mon and 1970 <= year <= 2100:
+            try:
+                return date(year, mon, 1), PRECISION_MONTH
+            except ValueError:
+                pass
+
+    # Голый год «2026»
+    m = re.fullmatch(r"\s*(\d{4})\s*", s)
+    if m:
+        year = int(m.group(1))
+        if 1970 <= year <= 2100:
+            return date(year, 1, 1), PRECISION_YEAR
+
+    return None, PRECISION_UNKNOWN
 
 
 def steam_get_wishlist(steamid64: str) -> Optional[List[Dict[str, Any]]]:
@@ -607,6 +702,12 @@ class WishlistManager:
         self._details_mem: Dict[str, Dict[str, Any]] = {}
         # Кэш разобранных HLS-вариантов трейлеров (по master-URL, на сессию)
         self._hls_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+        # Явно созданные коллекции желаемого (хранятся отдельно от игр, чтобы
+        # переживать удаление последней игры из коллекции).
+        self._collections: List[str] = []
+        # Кэш разбора строк релиза: parse_release_date зовётся на каждый рендер
+        # списка и в фильтрах, а строк-уникумов мало.
+        self._release_cache: Dict[str, Tuple[Optional[date], str]] = {}
 
     # ---------- Качество трейлера (HLS) ----------
 
@@ -769,6 +870,8 @@ class WishlistManager:
         try:
             with open(self.file, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            self._collections = [c for c in (data.get("collections") or [])
+                                 if isinstance(c, str) and c.strip()]
             for raw in data.get("items", []):
                 try:
                     item = WishlistItem.from_dict(raw)
@@ -809,6 +912,9 @@ class WishlistManager:
         try:
             payload = {
                 "items": [it.to_dict() for it in self._items.values()],
+                # Коллекции — отдельным списком, иначе пустая коллекция
+                # (созданная, но без игр) терялась бы при перезапуске.
+                "collections": list(self._collections),
             }
             tmp = self.file.with_suffix(".json.tmp")
             with open(tmp, "w", encoding="utf-8") as f:
@@ -1010,6 +1116,178 @@ class WishlistManager:
 
     def get_items(self) -> List[WishlistItem]:
         return list(self._items.values())
+
+    # ---------- Коллекции желаемого ----------
+
+    def get_collections(self) -> List[str]:
+        """Все коллекции: явно созданные + встречающиеся у игр (на случай
+        ручной правки JSON). Отсортированы по алфавиту."""
+        names = set(self._collections)
+        for it in self._items.values():
+            names.update(it.collections or [])
+        return sorted(names, key=lambda s: s.lower())
+
+    def create_collection(self, name: str) -> bool:
+        name = (name or "").strip()
+        if not name or name in self._collections:
+            return False
+        self._collections.append(name)
+        self.save_sync()
+        logger.info(f"Wishlist collection created: '{name}'")
+        return True
+
+    def rename_collection(self, old: str, new: str) -> bool:
+        new = (new or "").strip()
+        if not new or not old or old == new:
+            return False
+        if old in self._collections:
+            self._collections = [new if c == old else c for c in self._collections]
+        elif new not in self._collections:
+            self._collections.append(new)
+        for it in self._items.values():
+            if old in (it.collections or []):
+                it.collections = [new if c == old else c for c in it.collections]
+        self.save_sync()
+        return True
+
+    def delete_collection(self, name: str) -> bool:
+        """Удаляет коллекцию. Игры остаются — снимается только принадлежность."""
+        if not name:
+            return False
+        self._collections = [c for c in self._collections if c != name]
+        for it in self._items.values():
+            if name in (it.collections or []):
+                it.collections = [c for c in it.collections if c != name]
+        self.save_sync()
+        logger.info(f"Wishlist collection deleted: '{name}'")
+        return True
+
+    def toggle_item_collection(self, app_id: str, name: str) -> Optional[bool]:
+        """Добавить/убрать игру из коллекции. → новое состояние (в коллекции?)."""
+        item = self._items.get(str(app_id))
+        if item is None or not name:
+            return None
+        cols = list(item.collections or [])
+        if name in cols:
+            cols.remove(name)
+            state = False
+        else:
+            cols.append(name)
+            state = True
+            if name not in self._collections:
+                self._collections.append(name)
+        item.collections = cols
+        self.save_sync()
+        return state
+
+    # ---------- Фильтры / календарь ----------
+
+    def release_info(self, item: WishlistItem) -> Tuple[Optional[date], str]:
+        """(дата, точность) с кэшем — вызывается на каждый рендер списка."""
+        raw = item.release_date or ""
+        cached = self._release_cache.get(raw)
+        if cached is None:
+            cached = parse_release_date(raw)
+            self._release_cache[raw] = cached
+        return cached
+
+    def get_genres(self) -> List[str]:
+        """Все жанры, встречающиеся в списке (для выпадающего фильтра)."""
+        genres = set()
+        for it in self._items.values():
+            for g in (it.genres or "").split(","):
+                g = g.strip()
+                if g:
+                    genres.add(g)
+        return sorted(genres, key=lambda s: s.lower())
+
+    def get_years(self) -> List[int]:
+        """Годы релиза, встречающиеся в списке, по убыванию."""
+        years = set()
+        for it in self._items.values():
+            d, prec = self.release_info(it)
+            if d is not None:
+                years.add(d.year)
+        return sorted(years, reverse=True)
+
+    def filter_items(self, items: List[WishlistItem], *, year=None, genre=None,
+                     status=None, collection=None) -> List[WishlistItem]:
+        """Фильтрация списка. status: 'released' | 'upcoming' | 'undated'."""
+        today = date.today()
+        out = []
+        for it in items:
+            if collection and collection not in (it.collections or []):
+                continue
+            if genre:
+                gs = [g.strip() for g in (it.genres or "").split(",")]
+                if genre not in gs:
+                    continue
+            d, prec = self.release_info(it)
+            if year is not None and (d is None or d.year != year):
+                continue
+            if status == "released" and not (d is not None and d <= today):
+                continue
+            if status == "upcoming" and not (d is not None and d > today):
+                continue
+            if status == "undated" and d is not None:
+                continue
+            out.append(it)
+        return out
+
+    def upcoming_by_month(self, months_ahead: int = 12
+                          ) -> Dict[Tuple[int, int], List[WishlistItem]]:
+        """Игры с известной датой, сгруппированные по (год, месяц) — для
+        календаря. Включает недавно вышедшие (текущий месяц) и будущие."""
+        today = date.today()
+        start = date(today.year, today.month, 1)
+        result: Dict[Tuple[int, int], List[WishlistItem]] = {}
+        for it in self._items.values():
+            d, prec = self.release_info(it)
+            if d is None or d < start:
+                continue
+            months_diff = (d.year - start.year) * 12 + (d.month - start.month)
+            if months_diff > months_ahead:
+                continue
+            result.setdefault((d.year, d.month), []).append(it)
+        for key in result:
+            result[key].sort(key=lambda x: (self.release_info(x)[0] or date.max,
+                                            (x.title or "").lower()))
+        return result
+
+    def collect_new_releases(self) -> List[WishlistItem]:
+        """Игры из желаемого, которые ВЫШЛИ и о которых ещё не уведомляли.
+        Точность даты обязана быть дневной — «2026» или «4 квартал» не значат,
+        что игра вышла. Помечает найденные, чтобы не повторяться."""
+        today = date.today()
+        fresh = []
+        for it in self._items.values():
+            if it.release_notified:
+                continue
+            d, prec = self.release_info(it)
+            if d is None or prec != PRECISION_DAY:
+                continue
+            if d <= today:
+                it.release_notified = True
+                fresh.append(it)
+        if fresh:
+            self.save_sync()
+        return fresh
+
+    def mark_all_released_notified(self) -> int:
+        """Первичная инициализация: помечает уже вышедшие игры как «уведомлены»,
+        чтобы при первом запуске не показать сотню уведомлений о старых играх."""
+        today = date.today()
+        n = 0
+        for it in self._items.values():
+            if it.release_notified:
+                continue
+            d, prec = self.release_info(it)
+            if d is not None and d <= today:
+                it.release_notified = True
+                n += 1
+        if n:
+            self.save_sync()
+        return n
 
     def get_sorted(self, sort_key: str) -> List[WishlistItem]:
         items = list(self._items.values())

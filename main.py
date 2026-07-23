@@ -10,6 +10,7 @@ import os
 import atexit
 import subprocess
 import time
+from datetime import date
 from pathlib import Path
 from tkinter import Tk, filedialog
 from types import SimpleNamespace
@@ -1259,6 +1260,7 @@ class CyberLauncher:
         self.sidebar_buttons["all"] = SidebarButton(ft.Icons.GRID_VIEW_ROUNDED, "Все игры", is_active=True, on_click=self.on_filter_click, data="all")
         self.sidebar_buttons["favorites"] = SidebarButton(ft.Icons.FAVORITE_BORDER, "Избранное", on_click=self.on_filter_click, data="favorites")
         self.sidebar_buttons["wishlist"] = SidebarButton(ft.Icons.LOCAL_FIRE_DEPARTMENT_OUTLINED, "Желаемое", on_click=self.on_filter_click, data="wishlist")
+        self.sidebar_buttons["calendar"] = SidebarButton(ft.Icons.EVENT_OUTLINED, "Календарь релизов", on_click=self.on_filter_click, data="calendar")
         self.sidebar_buttons["steam"] = SidebarButton(ft.Icons.VIDEOGAME_ASSET_OUTLINED, "Steam", on_click=self.on_filter_click, data="steam")
         self.sidebar_buttons["epic"] = SidebarButton(ft.Icons.TOKEN_OUTLINED, "Epic Games", on_click=self.on_filter_click, data="epic")
         self.sidebar_buttons["system"] = SidebarButton(ft.Icons.COMPUTER_OUTLINED, "Системные", on_click=self.on_filter_click, data="system")
@@ -1315,6 +1317,7 @@ class CyberLauncher:
                     self.sidebar_buttons["all"],
                     self.sidebar_buttons["favorites"],
                     self.sidebar_buttons["wishlist"],
+                    self.sidebar_buttons["calendar"],
                     ft.Container(height=5),
                     ft.Text("ПЛАТФОРМЫ", color="#80FFFFFF", size=11, weight=ft.FontWeight.BOLD),
                     ft.Container(height=5),
@@ -1505,6 +1508,10 @@ class CyberLauncher:
                 self.page.run_task(self._wishlist_fill_details_task)
         except Exception as ex:
             backend_logger.warning(f"Wishlist resume check failed: {ex}")
+
+        # Уведомления о вышедших играх из желаемого (первый запуск — только
+        # проставляет базу, чтобы не сыпать уведомлениями о старых играх).
+        self.page.run_task(self._check_wishlist_releases)
 
         # Hotkey F11 для toggle BigPicture (помимо кнопки геймпада)
         self.page.on_keyboard_event = self._on_keyboard_event
@@ -1920,6 +1927,9 @@ class CyberLauncher:
             self._wishlist_sort = "priority"
         if not hasattr(self, "_wishlist_page"):
             self._wishlist_page = 0
+        if not hasattr(self, "_wishlist_filters"):
+            self._wishlist_filters = {"year": None, "genre": None,
+                                      "status": None, "collection": None}
 
         # Заголовок + кнопки управления (Добавить, сортировка)
         title_row = ft.Row(
@@ -1973,8 +1983,15 @@ class CyberLauncher:
             ],
         )
 
-        # Items grid
-        items = self.game_manager.wishlist.get_sorted(self._wishlist_sort)
+        # Items grid (с учётом фильтров)
+        wl = self.game_manager.wishlist
+        items = wl.get_sorted(self._wishlist_sort)
+        f = self._wishlist_filters
+        total_all = len(items)
+        items = wl.filter_items(
+            items, year=f.get("year"), genre=f.get("genre"),
+            status=f.get("status"), collection=f.get("collection"))
+        filters_row = self._build_wishlist_filters_row(total_all, len(items))
 
         # ПАГИНАЦИЯ. После импорта из Steam в списке могут быть сотни игр, а
         # раньше рисовались ВСЕ разом — 470 карточек, каждая с картинкой из
@@ -1991,7 +2008,29 @@ class CyberLauncher:
         gap = 15
         cols = max(1, int((avail + gap) // (300 + gap)))
         card_w = max(280, int((avail - gap * (cols - 1)) / cols))
-        cards = [self._build_wishlist_card(it, card_w) for it in visible]
+        # КЭШ КАРТОЧЕК: без него каждый rebuild (клик приоритета, догрузка
+        # деталей, ресайз) пересоздавал все объекты — Flutter перестраивал
+        # поддерево и заново разрешал картинки, отсюда «подтормаживает».
+        # Ключ включает всё, что влияет на вид карточки.
+        if not hasattr(self, "_wl_card_cache"):
+            self._wl_card_cache = {}
+        cards = []
+        for it in visible:
+            key = (it.app_id, it.priority, it.title, bool(it.header_image_url),
+                   bool(it.trailer_url), card_w, tuple(it.collections or ()))
+            card = self._wl_card_cache.get(key)
+            if card is None:
+                card = self._build_wishlist_card(it, card_w)
+                self._wl_card_cache[key] = card
+            cards.append(card)
+        # Кэш не должен расти бесконечно (ключ меняется при каждой правке).
+        if len(self._wl_card_cache) > 400:
+            self._wl_card_cache = {
+                k: v for k, v in self._wl_card_cache.items()
+                if k in {(i.app_id, i.priority, i.title, bool(i.header_image_url),
+                          bool(i.trailer_url), card_w, tuple(i.collections or ()))
+                         for i in visible}
+            }
 
         grid_controls = [
             ft.Row(controls=cards, wrap=True, spacing=gap, run_spacing=gap),
@@ -2061,6 +2100,8 @@ class CyberLauncher:
                 controls=[
                     title_row,
                     ft.Container(height=10),
+                    filters_row,
+                    ft.Container(height=8),
                     controls_row,
                     ft.Container(height=10),
                     empty_hint if not items else self._wishlist_grid,
@@ -2074,6 +2115,265 @@ class CyberLauncher:
     # быть на сотни игр — рисовать все разом нельзя (UI перестаёт отвечать).
     _WISHLIST_PAGE_SIZE = 24
 
+    _WL_STATUS_LABELS = {
+        None: "Все",
+        "released": "Вышедшие",
+        "upcoming": "Ожидаются",
+        "undated": "Без даты",
+    }
+
+    def _wl_set_filter(self, key: str, value):
+        """Меняет фильтр и перестраивает список с первой страницы."""
+        self._wishlist_filters[key] = value
+        self._wishlist_page = 0
+        self._refresh_wishlist_view(keep_page=True)
+
+    def _wl_filter_chip(self, label: str, value_label: str, active: bool,
+                        items: list) -> ft.Control:
+        """Компактный выпадающий фильтр: подпись + текущее значение."""
+        return ft.PopupMenuButton(
+            content=ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Text(f"{label}:", size=12, color=TEXT_GREY),
+                        ft.Text(value_label, size=12,
+                                color=ACCENT_BLUE if active else TEXT_WHITE,
+                                weight=ft.FontWeight.W_500),
+                        ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=18,
+                                color=TEXT_GREY),
+                    ],
+                    spacing=5, tight=True,
+                ),
+                padding=ft.Padding(left=12, right=6, top=6, bottom=6),
+                border_radius=8, bgcolor="#1E1E1E",
+                border=ft.Border.all(1, ACCENT_BLUE if active else "#333333"),
+            ),
+            items=items,
+        )
+
+    def _build_wishlist_filters_row(self, total_all: int, shown: int) -> ft.Control:
+        """Строка фильтров: статус релиза, год, жанр, коллекция + сброс."""
+        wl = self.game_manager.wishlist
+        f = self._wishlist_filters
+
+        status_items = [
+            ft.PopupMenuItem(lbl, on_click=lambda _, v=val: self._wl_set_filter("status", v))
+            for val, lbl in self._WL_STATUS_LABELS.items()
+        ]
+        year_items = [ft.PopupMenuItem("Все годы",
+                                       on_click=lambda _: self._wl_set_filter("year", None))]
+        year_items += [
+            ft.PopupMenuItem(str(y), on_click=lambda _, v=y: self._wl_set_filter("year", v))
+            for y in wl.get_years()
+        ]
+        genre_items = [ft.PopupMenuItem("Все жанры",
+                                        on_click=lambda _: self._wl_set_filter("genre", None))]
+        genre_items += [
+            ft.PopupMenuItem(g, on_click=lambda _, v=g: self._wl_set_filter("genre", v))
+            for g in wl.get_genres()
+        ]
+        cols = wl.get_collections()
+        col_items = [ft.PopupMenuItem("Все игры",
+                                      on_click=lambda _: self._wl_set_filter("collection", None))]
+        col_items += [
+            ft.PopupMenuItem(c, on_click=lambda _, v=c: self._wl_set_filter("collection", v))
+            for c in cols
+        ]
+
+        controls = [
+            self._wl_filter_chip("Статус", self._WL_STATUS_LABELS.get(f.get("status"), "Все"),
+                                 f.get("status") is not None, status_items),
+            self._wl_filter_chip("Год", str(f["year"]) if f.get("year") else "Все",
+                                 f.get("year") is not None, year_items),
+            self._wl_filter_chip("Жанр", f.get("genre") or "Все",
+                                 f.get("genre") is not None, genre_items),
+            self._wl_filter_chip("Коллекция", f.get("collection") or "Все",
+                                 f.get("collection") is not None, col_items),
+            ft.Container(
+                content=ft.Row(
+                    controls=[ft.Icon(ft.Icons.CREATE_NEW_FOLDER_OUTLINED,
+                                      size=16, color=ACCENT_PURPLE),
+                              ft.Text("Коллекции", size=12, color=ACCENT_PURPLE)],
+                    spacing=6, tight=True,
+                ),
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+                border_radius=8, bgcolor="#1E1E1E",
+                border=ft.Border.all(1, "#333333"), ink=True,
+                tooltip="Создать / удалить коллекции",
+                on_click=lambda e: self._show_wishlist_collections_dialog(),
+            ),
+        ]
+        if any(f.get(k) is not None for k in ("status", "year", "genre", "collection")):
+            controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        controls=[ft.Icon(ft.Icons.CLOSE, size=15, color="#FF8A80"),
+                                  ft.Text(f"Сброс ({shown} из {total_all})",
+                                          size=12, color="#FF8A80")],
+                        spacing=6, tight=True,
+                    ),
+                    padding=ft.Padding(left=10, right=12, top=7, bottom=7),
+                    border_radius=8, bgcolor="#1E1E1E",
+                    border=ft.Border.all(1, "#5A2A2A"), ink=True,
+                    on_click=lambda e: self._wl_reset_filters(),
+                )
+            )
+        return ft.Row(controls=controls, spacing=10, wrap=True, run_spacing=8,
+                      vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+    def _wl_reset_filters(self):
+        self._wishlist_filters = {"year": None, "genre": None,
+                                  "status": None, "collection": None}
+        self._wishlist_page = 0
+        self._refresh_wishlist_view(keep_page=True)
+
+    def _show_wishlist_collections_dialog(self):
+        """Создание/удаление коллекций желаемого."""
+        wl = self.game_manager.wishlist
+        close_ref = {}
+        list_col = ft.Column(controls=[], spacing=6, tight=True)
+        name_field = ft.TextField(hint_text="Название коллекции", text_size=13,
+                                  border_radius=8, bgcolor="#1E1E1E",
+                                  border_color="#333333",
+                                  focused_border_color=ACCENT_BLUE)
+
+        def render():
+            list_col.controls.clear()
+            names = wl.get_collections()
+            if not names:
+                list_col.controls.append(
+                    ft.Text("Пока нет ни одной коллекции", size=12, color=TEXT_GREY))
+            for c in names:
+                count = len(wl.filter_items(list(wl._items.values()), collection=c))
+                list_col.controls.append(
+                    ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.FOLDER_OUTLINED, size=18, color=ACCENT_PURPLE),
+                            ft.Text(c, size=13, color=TEXT_WHITE, expand=True),
+                            ft.Text(f"{count}", size=12, color=TEXT_GREY),
+                            ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color="#FF5252",
+                                          icon_size=18, tooltip="Удалить коллекцию",
+                                          on_click=lambda e, n=c: on_delete(n)),
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
+                )
+            try:
+                list_col.update()
+            except Exception:
+                pass
+
+        def on_add(e):
+            name = (name_field.value or "").strip()
+            if not name:
+                return
+            if wl.create_collection(name):
+                name_field.value = ""
+                try:
+                    name_field.update()
+                except Exception:
+                    pass
+                render()
+
+        def on_delete(name):
+            wl.delete_collection(name)
+            # Если удалили коллекцию, по которой фильтровали — снять фильтр.
+            if self._wishlist_filters.get("collection") == name:
+                self._wishlist_filters["collection"] = None
+            render()
+
+        render()
+        title_row = ft.Row(
+            controls=[ft.Icon(ft.Icons.CREATE_NEW_FOLDER_OUTLINED, color=ACCENT_PURPLE, size=22),
+                      ft.Text("Коллекции желаемого", weight=ft.FontWeight.BOLD,
+                              size=18, color=TEXT_WHITE)],
+            spacing=10,
+        )
+        body = ft.Column(
+            controls=[
+                ft.Text("Коллекции для списка желаемого — отдельные от коллекций "
+                        "библиотеки. Игру добавляют в коллекцию из её карточки.",
+                        size=12, color=TEXT_GREY),
+                ft.Container(height=12),
+                ft.Row(controls=[name_field,
+                                 ft.ElevatedButton("Создать", icon=ft.Icons.ADD,
+                                                   on_click=on_add,
+                                                   bgcolor=ACCENT_PURPLE, color=TEXT_WHITE)],
+                       spacing=8),
+                ft.Container(height=14),
+                ft.Container(content=list_col, height=220,
+                             padding=ft.Padding(left=4, right=4, top=4, bottom=4)),
+            ],
+            tight=True, spacing=0,
+        )
+        actions = ft.Row(
+            controls=[ft.Container(expand=True),
+                      ft.ElevatedButton("Готово",
+                                        on_click=lambda e: (close_ref["fn"](),
+                                                            self._refresh_wishlist_view()),
+                                        bgcolor=ACCENT_BLUE, color=TEXT_WHITE)],
+        )
+        close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=560)
+
+    def _show_wishlist_item_collections(self, item):
+        """Выбор коллекций для конкретной игры (чекбоксы)."""
+        wl = self.game_manager.wishlist
+        close_ref = {}
+        names = wl.get_collections()
+        col = ft.Column(controls=[], spacing=4, tight=True, scroll=ft.ScrollMode.AUTO)
+
+        def render():
+            col.controls.clear()
+            if not names:
+                col.controls.append(
+                    ft.Text("Сначала создайте коллекцию — кнопка «Коллекции» "
+                            "над списком.", size=12, color=TEXT_GREY))
+            for c in names:
+                checked = c in (item.collections or [])
+                col.controls.append(
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[
+                                ft.Icon(ft.Icons.CHECK_BOX if checked
+                                        else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                                        size=20,
+                                        color=ACCENT_PURPLE if checked else TEXT_GREY),
+                                ft.Text(c, size=13, color=TEXT_WHITE, expand=True),
+                            ],
+                            spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=ft.Padding(left=8, right=8, top=7, bottom=7),
+                        border_radius=8, ink=True,
+                        bgcolor="#15FFFFFF" if checked else None,
+                        on_click=lambda e, n=c: on_toggle(n),
+                    )
+                )
+            try:
+                col.update()
+            except Exception:
+                pass
+
+        def on_toggle(name):
+            wl.toggle_item_collection(item.app_id, name)
+            render()
+
+        render()
+        title_row = ft.Row(
+            controls=[ft.Icon(ft.Icons.FOLDER_OUTLINED, color=ACCENT_PURPLE, size=22),
+                      ft.Text(f"Коллекции: {(item.title or item.app_id)[:34]}",
+                              weight=ft.FontWeight.BOLD, size=17, color=TEXT_WHITE)],
+            spacing=10,
+        )
+        actions = ft.Row(
+            controls=[ft.Container(expand=True),
+                      ft.ElevatedButton("Готово",
+                                        on_click=lambda e: (close_ref["fn"](),
+                                                            self._refresh_wishlist_view()),
+                                        bgcolor=ACCENT_BLUE, color=TEXT_WHITE)],
+        )
+        close_ref["fn"] = self._open_card_modal(
+            title_row, ft.Container(content=col, height=260), actions, width=460)
+
     def _wishlist_load_more(self, e=None):
         self._wishlist_page += 1
         self._refresh_wishlist_view()
@@ -2086,10 +2386,13 @@ class CyberLauncher:
         self.bg_container.content = self.wishlist_view
         self.page.update()
 
-    def _refresh_wishlist_view(self):
-        """Полный rebuild — используется после add/remove/toggle."""
+    def _refresh_wishlist_view(self, keep_page: bool = True):
+        """Rebuild вида «Желаемое» (после add/remove/приоритета/фильтров).
+        Карточки берутся из кэша, поэтому пересборка дешёвая."""
         if self.current_filter != "wishlist":
             return
+        if not keep_page:
+            self._wishlist_page = 0
         self.wishlist_view = self.build_wishlist_view()
         self.bg_container.content = self.wishlist_view
         self.page.update()
@@ -2175,6 +2478,16 @@ class CyberLauncher:
                 color=TEXT_WHITE,
             )
 
+        # Коллекции игры (подсвечена, если игра хоть в одной)
+        in_cols = bool(item.collections)
+        col_btn = ft.IconButton(
+            ft.Icons.FOLDER if in_cols else ft.Icons.FOLDER_OUTLINED,
+            icon_color=ACCENT_PURPLE if in_cols else TEXT_GREY,
+            tooltip=("В коллекциях: " + ", ".join(item.collections)) if in_cols
+                    else "Добавить в коллекцию",
+            on_click=lambda e, it=item: self._show_wishlist_item_collections(it),
+        )
+
         # Delete button
         del_btn = ft.IconButton(
             ft.Icons.DELETE_OUTLINE,
@@ -2210,6 +2523,7 @@ class CyberLauncher:
         if trailer_btn is not None:
             actions.append(trailer_btn)
         actions.append(ft.Container(expand=True))
+        actions.append(col_btn)
         actions.append(del_btn)
 
         body = ft.Container(
@@ -2282,8 +2596,13 @@ class CyberLauncher:
         new_val = self.game_manager.wishlist.cycle_priority(app_id)
         if new_val is None:
             return
-        # Полный rebuild чтобы пересортировать (если сейчас sort=priority)
-        self._refresh_wishlist_view()
+        # Полный rebuild нужен ТОЛЬКО при сортировке по приоритету (меняется
+        # порядок). При остальных сортировках порядок тот же — перестраивать
+        # все карточки ради одного огонька расточительно (это и был лаг клика).
+        if self._wishlist_sort == "priority":
+            self._refresh_wishlist_view()
+        else:
+            self._refresh_wishlist_view(keep_page=True)
 
     # Старое имя оставлено как shim для безопасности — могли остаться вызовы
     # из других мест. Делегирует на cycle_priority.
@@ -3277,6 +3596,188 @@ class CyberLauncher:
             spacing=8,
         )
         close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=460)
+
+    _MONTH_NAMES_RU = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                       "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+
+    def build_wishlist_calendar_view(self):
+        """Календарь релизов: игры из желаемого, сгруппированные по месяцам
+        выхода. Только с известной датой — «Скоро выйдет» показывать негде."""
+        from wishlist_manager import PRECISION_DAY
+        wl = self.game_manager.wishlist
+        by_month = wl.upcoming_by_month(months_ahead=24)
+        today = date.today()
+
+        col = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=0)
+        if not by_month:
+            col.controls.append(
+                ft.Container(
+                    padding=40, alignment=ft.Alignment(0, 0),
+                    content=ft.Column(
+                        controls=[
+                            ft.Icon(ft.Icons.EVENT_BUSY, color=TEXT_GREY, size=64),
+                            ft.Text("Нет игр с известной датой выхода",
+                                    size=16, color=TEXT_GREY, weight=ft.FontWeight.W_500),
+                            ft.Text("Добавьте в желаемое игры, у которых Steam "
+                                    "указывает дату релиза.", size=13, color=TEXT_GREY),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10,
+                    ),
+                )
+            )
+        for (year, month) in sorted(by_month):
+            games = by_month[(year, month)]
+            is_current = (year == today.year and month == today.month)
+            col.controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.EVENT, size=20,
+                                    color=ACCENT_BLUE if is_current else "#FF6B35"),
+                            ft.Text(f"{self._MONTH_NAMES_RU[month]} {year}",
+                                    size=18, weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
+                            ft.Container(
+                                content=ft.Text(f"{len(games)}", size=11, color=TEXT_WHITE),
+                                bgcolor="#33FFFFFF", border_radius=10,
+                                padding=ft.Padding(left=8, right=8, top=2, bottom=2),
+                            ),
+                        ],
+                        spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.Padding(left=0, right=0, top=18, bottom=10),
+                )
+            )
+            for it in games:
+                d, prec = wl.release_info(it)
+                # Точная дата — крупным днём; неточная («4 квартал») — значком ≈.
+                if prec == PRECISION_DAY:
+                    day_label = str(d.day)
+                    day_sub = self._MONTH_NAMES_RU[d.month][:3].lower()
+                else:
+                    day_label = "≈"
+                    day_sub = {"quarter": "квартал", "month": "месяц",
+                               "year": "год"}.get(prec, "")
+                released = d is not None and d <= today
+                col.controls.append(
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[
+                                ft.Container(
+                                    width=54, height=54, border_radius=10,
+                                    bgcolor="#1E1E1E",
+                                    border=ft.Border.all(
+                                        1, "#4CAF50" if released else "#333333"),
+                                    alignment=ft.Alignment(0, 0),
+                                    content=ft.Column(
+                                        controls=[
+                                            ft.Text(day_label, size=18,
+                                                    weight=ft.FontWeight.BOLD,
+                                                    color="#4CAF50" if released else TEXT_WHITE),
+                                            ft.Text(day_sub, size=9, color=TEXT_GREY),
+                                        ],
+                                        spacing=0,
+                                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                        alignment=ft.MainAxisAlignment.CENTER,
+                                    ),
+                                ),
+                                ft.Container(
+                                    width=110, height=52, border_radius=6,
+                                    bgcolor=CARD_BG,
+                                    image=ft.DecorationImage(src=it.header_image_url,
+                                                             fit="cover")
+                                    if it.header_image_url else None,
+                                ),
+                                ft.Column(
+                                    controls=[
+                                        ft.Text(it.title or f"App {it.app_id}",
+                                                size=15, color=TEXT_WHITE,
+                                                weight=ft.FontWeight.W_500,
+                                                max_lines=1,
+                                                overflow=ft.TextOverflow.ELLIPSIS),
+                                        ft.Text(it.release_date or "", size=12,
+                                                color="#4CAF50" if released else TEXT_GREY),
+                                    ],
+                                    spacing=2, expand=True, tight=True,
+                                ),
+                                ft.Container(
+                                    content=ft.Text("ВЫШЛА", size=10, color="#4CAF50",
+                                                    weight=ft.FontWeight.BOLD),
+                                    visible=released,
+                                    bgcolor="#1A4CAF50", border_radius=6,
+                                    padding=ft.Padding(left=8, right=8, top=4, bottom=4),
+                                ),
+                                ft.ElevatedButton(
+                                    "Steam", icon=ft.Icons.OPEN_IN_NEW,
+                                    on_click=lambda e, u=it.store_url: (
+                                        webbrowser.open(u) if u else None),
+                                    bgcolor="#1B2838", color=TEXT_WHITE,
+                                ),
+                            ],
+                            spacing=14, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=ft.Padding(left=12, right=12, top=8, bottom=8),
+                        margin=ft.Margin(left=0, right=0, top=0, bottom=8),
+                        border_radius=10, bgcolor="#15FFFFFF", ink=True,
+                        on_click=lambda e, g=it: self._show_wishlist_detail(g),
+                    )
+                )
+
+        total = sum(len(v) for v in by_month.values())
+        return ft.Container(
+            expand=True,
+            padding=ft.Padding(left=40, right=40, top=30, bottom=20),
+            content=ft.Column(
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.EVENT, color="#FF6B35", size=32),
+                            ft.Text("Календарь релизов", size=28,
+                                    weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
+                            ft.Container(expand=True),
+                            ft.Text(f"{total} игр с датой", size=13, color=TEXT_GREY),
+                        ],
+                        spacing=15, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Container(height=6),
+                    ft.Text("Ближайшие 24 месяца. Игры без точной даты показаны "
+                            "значком ≈ в начале своего периода.",
+                            size=12, color=TEXT_GREY),
+                    ft.Container(height=6),
+                    col,
+                ],
+                expand=True, spacing=0,
+            ),
+        )
+
+    async def _check_wishlist_releases(self):
+        """Уведомления о вышедших играх из желаемого. При ПЕРВОМ запуске просто
+        помечает всё вышедшее (иначе прилетела бы сотня уведомлений о старых
+        играх), дальше сообщает только о новых релизах."""
+        try:
+            wl = self.game_manager.wishlist
+            if not self.settings.get("wishlist_release_baseline_done"):
+                marked = await asyncio.to_thread(wl.mark_all_released_notified)
+                self.settings["wishlist_release_baseline_done"] = True
+                self.save_settings()
+                backend_logger.info(
+                    f"Wishlist releases: первичная пометка {marked} вышедших игр")
+                return
+            fresh = await asyncio.to_thread(wl.collect_new_releases)
+            if not fresh:
+                return
+            names = ", ".join((g.title or g.app_id) for g in fresh[:3])
+            more = f" и ещё {len(fresh) - 3}" if len(fresh) > 3 else ""
+            msg = f"🎉 Вышли игры из желаемого: {names}{more}"
+            backend_logger.info(f"Wishlist releases: {len(fresh)} новых — {names}")
+            self.show_snackbar(msg, bgcolor="#4CAF50", duration=12000)
+            # Дублируем в трей — снекбар можно не заметить.
+            try:
+                if HAS_TRAY and TRAY_ICON is not None:
+                    TRAY_ICON.notify(msg, "CyberLauncher")
+            except Exception:
+                pass
+        except Exception as ex:
+            backend_logger.warning(f"Wishlist release check failed: {ex}")
 
     def show_wishlist_import_dialog(self):
         """Импорт списка желаемого из Steam. SteamID определяется автоматически
@@ -5018,6 +5519,10 @@ class CyberLauncher:
             # Раздел "Желаемое" — отдельная view с карточками Steam-игр
             self.wishlist_view = self.build_wishlist_view()
             self.bg_container.content = self.wishlist_view
+            self.page.update()
+        elif filter_name == "calendar":
+            # Календарь релизов желаемого (по месяцам)
+            self.bg_container.content = self.build_wishlist_calendar_view()
             self.page.update()
         else:
             self.bg_container.content = self.games_container

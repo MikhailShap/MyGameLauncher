@@ -2432,6 +2432,31 @@ class CyberLauncher:
         elif store_url:
             webbrowser.open(store_url)
 
+    def _make_trailer_video(self, play_url: str, http_headers: dict, w: int, h: int):
+        """Собирает fv.Video плеера трейлера. Вынесено, чтобы пересоздавать при
+        смене качества (media_kit не меняет resource на лету — грабля 3b)."""
+        return fv.Video(
+            width=w, height=h,
+            playlist=[fv.VideoMedia(resource=play_url, http_headers=http_headers)],
+            autoplay=True,
+            show_controls=True,                 # родная панель media_kit
+            muted=False,
+            fit=ft.BoxFit.CONTAIN,              # кадр целиком, без обрезки
+            # HIGH-фильтр текстуры: по умолчанию flet_video рендерит с
+            # filter_quality=LOW → билинейщина мылит 1080p при масштабе под
+            # окно (в браузере скейл качественнее — отсюда «тут хуже»).
+            # Предупреждение про блюр в доке касается только Android.
+            filter_quality=ft.FilterQuality.HIGH,
+            configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
+            on_error=lambda e: self._on_trailer_error(e),
+            # media_kit сам управляет своим fullscreen (родная кнопка в
+            # show_controls). Отслеживаем состояние, чтобы при закрытии плеера
+            # гарантированно из него выйти (иначе fullscreen-поверхность
+            # остаётся, а наш overlay исчезает).
+            on_enter_fullscreen=lambda e: setattr(self, "_video_fullscreen", True),
+            on_exit_fullscreen=lambda e: setattr(self, "_video_fullscreen", False),
+        )
+
     def _show_trailer_player(self, url: str, name: str = "", store_url: str = ""):
         """Трейлер в отдельном модале с РОДНОЙ панелью управления media_kit
         (show_controls=True): перемотка, громкость, скорость, фуллскрин — всё
@@ -2475,27 +2500,7 @@ class CyberLauncher:
                 play_url = url
 
         try:
-            player = fv.Video(
-                width=vid_w, height=vid_h,
-                playlist=[fv.VideoMedia(resource=play_url, http_headers=http_headers)],
-                autoplay=True,
-                show_controls=True,                 # родная панель media_kit
-                muted=False,
-                fit=ft.BoxFit.CONTAIN,              # кадр целиком, без обрезки
-                # HIGH-фильтр текстуры: по умолчанию flet_video рендерит с
-                # filter_quality=LOW → билинейщина мылит 1080p при масштабе под
-                # окно (в браузере скейл качественнее — отсюда «тут хуже»).
-                # Предупреждение про блюр в доке касается только Android.
-                filter_quality=ft.FilterQuality.HIGH,
-                configuration=fv.VideoConfiguration(enable_hardware_acceleration=False),
-                on_error=lambda e: self._on_trailer_error(e),
-                # media_kit сам управляет своим fullscreen (родная кнопка в
-                # show_controls). Отслеживаем состояние, чтобы при закрытии
-                # плеера гарантированно из него выйти (иначе fullscreen-
-                # поверхность остаётся, а наш overlay исчезает).
-                on_enter_fullscreen=lambda e: setattr(self, "_video_fullscreen", True),
-                on_exit_fullscreen=lambda e: setattr(self, "_video_fullscreen", False),
-            )
+            player = self._make_trailer_video(play_url, http_headers, vid_w, vid_h)
         except Exception as ex:
             backend_logger.warning(f"flet_video init failed, fallback to browser: {ex}")
             if self._trailer_proxy_sid and self._trailer_proxy is not None:
@@ -2514,8 +2519,11 @@ class CyberLauncher:
             # останется висеть, когда наш overlay уже снят.
             if getattr(self, "_video_fullscreen", False):
                 try:
-                    player.fullscreen = False
-                    player.update()
+                    # текущий плеер (мог быть пересоздан сменой качества)
+                    sz = getattr(self, "_trailer_sizing", None)
+                    cur = sz.get("player") if sz else player
+                    cur.fullscreen = False
+                    cur.update()
                 except Exception:
                     pass
                 self._video_fullscreen = False
@@ -2535,6 +2543,22 @@ class CyberLauncher:
                     pass
                 self._trailer_proxy_sid = None
             self._safe_page_update()
+
+        # Дропдаун выбора качества — только для HLS через прокси (где качества
+        # известны). Раньше выбор был невозможен (media_kit не ел локальный
+        # file://-плейлист); через прокси master фильтруется по ?q=<height>.
+        quality_dd = None
+        proxy_heights = []
+        if self._trailer_proxy_sid and self._trailer_proxy is not None:
+            proxy_heights = self._trailer_proxy.session_heights(self._trailer_proxy_sid)
+        if proxy_heights:
+            quality_dd = ft.Dropdown(
+                value="auto", width=104, text_size=13, dense=True,
+                fill_color="#3A3A3A", color=TEXT_WHITE,
+                options=[ft.dropdown.Option(key="auto", text="Авто")] +
+                        [ft.dropdown.Option(key=str(h), text=f"{h}p") for h in proxy_heights],
+                tooltip="Качество трейлера",
+            )
 
         browser_btn = ft.Container(
             content=ft.Row(
@@ -2561,6 +2585,7 @@ class CyberLauncher:
                 ft.Text(name or "Трейлер", size=16, weight=ft.FontWeight.BOLD,
                         color=TEXT_WHITE, max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                *([quality_dd] if quality_dd is not None else []),
                 browser_btn,
                 close_btn,
             ],
@@ -2598,6 +2623,43 @@ class CyberLauncher:
         self._video_fullscreen = False
         # Ссылки для пересчёта размеров при ресайзе окна (см. _on_page_resized).
         self._trailer_sizing = {"card": card, "player": player}
+
+        # Смена качества: пересоздаём плеер с ?q=<height> (media_kit не меняет
+        # источник на лету) и восстанавливаем позицию. Событие Dropdown в Flet
+        # 0.80 — on_select (НЕ on_change). Async-обработчик Flet сам awaitит.
+        if quality_dd is not None:
+            async def on_quality_select(e):
+                sz = getattr(self, "_trailer_sizing", None)
+                if not sz:
+                    return
+                old = sz.get("player")
+                pos = None
+                try:
+                    if old is not None:
+                        pos = await old.get_current_position()
+                except Exception:
+                    pos = None
+                val = quality_dd.value or "auto"
+                new_url = play_url if val == "auto" else f"{play_url}?q={val}"
+                cw = int(card.width or card_w)
+                ch = int(card.height or card_h)
+                try:
+                    new_player = self._make_trailer_video(
+                        new_url, http_headers, cw - 24, ch - 72)
+                except Exception as ex:
+                    backend_logger.warning(f"Quality switch failed: {ex}")
+                    return
+                video_box.content = new_player
+                video_box.update()
+                sz["player"] = new_player
+                backend_logger.info(f"Trailer quality → {val}")
+                if pos is not None:
+                    try:
+                        await new_player.seek(pos)   # вернуться на то же место
+                    except Exception:
+                        pass
+            quality_dd.on_select = on_quality_select
+
         self.page.overlay.append(overlay)
         self.page.update()
         backend_logger.info(f"Trailer player opened (native controls): '{name}'")

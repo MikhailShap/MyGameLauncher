@@ -32,7 +32,7 @@ import urllib.error
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, parse_qs
 
 logger = logging.getLogger("CyberLauncher.backend")
 
@@ -54,6 +54,44 @@ _PREFETCH_AHEAD = 2
 def _looks_like_m3u8(raw: bytes, url: str) -> bool:
     """Плейлист это или бинарный сегмент. #EXTM3U — надёжный magic HLS."""
     return raw[:7] == b"#EXTM3U" or url.split("?", 1)[0].endswith(".m3u8")
+
+
+def _parse_master_heights(text: str) -> List[int]:
+    """Высоты видео-вариантов из master (#EXT-X-STREAM-INF RESOLUTION=WxH),
+    по убыванию, без дублей. Для дропдауна выбора качества."""
+    hs = set()
+    for line in text.splitlines():
+        if line.strip().startswith("#EXT-X-STREAM-INF:"):
+            m = re.search(r"RESOLUTION=\d+x(\d+)", line)
+            if m:
+                hs.add(int(m.group(1)))
+    return sorted(hs, reverse=True)
+
+
+def _filter_master_by_height(text: str, height: int) -> str:
+    """Оставляет в master ТОЛЬКО вариант нужной высоты (+ аудио и прочие теги),
+    выкидывая остальные #EXT-X-STREAM-INF с их URI. mpv тогда играет именно это
+    качество, а не выбирает по ABR. Если совпадений нет — возвращает исходный
+    текст (фоллбек на Авто)."""
+    lines = text.splitlines()
+    out: List[str] = []
+    kept = False
+    i = 0
+    while i < len(lines):
+        s = lines[i].strip()
+        if s.startswith("#EXT-X-STREAM-INF:"):
+            m = re.search(r"RESOLUTION=\d+x(\d+)", s)
+            h = int(m.group(1)) if m else None
+            uri = lines[i + 1] if i + 1 < len(lines) else ""
+            if h == height:
+                out.append(lines[i])
+                out.append(uri)
+                kept = True
+            i += 2
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out) + "\n" if kept else text
 
 
 def _guess_content_type(url: str) -> str:
@@ -100,6 +138,9 @@ class _Session:
         # КАКОЕ качество реально запросил mpv (ответ на «а это точно 1080p?»).
         self._variant_label: Dict[str, str] = {}
         self._logged_variants: set = set()
+        # Список высот вариантов (1080, 720, …) по убыванию — для дропдауна
+        # выбора качества. Заполняется eager-парсом master в start_session.
+        self.heights: List[int] = []
 
     def assign(self, abs_url: str) -> str:
         """url → локальный путь /r/<id>. Дедуплицирует одинаковые url."""
@@ -231,14 +272,28 @@ class TrailerProxy:
         headers = dict(DEFAULT_HEADERS)
         if http_headers:
             headers.update(http_headers)
+        sess = _Session(master_url, headers)
         with self._sessions_lock:
-            self._sessions[sid] = _Session(master_url, headers)
-        logger.info(f"TrailerProxy: сессия {sid} для {master_url.split('?', 1)[0]}")
+            self._sessions[sid] = sess
+        # Eager-парс master → список качеств для дропдауна. Одна лёгкая загрузка
+        # (~1 КБ). Провал (офлайн) — не критично: дропдаун покажет только «Авто».
+        try:
+            raw, _ = self._fetch(master_url, headers)
+            sess.heights = _parse_master_heights(raw.decode("utf-8", errors="replace"))
+        except Exception as e:
+            logger.debug(f"TrailerProxy: не удалось разобрать качества master: {e}")
+        logger.info(f"TrailerProxy: сессия {sid} для {master_url.split('?', 1)[0]} "
+                    f"(качества: {sess.heights or 'н/д'})")
         return f"{self._base_url()}/s/{sid}/master.m3u8"
 
     def end_session(self, sid: str) -> None:
         with self._sessions_lock:
             self._sessions.pop(sid, None)
+
+    def session_heights(self, sid: str) -> List[int]:
+        """Список доступных высот (1080, 720, …) для дропдауна. [] если неизвестно."""
+        sess = self._session(sid)
+        return list(sess.heights) if sess else []
 
     def _session(self, sid: str) -> Optional[_Session]:
         with self._sessions_lock:
@@ -314,12 +369,17 @@ class TrailerProxy:
 
     # ---------- Обработка запросов от mpv ----------
 
-    def handle_master(self, sid: str) -> Optional[Tuple[bytes, str]]:
+    def handle_master(self, sid: str,
+                      height: Optional[int] = None) -> Optional[Tuple[bytes, str]]:
         sess = self._session(sid)
         if sess is None:
             return None
         raw, final_url = self._fetch(sess.master_url, sess.headers)
         text = raw.decode("utf-8", errors="replace")
+        # height задан (выбор качества в UI) → оставить только этот вариант.
+        if height:
+            text = _filter_master_by_height(text, height)
+            logger.info(f"TrailerProxy: master отфильтрован до {height}p (session {sid})")
         rewritten, _ = self._rewrite_playlist(sess, sid, text, final_url)
         return rewritten.encode("utf-8"), "application/vnd.apple.mpegurl"
 
@@ -448,7 +508,8 @@ def _make_handler(proxy: TrailerProxy):
                 pass
 
         def do_GET(self):
-            m = _PATH_RE.match(self.path)
+            parts = urlsplit(self.path)
+            m = _PATH_RE.match(parts.path)
             if not m:
                 self._fail(404)
                 return
@@ -458,7 +519,10 @@ def _make_handler(proxy: TrailerProxy):
             # Фаза 1 — собрать тело (сеть). Провал = реальный сбой CDN → 502.
             try:
                 if rest == "master.m3u8":
-                    res = proxy.handle_master(sid)
+                    # ?q=<height> — ручной выбор качества (иначе Авто/ABR).
+                    q = parse_qs(parts.query).get("q", [None])[0]
+                    height = int(q) if q and q.isdigit() else None
+                    res = proxy.handle_master(sid, height)
                     payload = None if res is None else (200, res[0], res[1], None)
                 else:
                     rid = rest.split("/", 1)[1]

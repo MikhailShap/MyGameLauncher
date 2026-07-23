@@ -167,6 +167,10 @@ class WishlistItem:
     # Steam отдаёт лишь по одной игре, поэтому тянем их фоном. См.
     # WishlistManager.fill_missing_details.
     needs_details: bool = False
+    # Сколько раз пытались догрузить детали и не вышло. Нужен, потому что отказ
+    # Steam чаще ВРЕМЕННЫЙ (троттлинг при массовом импорте), а не «игры нет»:
+    # сдаёмся только после DETAILS_MAX_ATTEMPTS попыток.
+    details_attempts: int = 0
     release_date: str = ""
     developers: str = ""                         # "Dev1, Dev2"
     genres: str = ""                             # "Action, RPG"
@@ -666,13 +670,31 @@ class WishlistManager:
         return stale
 
     def _maybe_refresh_trailer_fields(self, app_id: str, data: Dict[str, Any]) -> None:
-        """Тихая миграция: записи, добавленные до перехода на dash_av1, хранят
-        в wishlist.json старый HLS-URL. При успешном сетевом обновлении деталей
-        освежаем трейлер-поля карточки (тот же трейлер ищем по тумбнейлу)."""
+        """Тихая миграция при успешном сетевом обновлении деталей:
+        1) освежает трейлер-поля (записи до перехода на dash_av1 хранят HLS);
+        2) чинит карточку-заглушку — заполняет название/обложку/описание, если
+           их не было (кнопка «Обновить» в деталке тем самым лечит карточку)."""
         try:
             it = self._items.get(str(app_id))
+            if not it:
+                return
+            # (2) Восстановление пустой/заглушечной карточки.
+            if not it.title or it.title == f"App {app_id}":
+                if data.get("title"):
+                    it.title = data["title"]
+                    it.header_image_url = data.get("header_image") or it.header_image_url
+                    it.short_description = (data.get("about") or "")[:300]
+                    it.release_date = data.get("release_date") or it.release_date
+                    it.developers = data.get("developers") or it.developers
+                    it.genres = data.get("genres") or it.genres
+                    it.store_url = data.get("store_url") or it.store_url
+                    it.needs_details = False
+                    it.details_attempts = 0
+                    self.save_sync()
+                    logger.info(f"Wishlist: карточка {app_id} восстановлена "
+                                f"из деталей ('{it.title}')")
             trailers = data.get("trailers") or []
-            if not it or not trailers:
+            if not trailers:
                 return
             cand = next((t for t in trailers
                          if t.get("thumb") and t.get("thumb") == it.trailer_thumb_url),
@@ -755,8 +777,32 @@ class WishlistManager:
                 except Exception as e:
                     logger.warning(f"Skipping malformed wishlist item: {e}")
             logger.info(f"Wishlist loaded: {len(self._items)} items")
+            self._requeue_stub_items()
         except Exception as e:
             logger.error(f"Wishlist load failed: {e}")
+
+    def _requeue_stub_items(self) -> int:
+        """Возвращает в очередь записи-заглушки «App <appid>».
+
+        Такие появились из-за слишком быстрого троттлинга при импорте: Steam
+        временно отказывал, а прежний код считал это «игры не существует» и
+        больше не пробовал. Проверено: те игры доступны. Сбрасываем счётчик
+        попыток, чтобы фоновая догрузка забрала их снова."""
+        fixed = 0
+        for item in self._items.values():
+            if item.needs_details:
+                continue
+            if item.title == f"App {item.app_id}" or (
+                    not item.title and not item.header_image_url):
+                item.needs_details = True
+                item.details_attempts = 0
+                item.title = ""          # чтобы карточка показала «Загружаю…»
+                fixed += 1
+        if fixed:
+            self.save_sync()
+            logger.info(f"Wishlist: {fixed} записей без данных возвращены в очередь "
+                        f"догрузки (прошлый импорт упёрся в лимит Steam)")
+        return fixed
 
     def save_sync(self) -> bool:
         """Атомарная запись wishlist.json (tmp + os.replace)."""
@@ -839,20 +885,32 @@ class WishlistManager:
     def pending_details_count(self) -> int:
         return sum(1 for it in self._items.values() if it.needs_details)
 
+    # Steam лимитирует ~200 запросов/5 мин. 1.6с ≈ 37/мин ≈ 185/5мин — с
+    # запасом. Прежние 1.2с давали 250/5мин: лимит превышался, Steam начинал
+    # отказывать, и живые игры помечались как «нет данных» (27 из 472).
+    DETAILS_DELAY = 1.6
+    DETAILS_MAX_ATTEMPTS = 3      # столько раз пробуем, прежде чем сдаться
+    DETAILS_COOLDOWN = 45.0       # пауза после серии отказов (явный троттлинг)
+
     def fill_missing_details(self, progress_cb=None, should_stop=None,
-                             delay: float = 1.2) -> int:
+                             delay: float = None) -> int:
         """Фаза 2: догружает детали импортированных записей ПО ОДНОЙ с паузой.
 
         Steam отдаёт детали только по одной игре за запрос (пакетный вызов даёт
         400) и лимитирует ~200 запросов/5 мин, поэтому пауза обязательна —
-        иначе временный бан, который заденет и загрузку обложек библиотеки.
+        иначе он начинает отказывать, а мы принимаем это за «игры не
+        существует». Отказ считается ВРЕМЕННЫМ до DETAILS_MAX_ATTEMPTS попыток;
+        серия подряд идущих отказов = троттлинг, делаем длинную паузу.
         Прерывается через should_stop(); недогруженные останутся с
         needs_details=True и подхватятся при следующем запуске.
 
         progress_cb(done, total, title) — для UI. Возвращает число обновлённых."""
+        if delay is None:
+            delay = self.DETAILS_DELAY
         pending = [it.app_id for it in self._items.values() if it.needs_details]
         total = len(pending)
         done = 0
+        consecutive_fail = 0
         for app_id in pending:
             if should_stop is not None and should_stop():
                 logger.info(f"Wishlist details: остановлено на {done}/{total}")
@@ -863,12 +921,27 @@ class WishlistManager:
                 continue
             fresh = build_wishlist_item(app_id)
             if fresh is None:
-                # Игра удалена из Steam / недоступна в обоих регионах —
-                # снимаем флаг, чтобы не долбить её при каждом запуске.
-                item.needs_details = False
-                item.title = item.title or f"App {app_id}"
-                logger.info(f"Wishlist details: нет данных для {app_id}, помечена")
+                item.details_attempts = int(item.details_attempts or 0) + 1
+                consecutive_fail += 1
+                if item.details_attempts >= self.DETAILS_MAX_ATTEMPTS:
+                    # Исчерпали попытки — вероятно игры действительно нет.
+                    item.needs_details = False
+                    item.title = item.title or f"App {app_id}"
+                    logger.info(f"Wishlist details: {app_id} недоступна после "
+                                f"{item.details_attempts} попыток, помечена")
+                else:
+                    logger.info(f"Wishlist details: отказ по {app_id} "
+                                f"(попытка {item.details_attempts}), повторим позже")
+                # Несколько отказов подряд = нас троттлят. Ждём и сбавляем темп,
+                # иначе весь остаток списка запишется в «недоступные».
+                if consecutive_fail >= 3:
+                    logger.warning(f"Wishlist details: {consecutive_fail} отказов "
+                                   f"подряд — пауза {self.DETAILS_COOLDOWN}с (троттлинг Steam)")
+                    self.save_sync()
+                    time.sleep(self.DETAILS_COOLDOWN)
+                    consecutive_fail = 0
             else:
+                consecutive_fail = 0
                 # Переносим полученные поля, СОХРАНЯЯ приоритет и дату из Steam.
                 item.title = fresh.title
                 item.header_image_url = fresh.header_image_url

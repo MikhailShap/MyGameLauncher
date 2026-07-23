@@ -1918,6 +1918,8 @@ class CyberLauncher:
         взять но ещё не установил. Метаданные — Steam Store API."""
         if not hasattr(self, "_wishlist_sort"):
             self._wishlist_sort = "priority"
+        if not hasattr(self, "_wishlist_page"):
+            self._wishlist_page = 0
 
         # Заголовок + кнопки управления (Добавить, сортировка)
         title_row = ft.Row(
@@ -1973,24 +1975,53 @@ class CyberLauncher:
 
         # Items grid
         items = self.game_manager.wishlist.get_sorted(self._wishlist_sort)
-        cards = [self._build_wishlist_card(it) for it in items]
-        # GridView с child_aspect_ratio даёт высоту КАРТОЧКИ = ширина_ячейки /
-        # ratio — но ширина зависит от размера окна. На узких окнах высота
-        # схлопывается и action-row обрезается, на широких — пустота снизу.
-        # Решение: Row(wrap=True) с фиксированной width/height у самой
-        # карточки (см. _build_wishlist_card → width=320, height=340).
-        # Карточки переносятся естественным wrap при нехватке места.
+
+        # ПАГИНАЦИЯ. После импорта из Steam в списке могут быть сотни игр, а
+        # раньше рисовались ВСЕ разом — 470 карточек, каждая с картинкой из
+        # CDN, вешали UI (клики проходили, но переключения/открытия не
+        # отрабатывали). Показываем страницами, как библиотека.
+        shown_count = (self._wishlist_page + 1) * self._WISHLIST_PAGE_SIZE
+        visible = items[:shown_count]
+
+        # АДАПТИВНАЯ ШИРИНА: раньше карточка была ровно 320px, и на широком
+        # окне справа оставалась неиспользуемая полоса (остаток от деления).
+        # Считаем, сколько колонок влезает, и растягиваем карточки на всю
+        # ширину — пустоты справа больше нет.
+        avail = (self.page.width or 1280) - 240 - 80   # минус сайдбар и паддинги
+        gap = 15
+        cols = max(1, int((avail + gap) // (300 + gap)))
+        card_w = max(280, int((avail - gap * (cols - 1)) / cols))
+        cards = [self._build_wishlist_card(it, card_w) for it in visible]
+
+        grid_controls = [
+            ft.Row(controls=cards, wrap=True, spacing=gap, run_spacing=gap),
+        ]
+        if shown_count < len(items):
+            remaining = len(items) - shown_count
+            grid_controls.append(ft.Container(height=12))
+            grid_controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.EXPAND_MORE, color=ACCENT_BLUE, size=22),
+                            ft.Text(f"Показать ещё ({remaining})",
+                                    color=TEXT_WHITE, size=13),
+                        ],
+                        spacing=8, tight=True,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                    alignment=ft.Alignment(0, 0),
+                    padding=ft.Padding(left=20, right=20, top=14, bottom=14),
+                    bgcolor="#1E1E1E", border_radius=12,
+                    border=ft.Border.all(1, "#333333"),
+                    ink=True,
+                    on_click=self._wishlist_load_more,
+                )
+            )
         self._wishlist_grid = ft.Column(
             expand=True,
             scroll=ft.ScrollMode.AUTO,
-            controls=[
-                ft.Row(
-                    controls=cards,
-                    wrap=True,
-                    spacing=15,
-                    run_spacing=15,
-                ),
-            ],
+            controls=grid_controls,
         )
 
         empty_hint = ft.Container(
@@ -2012,7 +2043,9 @@ class CyberLauncher:
 
         controls_row = ft.Row(
             controls=[
-                ft.Text(f"{len(items)} игр", size=13, color=TEXT_GREY),
+                ft.Text(f"{len(visible)} из {len(items)} игр"
+                        if len(visible) < len(items) else f"{len(items)} игр",
+                        size=13, color=TEXT_GREY),
                 ft.Container(expand=True),
                 ft.Icon(ft.Icons.SORT, color=TEXT_GREY, size=16),
                 ft.Text("Сортировка:", size=12, color=TEXT_GREY),
@@ -2037,7 +2070,16 @@ class CyberLauncher:
             ),
         )
 
+    # Карточек на страницу в «Желаемом». После импорта из Steam список может
+    # быть на сотни игр — рисовать все разом нельзя (UI перестаёт отвечать).
+    _WISHLIST_PAGE_SIZE = 24
+
+    def _wishlist_load_more(self, e=None):
+        self._wishlist_page += 1
+        self._refresh_wishlist_view()
+
     def _set_wishlist_sort(self, key: str):
+        self._wishlist_page = 0      # смена сортировки — снова с первой страницы
         self._wishlist_sort = key
         # Перестроить view (быстрее чем точечно обновлять каждую карточку)
         self.wishlist_view = self.build_wishlist_view()
@@ -2065,9 +2107,11 @@ class CyberLauncher:
         "low":    "Приоритет: низкий (попробовать когда-нибудь). Клик — следующий уровень.",
     }
 
-    def _build_wishlist_card(self, item) -> ft.Container:
+    def _build_wishlist_card(self, item, card_w: int = 320) -> ft.Container:
         """Карточка одной игры в списке желаемого.
-        Layout: header_image сверху, ниже название + кнопки."""
+        Layout: header_image сверху, ниже название + кнопки.
+        card_w — адаптивная ширина (см. build_wishlist_view): карточки
+        растягиваются под окно, чтобы справа не оставалась пустая полоса."""
         prio = item.priority if item.priority in self._PRIORITY_COLORS else "low"
         prio_icon_color, prio_bg = self._PRIORITY_COLORS[prio]
         prio_tooltip = self._PRIORITY_TOOLTIPS[prio]
@@ -2219,7 +2263,7 @@ class CyberLauncher:
         # переносит. Cover 160 + body content (~135) + padding (20) ≈ 315.
         # height=340 даёт ~25px буфера снизу.
         return ft.Container(
-            width=320,
+            width=card_w,
             height=340,
             bgcolor=CARD_BG,
             border_radius=8,
@@ -2513,6 +2557,9 @@ class CyberLauncher:
             autoplay=True,
             show_controls=True,                 # родная панель media_kit
             muted=False,
+            # Громкость запоминается между просмотрами (раньше каждый трейлер
+            # стартовал на 100%). Сохраняется при закрытии плеера.
+            volume=float(self.settings.get("trailer_volume", 100.0)),
             fit=ft.BoxFit.CONTAIN,              # кадр целиком, без обрезки
             # Фильтрация текстуры при масштабировании 1920p → окно.
             # ⚠️ HIGH на Windows даёт ЧЁРНЫЙ экран (cubic-путь не работает для
@@ -2603,6 +2650,17 @@ class CyberLauncher:
             ov = getattr(self, "_media_overlay", None)
             if ov is None:
                 return
+            # Запомнить громкость, чтобы следующий трейлер не орал на 100%.
+            try:
+                sz = getattr(self, "_trailer_sizing", None)
+                cur_player = (sz or {}).get("player") or player
+                vol = getattr(cur_player, "volume", None)
+                if vol is not None and 0 <= float(vol) <= 100:
+                    if abs(float(vol) - float(self.settings.get("trailer_volume", 100.0))) > 0.5:
+                        self.settings["trailer_volume"] = float(vol)
+                        self.save_settings()
+            except Exception:
+                pass
             # Плеер мог быть в нативном fullscreen media_kit — выйти ДО удаления
             # виджета его же API (page.window.full_screen тут ни при чём: это
             # fullscreen плеера, не окна). Иначе полноэкранная поверхность
@@ -2773,6 +2831,42 @@ class CyberLauncher:
         self.page.update()
         backend_logger.info(f"Trailer player opened (native controls): '{name}'")
 
+        # СТОРОЖ ЗАВИСАНИЯ. Бывает, что поток не отдаёт ошибку, но и не играет
+        # (наблюдалось на монтажном трейлере 007 с пиковым битрейтом ~8 Мбит/с:
+        # AV1 декодируется программно и может не вытянуть). on_error при этом
+        # не срабатывает, откат на H.264 не запускался — висел чёрный кадр.
+        # Если за 8с позиция не сдвинулась с нуля — молча уходим на HLS H.264.
+        if fallback_url:
+            self.page.run_task(self._trailer_stall_watchdog, player, overlay)
+
+    async def _trailer_stall_watchdog(self, player, overlay):
+        """Через 8с проверяет, пошло ли воспроизведение. Если нет — откат на
+        HLS H.264 через тот же путь, что и обработчик ошибок."""
+        try:
+            await asyncio.sleep(8.0)
+            if self._media_overlay is not overlay:
+                return                      # плеер уже закрыли/пересоздали
+            fb = getattr(self, "_trailer_fallback", None)
+            if not fb or not fb.get("url") or fb.get("used"):
+                return
+            pos = None
+            try:
+                pos = await asyncio.wait_for(player.get_current_position(), 3.0)
+            except Exception:
+                pos = None
+            secs = None
+            if pos is not None:
+                # Duration → секунды (у разных версий Flet разные поля).
+                secs = (getattr(pos, "total_seconds", None) and pos.total_seconds()) \
+                    or getattr(pos, "seconds", None) or 0
+            if secs is not None and secs > 0:
+                return                      # играет — всё хорошо
+            backend_logger.warning(
+                "Trailer: за 8с воспроизведение не началось — откат на H.264")
+            self._on_trailer_error(SimpleNamespace(data="stall watchdog"))
+        except Exception as ex:
+            backend_logger.debug(f"Trailer watchdog: {ex}")
+
     def _on_trailer_error(self, e):
         """Ошибка воспроизведения трейлера. Если играл предпочтительный поток
         (DASH AV1) и есть HLS-фоллбек — ОДИН раз молча переоткрываемся на нём
@@ -2800,8 +2894,27 @@ class CyberLauncher:
             pass
 
     def _on_page_resized(self, e=None):
-        """Пересчитывает размеры открытого плеера трейлера при ресайзе окна
-        (размеры считаются при открытии — без этого видео не подстраивалось)."""
+        """Ресайз окна: подстроить открытый плеер трейлера и пересобрать сетку
+        «Желаемого» (ширина карточек адаптивная — иначе после fullscreen справа
+        остаётся пустая полоса)."""
+        if self.current_filter == "wishlist":
+            self._wishlist_resize_token = getattr(self, "_wishlist_resize_token", 0) + 1
+            token = self._wishlist_resize_token
+
+            async def _rebuild_later():
+                # Дебаунс: во время перетаскивания рамки событие сыплется часто,
+                # а пересборка сетки не бесплатная.
+                await asyncio.sleep(0.3)
+                if token != self._wishlist_resize_token:
+                    return
+                if self.current_filter == "wishlist":
+                    self._refresh_wishlist_view()
+
+            try:
+                self.page.run_task(_rebuild_later)
+            except Exception:
+                pass
+
         sizing = getattr(self, "_trailer_sizing", None)
         if not sizing:
             return
@@ -3329,7 +3442,7 @@ class CyberLauncher:
                         controls=[
                             ft.Container(
                                 # Steam header capsule — соотношение ~2.15:1
-                                width=96, height=45,
+                                width=150, height=70,
                                 bgcolor=CARD_BG,
                                 image=ft.DecorationImage(src=r.get("header_image", ""), fit="cover") if r.get("header_image") else None,
                                 border_radius=6,
@@ -3344,16 +3457,6 @@ class CyberLauncher:
                                 spacing=2,
                                 expand=True,
                                 tight=True,
-                            ),
-                            # Предпросмотр: посмотреть игру ДО добавления.
-                            ft.Container(
-                                content=ft.Icon(ft.Icons.VISIBILITY, color=ACCENT_BLUE, size=20),
-                                width=38, height=38, border_radius=19,
-                                bgcolor="#22FFFFFF",
-                                alignment=ft.Alignment(0, 0), ink=True,
-                                tooltip="Предпросмотр (скриншоты, трейлер, описание)",
-                                on_click=lambda e, aid=app_id, nm=name: (
-                                    self._show_wishlist_preview(aid, nm, render_results)),
                             ),
                             ft.ElevatedButton(
                                 "Добавить" if not in_wishlist else "✓",
@@ -3479,10 +3582,14 @@ class CyberLauncher:
         # Card height=640 даёт ~430px для списка → ~6-7 строк по 67px.
         # Фон — градиент активной темы (как bg_container и деталка), чтобы
         # модалка не выбивалась плоской серой плашкой.
+        # Размер под окно: маленькая фикс-карточка плохо показывала список.
+        # Берём долю окна с разумными лимитами (как у деталки).
+        _pw = self.page.width or 1280
+        _ph = self.page.height or 800
         _theme = GRADIENT_THEMES.get(self.current_theme, GRADIENT_THEMES["dark"])
         card = ft.Container(
-            width=680,
-            height=640,
+            width=min(int(_pw * 0.72), 980),
+            height=min(int(_ph * 0.86), 860),
             gradient=ft.LinearGradient(
                 begin=ft.Alignment(-1, -1),
                 end=ft.Alignment(1, 1),

@@ -856,6 +856,7 @@ class WishlistManager:
         for app_id in pending:
             if should_stop is not None and should_stop():
                 logger.info(f"Wishlist details: остановлено на {done}/{total}")
+                self.save_sync()      # зафиксировать то, что успели
                 break
             item = self._items.get(app_id)
             if item is None:
@@ -881,7 +882,13 @@ class WishlistManager:
                 item.genres = fresh.genres
                 item.needs_details = False
             done += 1
-            self.save_sync()
+            # Сохраняем пачками, а не после каждой игры: save_sync делает fsync,
+            # и на списке в сотни игр это сотни принудительных сбросов растущего
+            # JSON на диск. Раз в 10 записей (и обязательно в конце) достаточно —
+            # потеря максимум 10 позиций при аварийном закрытии, они просто
+            # догрузятся снова (needs_details остался True).
+            if done % 10 == 0 or done == total:
+                self.save_sync()
             if progress_cb is not None:
                 try:
                     progress_cb(done, total, item.title)

@@ -12,6 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 from tkinter import Tk, filedialog
+from types import SimpleNamespace
 from typing import Optional
 
 # Windows-specific imports for tray and single instance
@@ -828,6 +829,12 @@ class CyberLauncher:
         self._trailer_proxy = TrailerProxy() if HAS_TRAILER_PROXY else None
         self._trailer_proxy_sid = None
         self._trailer_sizing = None
+        # Импорт желаемого из Steam: строка прогресса фоновой догрузки деталей
+        # (живёт в шапке раздела) + флаг остановки для выхода из приложения.
+        self._wishlist_progress_text = ft.Text("", size=12, color=ACCENT_BLUE,
+                                               visible=False)
+        self._wishlist_fill_running = False
+        self._wishlist_fill_stop = False
 
         # Window focus — нужен чтобы блокировать gamepad-события когда юзер
         # играет в запущенную игру. SDL читает гейпад даже когда окно не в
@@ -1061,8 +1068,15 @@ class CyberLauncher:
                 except Exception:
                     pass
 
+        _theme = GRADIENT_THEMES.get(self.current_theme, GRADIENT_THEMES["dark"])
         card = ft.Container(
-            width=width, bgcolor="#2A2A2A", border_radius=14, padding=24,
+            width=width, border_radius=14, padding=24,
+            # Градиент активной темы вместо плоской серой плашки.
+            gradient=ft.LinearGradient(
+                begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1),
+                colors=_theme["colors"],
+            ),
+            border=ft.Border.all(1, "#33FFFFFF"),
             on_click=lambda e: None,  # поглощаем клик внутри карточки
             content=ft.Column(
                 controls=[title_row, ft.Container(height=14), body,
@@ -1481,6 +1495,16 @@ class CyberLauncher:
 
         self.page.add(layout)
         self.page.run_task(self.load_library)
+
+        # Импорт желаемого мог не успеть догрузить детали (закрыли приложение) —
+        # продолжаем с того же места. Ничего не делает, если очередь пуста.
+        try:
+            if self.game_manager.wishlist.pending_details_count() > 0:
+                backend_logger.info(
+                    "Wishlist: есть незагруженные детали после импорта — продолжаю")
+                self.page.run_task(self._wishlist_fill_details_task)
+        except Exception as ex:
+            backend_logger.warning(f"Wishlist resume check failed: {ex}")
 
         # Hotkey F11 для toggle BigPicture (помимо кнопки геймпада)
         self.page.on_keyboard_event = self._on_keyboard_event
@@ -1901,6 +1925,15 @@ class CyberLauncher:
                 ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35", size=32),
                 ft.Text("Желаемое", size=28, weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
                 ft.Container(expand=True),
+                # Статус фоновой догрузки деталей после импорта (см.
+                # _wishlist_import_start). Пустой и невидимый, пока не идёт.
+                self._wishlist_progress_text,
+                ft.OutlinedButton(
+                    "Импорт из Steam",
+                    icon=ft.Icons.CLOUD_DOWNLOAD,
+                    on_click=lambda e: self.show_wishlist_import_dialog(),
+                    style=ft.ButtonStyle(color=ACCENT_BLUE),
+                ),
                 ft.ElevatedButton(
                     "Добавить из Steam",
                     icon=ft.Icons.ADD,
@@ -2106,12 +2139,17 @@ class CyberLauncher:
             on_click=lambda e, aid=item.app_id, title=item.title: self._wishlist_confirm_delete(aid, title),
         )
 
+        # Импортированная запись, детали которой ещё не догрузились фоном.
+        pending = getattr(item, "needs_details", False) and not item.title
         title_text = ft.Text(
-            item.title or "?",
-            size=15, color=TEXT_WHITE, weight=ft.FontWeight.W_600,
+            item.title or ("Загружаю данные…" if pending else "?"),
+            size=15, color=(TEXT_GREY if pending else TEXT_WHITE),
+            weight=ft.FontWeight.W_600,
             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
         )
         meta_line = " · ".join(s for s in [item.release_date, item.genres] if s)
+        if pending:
+            meta_line = f"App ID {item.app_id}"
         meta_text = ft.Text(
             meta_line, size=11, color=TEXT_GREY,
             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
@@ -2783,9 +2821,14 @@ class CyberLauncher:
         except Exception as ex:
             backend_logger.debug(f"Trailer resize skipped: {ex}")
 
-    def _build_wishlist_detail_body(self, item, d: dict, close_cb) -> ft.Control:
+    def _build_wishlist_detail_body(self, item, d: dict, close_cb,
+                                    on_add=None) -> ft.Control:
         """Скроллируемое тело детального экрана из нормализованных Steam-данных
-        (dict из wishlist_manager.fetch_game_details)."""
+        (dict из wishlist_manager.fetch_game_details).
+
+        on_add — если задан, тело работает в режиме ПРЕДПРОСМОТРА (игра ещё не
+        в списке): вместо «Удалить из желаемого» показывается «Добавить».
+        item в этом режиме — лёгкая заглушка с app_id/title."""
 
         def chip(text: str, bg="#2E2E2E", fg=TEXT_WHITE):
             return ft.Container(
@@ -2904,6 +2947,22 @@ class CyberLauncher:
             )
 
         # --- Footer: действия ---
+        # В режиме предпросмотра (игра ещё не в списке) правая кнопка —
+        # «Добавить в желаемое», иначе — «Удалить из желаемого».
+        if on_add is not None:
+            right_btn = ft.ElevatedButton(
+                "Добавить в желаемое", icon=ft.Icons.ADD,
+                on_click=lambda e: on_add(),
+                bgcolor=ACCENT_PURPLE, color=TEXT_WHITE,
+            )
+        else:
+            right_btn = ft.OutlinedButton(
+                "Удалить из желаемого", icon=ft.Icons.DELETE_OUTLINE,
+                on_click=lambda e, aid=item.app_id, ttl=item.title: (
+                    close_cb(), self._wishlist_confirm_delete(aid, ttl)
+                ),
+                style=ft.ButtonStyle(color="#FF6B6B"),
+            )
         footer = ft.Row(
             controls=[
                 ft.ElevatedButton(
@@ -2912,13 +2971,7 @@ class CyberLauncher:
                     bgcolor="#1B2838", color=TEXT_WHITE,
                 ),
                 ft.Container(expand=True),
-                ft.OutlinedButton(
-                    "Удалить из желаемого", icon=ft.Icons.DELETE_OUTLINE,
-                    on_click=lambda e, aid=item.app_id, ttl=item.title: (
-                        close_cb(), self._wishlist_confirm_delete(aid, ttl)
-                    ),
-                    style=ft.ButtonStyle(color="#FF6B6B"),
-                ),
+                right_btn,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
@@ -2926,6 +2979,152 @@ class CyberLauncher:
         col.controls.append(footer)
 
         return col
+
+    def _show_wishlist_preview(self, app_id: str, name: str, on_added=None):
+        """Предпросмотр игры ИЗ ПОИСКА, до добавления в желаемое. Показывает ту
+        же начинку, что детальный экран (баннер, мета, скриншоты, трейлер,
+        описание), но с кнопкой «Добавить в желаемое» вместо «Удалить».
+
+        Открывается ПОВЕРХ диалога поиска и занимает слот detail-оверлея →
+        ESC закрывает сначала предпросмотр, потом диалог поиска."""
+        backend_logger.info(f"Wishlist preview: opening '{name}' (app_id={app_id})")
+
+        # Лёгкая заглушка вместо WishlistItem — телу нужны только эти поля.
+        stub = SimpleNamespace(
+            app_id=str(app_id), title=name,
+            store_url=f"https://store.steampowered.com/app/{app_id}/",
+        )
+
+        def _close():
+            overlay = getattr(self, "_wishlist_detail_overlay", None)
+            if overlay is None:
+                return
+            try:
+                if overlay in self.page.overlay:
+                    self.page.overlay.remove(overlay)
+            except Exception:
+                pass
+            self._wishlist_detail_overlay = None
+            self._wishlist_detail_close = None
+            self._safe_page_update()
+
+        def _on_add():
+            _close()
+            self.page.run_task(self._wishlist_add_async, str(app_id), name, on_added)
+
+        pw = self.page.width or 1280
+        ph = self.page.height or 800
+        card_w = min(int(pw * 0.86), 1040)
+        card_h = min(int(ph * 0.88), 760)
+
+        content_holder = ft.Container(expand=True, alignment=ft.Alignment(0, 0))
+        content_holder.content = ft.Column(
+            controls=[
+                ft.ProgressRing(color=ACCENT_PURPLE),
+                ft.Container(height=12),
+                ft.Text("Загружаю данные из Steam…", size=13, color=TEXT_GREY),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+        )
+
+        header_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.VISIBILITY, color=ACCENT_BLUE, size=24),
+                ft.Text(name or "Предпросмотр", weight=ft.FontWeight.BOLD, size=20,
+                        color=TEXT_WHITE, max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                ft.Container(
+                    content=ft.Icon(ft.Icons.CLOSE, color=TEXT_WHITE, size=20),
+                    width=36, height=36, border_radius=18, bgcolor="#3A3A3A",
+                    alignment=ft.Alignment(0, 0), on_click=lambda e: _close(),
+                    ink=True, tooltip="Закрыть (ESC)",
+                ),
+            ],
+            spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        theme_data = GRADIENT_THEMES.get(self.current_theme, GRADIENT_THEMES["dark"])
+        card = ft.Container(
+            width=card_w, height=card_h,
+            gradient=ft.LinearGradient(
+                begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1),
+                colors=theme_data["colors"],
+            ),
+            border=ft.Border.all(1, "#33FFFFFF"),
+            border_radius=14, padding=20,
+            on_click=lambda e: None,
+            content=ft.Column(
+                controls=[header_row, ft.Container(height=10), content_holder],
+                spacing=0, expand=True,
+            ),
+        )
+        backdrop = ft.Container(expand=True, bgcolor="#DD000000",
+                                on_click=lambda e: _close())
+        centered = ft.Container(expand=True, alignment=ft.Alignment(0, 0), content=card)
+        overlay = ft.Container(
+            expand=True,
+            content=ft.Stack(expand=True, controls=[backdrop, centered]),
+        )
+        self._wishlist_detail_overlay = overlay
+        self._wishlist_detail_close = _close
+
+        async def _load():
+            details = await asyncio.to_thread(
+                self.game_manager.wishlist.get_details, str(app_id), False
+            )
+            if self._wishlist_detail_overlay is not overlay:
+                return                      # уже закрыли
+            if not details:
+                content_holder.alignment = ft.Alignment(0, 0)
+                content_holder.content = ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.CLOUD_OFF, color=TEXT_GREY, size=48),
+                        ft.Container(height=8),
+                        ft.Text("Не удалось загрузить данные из Steam",
+                                size=14, color=TEXT_GREY),
+                        ft.Container(height=12),
+                        ft.ElevatedButton(
+                            "Добавить всё равно", icon=ft.Icons.ADD,
+                            on_click=lambda e: _on_add(),
+                            bgcolor=ACCENT_PURPLE, color=TEXT_WHITE,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                )
+            else:
+                content_holder.alignment = None
+                content_holder.content = self._build_wishlist_detail_body(
+                    stub, details, _close, on_add=_on_add)
+            self._safe_page_update()
+
+        cached = self.game_manager.wishlist.get_details_cached(str(app_id))
+        if cached is not None:
+            content_holder.alignment = None
+            content_holder.content = self._build_wishlist_detail_body(
+                stub, cached, _close, on_add=_on_add)
+
+        self.page.overlay.append(overlay)
+        self.page.update()
+        if cached is None:
+            self.page.run_task(_load)
+
+    async def _wishlist_add_async(self, app_id: str, name: str, on_added=None):
+        """Добавление игры в желаемое (сетевой запрос — в отдельном потоке)."""
+        ok = await asyncio.to_thread(
+            self.game_manager.wishlist.add_by_app_id, str(app_id))
+        if ok:
+            self.show_snackbar(f"«{name}» добавлена в желаемое", bgcolor="#4CAF50")
+            self._refresh_wishlist_view()
+        else:
+            self.show_snackbar("Не удалось добавить игру (Steam не дал данных)",
+                               bgcolor="#F44336")
+        if on_added is not None:
+            try:
+                on_added()
+            except Exception:
+                pass
 
     def _wishlist_confirm_delete(self, app_id: str, title: str):
         # Кастомный overlay-модал вместо ft.AlertDialog: в этой версии Flet
@@ -2965,6 +3164,146 @@ class CyberLauncher:
             spacing=8,
         )
         close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=460)
+
+    def show_wishlist_import_dialog(self):
+        """Импорт списка желаемого из Steam. SteamID определяется автоматически
+        из локальной установки Steam; можно ввести чужой вручную."""
+        from wishlist_manager import find_local_steamid64
+
+        close_ref = {}
+
+        def _close():
+            if close_ref.get("fn"):
+                close_ref["fn"]()
+
+        local = None
+        try:
+            local = find_local_steamid64()
+        except Exception as ex:
+            backend_logger.warning(f"find_local_steamid64 failed: {ex}")
+
+        id_field = ft.TextField(
+            hint_text="SteamID64 (17 цифр)",
+            value=(local or {}).get("steamid", ""),
+            prefix_icon=ft.Icons.BADGE,
+            border_radius=8, bgcolor="#1E1E1E", border_color="#333333",
+            focused_border_color=ACCENT_BLUE, text_size=14,
+        )
+        hint = ft.Text(
+            f"Найден аккаунт: {local.get('persona') or local.get('account')}"
+            if local else
+            "Steam не найден — введите SteamID64 вручную (17 цифр, узнать: steamid.io)",
+            size=12, color=(ACCENT_BLUE if local else TEXT_GREY),
+        )
+
+        def on_import(e):
+            sid = (id_field.value or "").strip()
+            _close()
+            self.page.run_task(self._wishlist_import_start, sid)
+
+        title_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.CLOUD_DOWNLOAD, color=ACCENT_BLUE, size=22),
+                ft.Text("Импорт желаемого из Steam", weight=ft.FontWeight.BOLD,
+                        size=18, color=TEXT_WHITE),
+            ],
+            spacing=10,
+        )
+        body = ft.Column(
+            controls=[
+                ft.Text("Список желаемого будет добавлен к текущему. Уже "
+                        "имеющиеся игры пропускаются — приоритеты не сбросятся.",
+                        size=13, color=TEXT_GREY),
+                ft.Container(height=12),
+                id_field,
+                ft.Container(height=6),
+                hint,
+                ft.Container(height=10),
+                ft.Text("⚠ Профиль должен быть открыт: при скрытом списке "
+                        "Steam возвращает пустой результат.",
+                        size=11, color="#FFB74D"),
+            ],
+            tight=True, spacing=0,
+        )
+        actions = ft.Row(
+            controls=[
+                ft.Container(expand=True),
+                ft.TextButton("Отмена", on_click=lambda e: _close()),
+                ft.ElevatedButton("Импортировать", icon=ft.Icons.CLOUD_DOWNLOAD,
+                                  on_click=on_import,
+                                  bgcolor=ACCENT_PURPLE, color=TEXT_WHITE),
+            ],
+            spacing=8,
+        )
+        close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=560)
+
+    async def _wishlist_import_start(self, steamid64: str):
+        """Фаза 1 импорта: один запрос — весь список. Мгновенно создаём записи,
+        детали догружаем фоном (Steam отдаёт их только по одной игре)."""
+        from wishlist_manager import steam_get_wishlist
+
+        self.loading_overlay.show("Получаю список желаемого из Steam…")
+        self.page.update()
+        items = await asyncio.to_thread(steam_get_wishlist, steamid64)
+        self.loading_overlay.hide()
+
+        if items is None:
+            self.page.update()
+            self.show_snackbar("Не удалось получить список: проверьте SteamID и сеть",
+                               bgcolor="#F44336")
+            return
+        if not items:
+            self.page.update()
+            # HTTP 200 + пустой список = чаще всего приватный профиль, а не
+            # «нечего импортировать». Говорим об этом прямо.
+            self.show_snackbar("Список пуст или скрыт настройками приватности "
+                               "профиля Steam", bgcolor="#FF9800")
+            return
+
+        added, skipped = self.game_manager.wishlist.import_from_steam(items)
+        self._refresh_wishlist_view()
+        self.show_snackbar(
+            f"Импортировано: {added}" + (f", уже было: {skipped}" if skipped else ""),
+            bgcolor="#4CAF50")
+        if added:
+            self.page.run_task(self._wishlist_fill_details_task)
+
+    async def _wishlist_fill_details_task(self):
+        """Фаза 2: фоновая догрузка названий/обложек с троттлингом.
+        Одна задача за раз; прерывается при выходе из приложения."""
+        if self._wishlist_fill_running:
+            return
+        self._wishlist_fill_running = True
+        self._wishlist_fill_stop = False
+
+        def _progress(done, total, title):
+            # Вызывается из рабочего потока — только пишем состояние, а
+            # перерисовку делаем here же безопасным update (Flet допускает).
+            try:
+                self._wishlist_progress_text.value = f"Загружаю детали: {done}/{total}"
+                self._wishlist_progress_text.visible = True
+                self._wishlist_progress_text.update()
+            except Exception:
+                pass
+
+        try:
+            self._wishlist_progress_text.value = "Загружаю детали…"
+            self._wishlist_progress_text.visible = True
+            self._safe_page_update()
+            await asyncio.to_thread(
+                self.game_manager.wishlist.fill_missing_details,
+                _progress, lambda: self._wishlist_fill_stop,
+            )
+        except Exception as ex:
+            backend_logger.warning(f"Wishlist fill details failed: {ex}")
+        finally:
+            self._wishlist_fill_running = False
+            try:
+                self._wishlist_progress_text.value = ""
+                self._wishlist_progress_text.visible = False
+            except Exception:
+                pass
+            self._refresh_wishlist_view()
 
     def show_wishlist_add_dialog(self):
         """Диалог поиска и добавления игры через Steam Store API."""
@@ -3006,6 +3345,16 @@ class CyberLauncher:
                                 expand=True,
                                 tight=True,
                             ),
+                            # Предпросмотр: посмотреть игру ДО добавления.
+                            ft.Container(
+                                content=ft.Icon(ft.Icons.VISIBILITY, color=ACCENT_BLUE, size=20),
+                                width=38, height=38, border_radius=19,
+                                bgcolor="#22FFFFFF",
+                                alignment=ft.Alignment(0, 0), ink=True,
+                                tooltip="Предпросмотр (скриншоты, трейлер, описание)",
+                                on_click=lambda e, aid=app_id, nm=name: (
+                                    self._show_wishlist_preview(aid, nm, render_results)),
+                            ),
                             ft.ElevatedButton(
                                 "Добавить" if not in_wishlist else "✓",
                                 icon=ft.Icons.ADD if not in_wishlist else ft.Icons.CHECK,
@@ -3021,6 +3370,11 @@ class CyberLauncher:
                     padding=ft.Padding(left=10, right=10, top=8, bottom=8),
                     border_radius=8,
                     bgcolor="#15FFFFFF",
+                    ink=True,
+                    tooltip="Клик — предпросмотр",
+                    # Клик по строке (мимо кнопок) тоже открывает предпросмотр.
+                    on_click=lambda e, aid=app_id, nm=name: (
+                        self._show_wishlist_preview(aid, nm, render_results)),
                 )
                 results_column.controls.append(row)
             try:
@@ -3123,10 +3477,18 @@ class CyberLauncher:
         # Column с expand=True, чтобы заняли всю свободную высоту между
         # status_text и close-кнопкой. close-row прижимается к низу.
         # Card height=640 даёт ~430px для списка → ~6-7 строк по 67px.
+        # Фон — градиент активной темы (как bg_container и деталка), чтобы
+        # модалка не выбивалась плоской серой плашкой.
+        _theme = GRADIENT_THEMES.get(self.current_theme, GRADIENT_THEMES["dark"])
         card = ft.Container(
             width=680,
             height=640,
-            bgcolor="#2A2A2A",
+            gradient=ft.LinearGradient(
+                begin=ft.Alignment(-1, -1),
+                end=ft.Alignment(1, 1),
+                colors=_theme["colors"],
+            ),
+            border=ft.Border.all(1, "#33FFFFFF"),
             border_radius=14,
             padding=24,
             on_click=lambda e: None,
@@ -3712,6 +4074,9 @@ class CyberLauncher:
             return
         self._shutdown_done = True
         backend_logger.info("CyberLauncher shutdown started")
+        # Остановить фоновую догрузку деталей желаемого (недогруженные записи
+        # сохранят needs_details и продолжатся при следующем запуске).
+        self._wishlist_fill_stop = True
         try:
             if self.gamepad_manager is not None:
                 self.gamepad_manager.shutdown()

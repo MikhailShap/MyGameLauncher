@@ -28,7 +28,7 @@ import html as _html
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("WishlistManager")
 
@@ -162,6 +162,11 @@ class WishlistItem:
     trailer_url: str = ""                        # предпочтительный трейлер (mp4 / dash_av1 / hls)
     trailer_url_hls: str = ""                    # HLS-фоллбек, если trailer_url = DASH AV1
     trailer_thumb_url: str = ""                  # тубнейл трейлера
+    # True — запись создана импортом из Steam и ждёт догрузки деталей
+    # (название/обложка). Импорт даёт только app_id одним запросом; детали
+    # Steam отдаёт лишь по одной игре, поэтому тянем их фоном. См.
+    # WishlistManager.fill_missing_details.
+    needs_details: bool = False
     release_date: str = ""
     developers: str = ""                         # "Dev1, Dev2"
     genres: str = ""                             # "Action, RPG"
@@ -307,6 +312,108 @@ def steam_appdetails(app_id: str, lang: str = "russian") -> Optional[Dict[str, A
         if STEAM_CC_FALLBACK == STEAM_CC:
             break
     return None
+
+
+def steam_get_wishlist(steamid64: str) -> Optional[List[Dict[str, Any]]]:
+    """Список желаемого аккаунта: [{appid, priority, date_added}].
+
+    IWishlistService — публичный, Web API-ключ НЕ нужен. Возвращает:
+      • список (может быть пустым — у закрытого профиля Steam отдаёт 200 и
+        пустой items, это НЕ ошибка сети, показать пользователю про приватность);
+      • None — сеть/сервис недоступны либо steamid невалиден.
+    """
+    sid = str(steamid64).strip()
+    if not sid.isdigit() or len(sid) != 17:
+        logger.warning(f"Wishlist import: невалидный SteamID64 '{steamid64}'")
+        return None
+    url = (f"https://api.steampowered.com/IWishlistService/GetWishlist/v1/"
+           f"?steamid={urllib.parse.quote(sid)}")
+    data = _http_get_json(url, timeout=20.0)
+    if not isinstance(data, dict):
+        return None
+    resp = data.get("response")
+    if not isinstance(resp, dict):
+        return None
+    items = resp.get("items")
+    if items is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    for it in items:
+        try:
+            appid = it.get("appid")
+            if appid:
+                out.append({
+                    "appid": str(appid),
+                    "priority": int(it.get("priority") or 0),
+                    "date_added": int(it.get("date_added") or 0),
+                })
+        except Exception:
+            continue
+    return out
+
+
+def find_local_steamid64() -> Optional[Dict[str, str]]:
+    """SteamID64 последнего вошедшего аккаунта из локальной установки Steam.
+    Возвращает {'steamid', 'account', 'persona'} или None.
+
+    Путь к Steam берём из реестра (как SteamScanner), аккаунты — из
+    config/loginusers.vdf; при нескольких берём с MostRecent=1, иначе первый."""
+    steam_path = None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            steam_path = winreg.QueryValueEx(key, "SteamPath")[0]
+    except Exception:
+        for cand in (r"C:\Program Files (x86)\Steam", r"C:\Program Files\Steam"):
+            if os.path.isdir(cand):
+                steam_path = cand
+                break
+    if not steam_path:
+        return None
+    vdf = Path(str(steam_path).replace("/", os.sep)) / "config" / "loginusers.vdf"
+    if not vdf.exists():
+        return None
+    try:
+        text = vdf.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        logger.warning(f"loginusers.vdf read failed: {e}")
+        return None
+    # Плоский разбор: блоки "<steamid64>" { ... }
+    accounts: List[Dict[str, str]] = []
+    cur: Optional[Dict[str, str]] = None
+    for line in text.splitlines():
+        s = line.strip()
+        m = re.match(r'^"(\d{17})"$', s)
+        if m:
+            cur = {"steamid": m.group(1), "account": "", "persona": "", "recent": "0"}
+            accounts.append(cur)
+            continue
+        if cur is None:
+            continue
+        kv = re.match(r'^"([^"]+)"\s+"([^"]*)"$', s)
+        if kv:
+            k, v = kv.group(1).lower(), kv.group(2)
+            if k == "accountname":
+                cur["account"] = v
+            elif k == "personaname":
+                cur["persona"] = v
+            elif k == "mostrecent":
+                cur["recent"] = v
+    if not accounts:
+        return None
+    best = next((a for a in accounts if a.get("recent") == "1"), accounts[0])
+    return {"steamid": best["steamid"], "account": best.get("account", ""),
+            "persona": best.get("persona", "")}
+
+
+def steam_priority_to_level(priority: int) -> str:
+    """Позиция в ранжированном списке Steam → наш уровень важности.
+    Steam: 0 = без ручной сортировки, 1..N = позиция (1 — самая желанная)."""
+    if 1 <= priority <= 3:
+        return PRIORITY_HIGH
+    if 4 <= priority <= 10:
+        return PRIORITY_MEDIUM
+    return PRIORITY_LOW
 
 
 def build_wishlist_item(app_id: str) -> Optional[WishlistItem]:
@@ -699,6 +806,90 @@ class WishlistManager:
             logger.info(f"Wishlist: removed '{title}' (app_id={app_id})")
             return True
         return False
+
+    # ---------- Импорт из Steam ----------
+
+    def import_from_steam(self, items: List[Dict[str, Any]]) -> Tuple[int, int]:
+        """Фаза 1 импорта: создаёт записи по списку из steam_get_wishlist.
+        Детали (название/обложка) НЕ тянет — это делает fill_missing_details.
+
+        ИДЕМПОТЕНТНО: уже существующие app_id пропускаются, приоритеты и
+        правки пользователя не затираются. Возвращает (добавлено, пропущено)."""
+        added = skipped = 0
+        for it in items or []:
+            app_id = str(it.get("appid", "")).strip()
+            if not app_id:
+                continue
+            if app_id in self._items:
+                skipped += 1
+                continue
+            ts = int(it.get("date_added") or 0)
+            item = WishlistItem(app_id=app_id)
+            item.priority = steam_priority_to_level(int(it.get("priority") or 0))
+            if ts > 0:
+                item.added_date = datetime.fromtimestamp(ts).isoformat()
+            item.needs_details = True
+            self._items[app_id] = item
+            added += 1
+        if added:
+            self.save_sync()
+        logger.info(f"Wishlist import: добавлено {added}, пропущено {skipped}")
+        return added, skipped
+
+    def pending_details_count(self) -> int:
+        return sum(1 for it in self._items.values() if it.needs_details)
+
+    def fill_missing_details(self, progress_cb=None, should_stop=None,
+                             delay: float = 1.2) -> int:
+        """Фаза 2: догружает детали импортированных записей ПО ОДНОЙ с паузой.
+
+        Steam отдаёт детали только по одной игре за запрос (пакетный вызов даёт
+        400) и лимитирует ~200 запросов/5 мин, поэтому пауза обязательна —
+        иначе временный бан, который заденет и загрузку обложек библиотеки.
+        Прерывается через should_stop(); недогруженные останутся с
+        needs_details=True и подхватятся при следующем запуске.
+
+        progress_cb(done, total, title) — для UI. Возвращает число обновлённых."""
+        pending = [it.app_id for it in self._items.values() if it.needs_details]
+        total = len(pending)
+        done = 0
+        for app_id in pending:
+            if should_stop is not None and should_stop():
+                logger.info(f"Wishlist details: остановлено на {done}/{total}")
+                break
+            item = self._items.get(app_id)
+            if item is None:
+                continue
+            fresh = build_wishlist_item(app_id)
+            if fresh is None:
+                # Игра удалена из Steam / недоступна в обоих регионах —
+                # снимаем флаг, чтобы не долбить её при каждом запуске.
+                item.needs_details = False
+                item.title = item.title or f"App {app_id}"
+                logger.info(f"Wishlist details: нет данных для {app_id}, помечена")
+            else:
+                # Переносим полученные поля, СОХРАНЯЯ приоритет и дату из Steam.
+                item.title = fresh.title
+                item.header_image_url = fresh.header_image_url
+                item.short_description = fresh.short_description
+                item.store_url = fresh.store_url
+                item.trailer_url = fresh.trailer_url
+                item.trailer_url_hls = fresh.trailer_url_hls
+                item.trailer_thumb_url = fresh.trailer_thumb_url
+                item.release_date = fresh.release_date
+                item.developers = fresh.developers
+                item.genres = fresh.genres
+                item.needs_details = False
+            done += 1
+            self.save_sync()
+            if progress_cb is not None:
+                try:
+                    progress_cb(done, total, item.title)
+                except Exception:
+                    pass
+            if delay > 0 and done < total:
+                time.sleep(delay)
+        return done
 
     def set_priority(self, app_id: str, level: str) -> Optional[str]:
         """Установить уровень приоритета (high/medium/low).

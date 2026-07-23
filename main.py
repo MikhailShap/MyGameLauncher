@@ -33,7 +33,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.9"
+APP_VERSION = "1.9.10"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в

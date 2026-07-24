@@ -708,6 +708,12 @@ class WishlistManager:
         # Кэш разбора строк релиза: parse_release_date зовётся на каждый рендер
         # списка и в фильтрах, а строк-уникумов мало.
         self._release_cache: Dict[str, Tuple[Optional[date], str]] = {}
+        # Дисковый кэш обложек карточек. Без него Flutter качает 450+ картинок
+        # с CDN ЗАНОВО при каждом запуске (в памяти сессии кэш есть, на диске —
+        # не было) — это и ощущалось как «UI работает небыстро».
+        self._header_cache_dir = self.data_dir.parent / "cache" / "wishlist_headers"
+        self._header_inflight: set = set()
+        self._header_lock = threading.Lock()
 
     # ---------- Качество трейлера (HLS) ----------
 
@@ -1116,6 +1122,75 @@ class WishlistManager:
 
     def get_items(self) -> List[WishlistItem]:
         return list(self._items.values())
+
+    # ---------- Дисковый кэш обложек карточек ----------
+
+    def header_image_src(self, item: WishlistItem) -> str:
+        """Что подставить в карточку: локальный файл, если обложка уже скачана,
+        иначе исходный URL (Flutter покажет её из сети, а мы параллельно
+        положим копию на диск — со следующего запуска будет мгновенно)."""
+        url = item.header_image_url or ""
+        if not url:
+            return ""
+        path = self._header_cache_dir / f"{item.app_id}.jpg"
+        try:
+            if path.exists() and path.stat().st_size > 512:
+                return str(path)
+        except OSError:
+            pass
+        return url
+
+    def cache_headers_async(self, items: List[WishlistItem], limit: int = 40) -> None:
+        """Фоново докачивает обложки на диск для переданных игр (обычно —
+        видимая страница). Ничего не делает для уже скачанных."""
+        todo = []
+        for it in items[:limit]:
+            url = it.header_image_url or ""
+            if not url:
+                continue
+            path = self._header_cache_dir / f"{it.app_id}.jpg"
+            try:
+                if path.exists() and path.stat().st_size > 512:
+                    continue
+            except OSError:
+                pass
+            with self._header_lock:
+                if it.app_id in self._header_inflight:
+                    continue
+                self._header_inflight.add(it.app_id)
+            todo.append((it.app_id, url))
+        if not todo:
+            return
+        threading.Thread(target=self._download_headers, args=(todo,),
+                         daemon=True).start()
+
+    def _download_headers(self, todo: List[Tuple[str, str]]) -> None:
+        self._header_cache_dir.mkdir(parents=True, exist_ok=True)
+        done = 0
+        for app_id, url in todo:
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "Mozilla/5.0 (CyberLauncher) Wishlist/1.0"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    data = r.read()
+                if len(data) > 512:
+                    tmp = self._header_cache_dir / f"{app_id}.jpg.tmp"
+                    tmp.write_bytes(data)
+                    os.replace(tmp, self._header_cache_dir / f"{app_id}.jpg")
+                    done += 1
+            except Exception as e:
+                logger.debug(f"Header cache failed for {app_id}: {e}")
+            finally:
+                with self._header_lock:
+                    self._header_inflight.discard(app_id)
+        if done:
+            logger.info(f"Wishlist: обложек закэшировано на диск: {done}")
+
+    def cached_headers_count(self) -> int:
+        try:
+            return len(list(self._header_cache_dir.glob("*.jpg")))
+        except OSError:
+            return 0
 
     # ---------- Коллекции желаемого ----------
 

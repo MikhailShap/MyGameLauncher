@@ -2063,6 +2063,18 @@ class CyberLauncher:
             controls=grid_controls,
         )
 
+        # Фоново кладём обложки на диск — со следующего открытия они возьмутся
+        # локально, без обращения к CDN. Видимую страницу качаем всегда, а один
+        # раз за сессию запускаем и полный проход по списку (последовательно,
+        # в одном потоке — CDN картинок не лимитирует так, как Store API).
+        try:
+            wl.cache_headers_async(visible, limit=self._WISHLIST_PAGE_SIZE * 2)
+            if not getattr(self, "_wl_headers_prefetched", False):
+                self._wl_headers_prefetched = True
+                wl.cache_headers_async(items, limit=10000)
+        except Exception as ex:
+            backend_logger.debug(f"Header cache scheduling failed: {ex}")
+
         empty_hint = ft.Container(
             visible=not items,
             padding=40,
@@ -2395,7 +2407,12 @@ class CyberLauncher:
             self._wishlist_page = 0
         self.wishlist_view = self.build_wishlist_view()
         self.bg_container.content = self.wishlist_view
-        self.page.update()
+        # Обновляем ТОЛЬКО контейнер контента, а не всю страницу: page.update()
+        # диффит и сайдбар с оверлеями, что на каждый клик приоритета лишнее.
+        try:
+            self.bg_container.update()
+        except Exception:
+            self.page.update()
 
     # Цвета 3-уровневого огонька: high=зелёный (срочно), medium=жёлтый (потом),
     # low=серый (когда-нибудь). Используются и для иконки, и для бордера карточки.
@@ -2419,11 +2436,13 @@ class CyberLauncher:
         prio_icon_color, prio_bg = self._PRIORITY_COLORS[prio]
         prio_tooltip = self._PRIORITY_TOOLTIPS[prio]
 
-        # Cover image: используем header_image_url, fallback на градиент
-        if item.header_image_url:
+        # Cover image: локальный файл из дискового кэша, если есть (иначе
+        # Flutter качал бы 450+ картинок с CDN при каждом запуске), иначе URL.
+        cover_src = self.game_manager.wishlist.header_image_src(item)
+        if cover_src:
             cover_inner = ft.Container(
                 height=160,
-                image=ft.DecorationImage(src=item.header_image_url, fit="cover"),
+                image=ft.DecorationImage(src=cover_src, fit="cover"),
                 border_radius=ft.BorderRadius(8, 8, 0, 0),
             )
         else:
@@ -2498,11 +2517,26 @@ class CyberLauncher:
 
         # Импортированная запись, детали которой ещё не догрузились фоном.
         pending = getattr(item, "needs_details", False) and not item.title
-        title_text = ft.Text(
-            item.title or ("Загружаю данные…" if pending else "?"),
-            size=15, color=(TEXT_GREY if pending else TEXT_WHITE),
-            weight=ft.FontWeight.W_600,
-            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+        # Название + кнопка копирования (искать игру в других магазинах/гуглить).
+        title_text = ft.Row(
+            controls=[
+                ft.Text(
+                    item.title or ("Загружаю данные…" if pending else "?"),
+                    size=15, color=(TEXT_GREY if pending else TEXT_WHITE),
+                    weight=ft.FontWeight.W_600, expand=True,
+                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                    tooltip=item.title or "",
+                ),
+                ft.Container(
+                    content=ft.Icon(ft.Icons.CONTENT_COPY, size=15, color=TEXT_GREY),
+                    width=26, height=26, border_radius=13,
+                    alignment=ft.Alignment(0, 0), ink=True,
+                    tooltip="Скопировать название",
+                    visible=bool(item.title),
+                    on_click=lambda e, t=item.title: self._copy_to_clipboard(t),
+                ),
+            ],
+            spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER, tight=True,
         )
         meta_line = " · ".join(s for s in [item.release_date, item.genres] if s)
         if pending:
@@ -2591,6 +2625,19 @@ class CyberLauncher:
             content=ft.Column(controls=[cover, body], spacing=0, expand=True),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
+
+    def _copy_to_clipboard(self, text: str):
+        """Копирование в буфер обмена + подтверждение (иначе непонятно,
+        сработало ли). В Flet 0.80 буфер — СЕРВИС с async-методом
+        (page.clipboard.set), а не page.set_clipboard() как в старых версиях."""
+        if not text:
+            return
+        try:
+            self.page.run_task(self.page.clipboard.set, text)
+            self.show_snackbar(f"Скопировано: {text[:60]}", bgcolor="#4CAF50",
+                               duration=2500)
+        except Exception as ex:
+            backend_logger.warning(f"Clipboard copy failed: {ex}")
 
     def _wishlist_cycle_priority(self, app_id: str):
         new_val = self.game_manager.wishlist.cycle_priority(app_id)
@@ -2713,6 +2760,13 @@ class CyberLauncher:
                 ft.Text(item.title or "Без названия",
                         weight=ft.FontWeight.BOLD, size=20, color=TEXT_WHITE,
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                ft.Container(
+                    content=ft.Icon(ft.Icons.CONTENT_COPY, color=TEXT_WHITE, size=18),
+                    width=36, height=36, border_radius=18, bgcolor="#3A3A3A",
+                    alignment=ft.Alignment(0, 0), ink=True,
+                    tooltip="Скопировать название",
+                    on_click=lambda e, t=item.title: self._copy_to_clipboard(t),
+                ),
                 refresh_btn,
                 close_btn,
             ],

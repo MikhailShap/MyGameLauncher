@@ -173,6 +173,13 @@ class WishlistItem:
     details_attempts: int = 0
     # Пользовательские коллекции желаемого (отдельные от коллекций библиотеки).
     collections: List[str] = field(default_factory=list)
+    # Категории Steam (фичи: «Для одного игрока», «Кооператив (общий/
+    # разделённый экран)» …). Нужны для фильтра по локальному кооперативу —
+    # это КАТЕГОРИЯ, а не жанр. Заполняются при догрузке/добавлении.
+    categories: List[str] = field(default_factory=list)
+    # True — категории ещё не собраны (для фоновой добивки старых записей,
+    # импортированных до появления этого поля).
+    needs_categories: bool = False
     # True — об уже состоявшемся релизе этой игры уже уведомляли (чтобы не
     # показывать одно и то же при каждом запуске). См. collect_new_releases.
     release_notified: bool = False
@@ -505,6 +512,52 @@ def find_local_steamid64() -> Optional[Dict[str, str]]:
             "persona": best.get("persona", "")}
 
 
+# Маркеры «локального кооператива» в категориях Steam (ру + en, по подстроке).
+# Локальный кооп = играть вдвоём за одним ПК: общий/разделённый экран, а также
+# Remote Play Together (один экземпляр игры на нескольких, де-факто локальный).
+_LOCAL_COOP_MARKERS = (
+    "разделённый экран", "разделенный экран", "split screen", "split/screen",
+    "на одном пк", "на одном компьютере", "локальн",   # локальный кооп/мультиплеер
+    "local co-op", "local multiplayer",
+    "remote play together",
+)
+
+
+def is_local_coop(categories: List[str]) -> bool:
+    """True, если среди категорий Steam есть признак локального кооператива."""
+    for c in categories or []:
+        cl = c.lower()
+        if any(mark in cl for mark in _LOCAL_COOP_MARKERS):
+            return True
+    return False
+
+
+def _extract_categories(details: Dict[str, Any]) -> List[str]:
+    """Список названий категорий из ответа appdetails."""
+    return [c.get("description", "") for c in (details.get("categories") or [])
+            if c.get("description")]
+
+
+def steam_categories(app_id: str) -> Optional[List[str]]:
+    """Только категории игры (лёгкий запрос filters=categories). None при
+    отказе Steam. С фоллбеком региона, как steam_appdetails."""
+    if not app_id:
+        return None
+    for cc in (STEAM_CC, STEAM_CC_FALLBACK):
+        if not cc:
+            continue
+        url = (f"https://store.steampowered.com/api/appdetails"
+               f"?appids={urllib.parse.quote(str(app_id))}&l=russian"
+               f"&cc={urllib.parse.quote(cc)}&filters=categories")
+        data = _http_get_json(url, timeout=12.0)
+        entry = (data or {}).get(str(app_id)) if isinstance(data, dict) else None
+        if entry and entry.get("success"):
+            return _extract_categories(entry.get("data") or {})
+        if STEAM_CC_FALLBACK == STEAM_CC:
+            break
+    return None
+
+
 def steam_priority_to_level(priority: int) -> str:
     """Позиция в ранжированном списке Steam → наш уровень важности.
     Steam: 0 = без ручной сортировки, 1..N = позиция (1 — самая желанная)."""
@@ -552,6 +605,8 @@ def build_wishlist_item(app_id: str) -> Optional[WishlistItem]:
     item.developers = ", ".join(devs) if devs else ""
     genres = [g.get("description", "") for g in (details.get("genres") or [])]
     item.genres = ", ".join(g for g in genres if g)
+    item.categories = _extract_categories(details)
+    item.needs_categories = False
     return item
 
 
@@ -887,8 +942,74 @@ class WishlistManager:
                     logger.warning(f"Skipping malformed wishlist item: {e}")
             logger.info(f"Wishlist loaded: {len(self._items)} items")
             self._requeue_stub_items()
+            self._backfill_categories_from_cache()
         except Exception as e:
             logger.error(f"Wishlist load failed: {e}")
+
+    def _backfill_categories_from_cache(self) -> int:
+        """Дешёвая (без сети) добивка категорий: у части игр деталка уже
+        открывалась, её кэш на диске содержит categories. Остальным с готовыми
+        деталями (title есть) ставим needs_categories для фоновой сетевой
+        добивки. Старые записи в JSON поля categories не имеют."""
+        from_cache = 0
+        for item in self._items.values():
+            if item.categories:
+                continue
+            disk = self._read_details_disk(item.app_id, ignore_ttl=True)
+            if disk and disk.get("categories"):
+                item.categories = [c for c in disk["categories"] if c]
+                item.needs_categories = False
+                from_cache += 1
+            elif item.title and not item.needs_details:
+                # Детали есть, а категорий нет → добьём фоном из сети.
+                item.needs_categories = True
+        if from_cache:
+            self.save_sync()
+            logger.info(f"Wishlist: категории {from_cache} игр взяты из кэша деталей")
+        return from_cache
+
+    def pending_categories_count(self) -> int:
+        return sum(1 for it in self._items.values()
+                   if it.needs_categories and not it.categories)
+
+    def fill_missing_categories(self, progress_cb=None, should_stop=None) -> int:
+        """Фоновая добивка категорий лёгким запросом filters=categories.
+        Троттлинг как у деталей (лимит Steam общий на appdetails)."""
+        pending = [it.app_id for it in self._items.values()
+                   if it.needs_categories and not it.categories]
+        total = len(pending)
+        done = 0
+        consecutive_fail = 0
+        for app_id in pending:
+            if should_stop is not None and should_stop():
+                self.save_sync()
+                break
+            item = self._items.get(app_id)
+            if item is None:
+                continue
+            cats = steam_categories(app_id)
+            if cats is None:
+                consecutive_fail += 1
+                if consecutive_fail >= 3:
+                    self.save_sync()
+                    time.sleep(self.DETAILS_COOLDOWN)
+                    consecutive_fail = 0
+                # категории не критичны — не помечаем «навсегда», попробуем в
+                # следующий раз (needs_categories остаётся True).
+            else:
+                item.categories = cats
+                item.needs_categories = False
+                consecutive_fail = 0
+            done += 1
+            if done % 10 == 0 or done == total:
+                self.save_sync()
+            if progress_cb is not None:
+                try:
+                    progress_cb(done, total, item.title)
+                except Exception:
+                    pass
+            time.sleep(self.DETAILS_DELAY)
+        return done
 
     def _requeue_stub_items(self) -> int:
         """Возвращает в очередь записи-заглушки «App <appid>».
@@ -1286,12 +1407,15 @@ class WishlistManager:
         return sorted(years, reverse=True)
 
     def filter_items(self, items: List[WishlistItem], *, year=None, genre=None,
-                     status=None, collection=None) -> List[WishlistItem]:
-        """Фильтрация списка. status: 'released' | 'upcoming' | 'undated'."""
+                     status=None, collection=None, feature=None) -> List[WishlistItem]:
+        """Фильтрация списка. status: 'released'|'upcoming'|'undated'.
+        feature: 'local_coop' (по категориям Steam, не жанрам)."""
         today = date.today()
         out = []
         for it in items:
             if collection and collection not in (it.collections or []):
+                continue
+            if feature == "local_coop" and not is_local_coop(it.categories):
                 continue
             if genre:
                 gs = [g.strip() for g in (it.genres or "").split(",")]

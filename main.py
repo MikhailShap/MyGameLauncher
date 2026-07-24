@@ -1928,8 +1928,9 @@ class CyberLauncher:
         if not hasattr(self, "_wishlist_page"):
             self._wishlist_page = 0
         if not hasattr(self, "_wishlist_filters"):
-            self._wishlist_filters = {"year": None, "genre": None,
-                                      "status": None, "collection": None}
+            self._wishlist_filters = {"year": None, "genre": None, "status": None,
+                                      "collection": None, "feature": None}
+        self._wishlist_filters.setdefault("feature", None)
 
         # Заголовок + кнопки управления (Добавить, сортировка)
         title_row = ft.Row(
@@ -1990,7 +1991,8 @@ class CyberLauncher:
         total_all = len(items)
         items = wl.filter_items(
             items, year=f.get("year"), genre=f.get("genre"),
-            status=f.get("status"), collection=f.get("collection"))
+            status=f.get("status"), collection=f.get("collection"),
+            feature=f.get("feature"))
         filters_row = self._build_wishlist_filters_row(total_all, len(items))
 
         # ПАГИНАЦИЯ. После импорта из Steam в списке могут быть сотни игр, а
@@ -2178,10 +2180,20 @@ class CyberLauncher:
             ft.PopupMenuItem(str(y), on_click=lambda _, v=y: self._wl_set_filter("year", v))
             for y in wl.get_years()
         ]
-        genre_items = [ft.PopupMenuItem("Все жанры",
-                                        on_click=lambda _: self._wl_set_filter("genre", None))]
+        # Первый пункт — «Локальный кооп»: это КАТЕГОРИЯ Steam, не жанр, но
+        # пользователь ищет его именно здесь. Выбор фичи сбрасывает жанр и
+        # наоборот (они в одном дропдауне, но взаимоисключающие).
+        genre_items = [
+            ft.PopupMenuItem("🎮 Локальный кооп",
+                             on_click=lambda _: self._wl_pick_local_coop()),
+            ft.PopupMenuItem("Все жанры",
+                             on_click=lambda _: (self._wishlist_filters.update(feature=None),
+                                                 self._wl_set_filter("genre", None))),
+        ]
         genre_items += [
-            ft.PopupMenuItem(g, on_click=lambda _, v=g: self._wl_set_filter("genre", v))
+            ft.PopupMenuItem(g, on_click=lambda _, v=g: (
+                self._wishlist_filters.update(feature=None),
+                self._wl_set_filter("genre", v)))
             for g in wl.get_genres()
         ]
         cols = wl.get_collections()
@@ -2192,13 +2204,16 @@ class CyberLauncher:
             for c in cols
         ]
 
+        genre_label = ("🎮 Локальный кооп" if f.get("feature") == "local_coop"
+                       else (f.get("genre") or "Все"))
         controls = [
             self._wl_filter_chip("Статус", self._WL_STATUS_LABELS.get(f.get("status"), "Все"),
                                  f.get("status") is not None, status_items),
             self._wl_filter_chip("Год", str(f["year"]) if f.get("year") else "Все",
                                  f.get("year") is not None, year_items),
-            self._wl_filter_chip("Жанр", f.get("genre") or "Все",
-                                 f.get("genre") is not None, genre_items),
+            self._wl_filter_chip("Жанр", genre_label,
+                                 f.get("genre") is not None or f.get("feature") is not None,
+                                 genre_items),
             self._wl_filter_chip("Коллекция", f.get("collection") or "Все",
                                  f.get("collection") is not None, col_items),
             ft.Container(
@@ -2215,7 +2230,8 @@ class CyberLauncher:
                 on_click=lambda e: self._show_wishlist_collections_dialog(),
             ),
         ]
-        if any(f.get(k) is not None for k in ("status", "year", "genre", "collection")):
+        if any(f.get(k) is not None for k in ("status", "year", "genre",
+                                              "collection", "feature")):
             controls.append(
                 ft.Container(
                     content=ft.Row(
@@ -2234,10 +2250,62 @@ class CyberLauncher:
                       vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     def _wl_reset_filters(self):
-        self._wishlist_filters = {"year": None, "genre": None,
-                                  "status": None, "collection": None}
+        self._wishlist_filters = {"year": None, "genre": None, "status": None,
+                                  "collection": None, "feature": None}
         self._wishlist_page = 0
         self._refresh_wishlist_view(keep_page=True)
+
+    def _wl_pick_local_coop(self):
+        """Фильтр «Локальный кооп». Категории собираются лениво: если у многих
+        игр их ещё нет — запускаем фоновую добивку и говорим об этом (иначе
+        фильтр покажет неполный список и это выглядело бы как баг)."""
+        self._wishlist_filters["genre"] = None
+        self._wishlist_filters["feature"] = "local_coop"
+        self._wishlist_page = 0
+        wl = self.game_manager.wishlist
+        pending = wl.pending_categories_count()
+        if pending > 0 and not getattr(self, "_wl_cats_running", False):
+            self.show_snackbar(
+                f"Собираю данные о кооперативе ({pending} игр) — список "
+                f"пополнится по мере загрузки", bgcolor="#E65100", duration=6000)
+            self.page.run_task(self._wishlist_fill_categories_task)
+        self._refresh_wishlist_view(keep_page=True)
+
+    async def _wishlist_fill_categories_task(self):
+        """Фоновая добивка категорий (для фильтра локального коопа)."""
+        if getattr(self, "_wl_cats_running", False):
+            return
+        self._wl_cats_running = True
+        self._wishlist_fill_stop = False
+
+        def _progress(done, total, title):
+            try:
+                self._wishlist_progress_text.value = f"Категории: {done}/{total}"
+                self._wishlist_progress_text.visible = True
+                self._wishlist_progress_text.update()
+            except Exception:
+                pass
+
+        try:
+            self._wishlist_progress_text.value = "Категории…"
+            self._wishlist_progress_text.visible = True
+            self._safe_page_update()
+            await asyncio.to_thread(
+                self.game_manager.wishlist.fill_missing_categories,
+                _progress, lambda: self._wishlist_fill_stop)
+        except Exception as ex:
+            backend_logger.warning(f"Wishlist categories fill failed: {ex}")
+        finally:
+            self._wl_cats_running = False
+            try:
+                self._wishlist_progress_text.value = ""
+                self._wishlist_progress_text.visible = False
+            except Exception:
+                pass
+            # Обновить список — категории собрались, фильтр покажет больше.
+            if self.current_filter == "wishlist":
+                self._wl_card_cache.clear()
+                self._refresh_wishlist_view(keep_page=True)
 
     def _show_wishlist_collections_dialog(self):
         """Создание/удаление коллекций желаемого."""

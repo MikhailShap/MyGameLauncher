@@ -180,6 +180,13 @@ class WishlistItem:
     # True — категории ещё не собраны (для фоновой добивки старых записей,
     # импортированных до появления этого поля).
     needs_categories: bool = False
+    # appid ДЕМОВЕРСИИ в Steam (у демо свой собственный app_id), пустая строка —
+    # демо нет. Steam отдаёт её в appdetails полем demos: [{appid, description}].
+    demo_app_id: str = ""
+    # True — про демо уже спрашивали Steam (даже если ответ «демо нет»). Нужно
+    # чтобы отличить «демо нет» от «ещё не проверяли»: старые записи в JSON
+    # поля demo_app_id не имеют, их добивает фоновая задача fill_missing_extras.
+    demo_checked: bool = False
     # True — об уже состоявшемся релизе этой игры уже уведомляли (чтобы не
     # показывать одно и то же при каждом запуске). См. collect_new_releases.
     release_notified: bool = False
@@ -538,9 +545,75 @@ def _extract_categories(details: Dict[str, Any]) -> List[str]:
             if c.get("description")]
 
 
-def steam_categories(app_id: str) -> Optional[List[str]]:
-    """Только категории игры (лёгкий запрос filters=categories). None при
-    отказе Steam. С фоллбеком региона, как steam_appdetails."""
+# Строка «сколько места нужно» в системных требованиях Steam. Отдельного поля с
+# размером игры в API НЕТ (ни в appdetails, ни в GetOwnedGames) — доступен только
+# текст требований, поэтому вытаскиваем размер оттуда. Формулировки зависят от
+# языка ответа, поэтому ключей несколько.
+# Формулировки разные даже внутри одного языка: «Место на диске», «Жёсткий
+# диск», «Свободное место», Storage / Hard Drive / Available space. Поэтому
+# ищем по КОРНЮ, а не по полной подписи.
+_DISK_LABELS = (
+    "диск",                       # место на диске / жёсткий диск / объём диска
+    "свободное место", "доступное место",
+    "storage", "drive", "available space", "hdd", "ssd", "disk",
+)
+# «20 ГБ», «1.5 TB», «700 MB», «50 Гб доступного места»
+_SIZE_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(ТБ|ГБ|МБ|TB|GB|MB)\b", re.IGNORECASE)
+# Единицы приводим к одному виду, иначе в списке соседствуют «20 ГБ» и «150 GB».
+_SIZE_UNITS = {"ТБ": "ТБ", "ГБ": "ГБ", "МБ": "МБ",
+               "TB": "ТБ", "GB": "ГБ", "MB": "МБ"}
+
+
+def parse_disk_space(details: Dict[str, Any]) -> str:
+    """Сколько места просит игра — из системных требований. '' если не нашли.
+
+    Это ТРЕБОВАНИЕ издателя, а не точный размер загрузки: реальный вес может
+    отличаться (обновления, вырезанные языки). Для «ставить или нет» этого
+    достаточно, а точной цифры Steam публично не отдаёт — отдельного поля с
+    размером нет ни в appdetails, ни в GetOwnedGames."""
+    for block in ("pc_requirements", "mac_requirements", "linux_requirements"):
+        raw = details.get(block)
+        if not isinstance(raw, dict):
+            continue
+        for key in ("minimum", "recommended"):
+            html = raw.get(key) or ""
+            if not html:
+                continue
+            # Требования — список <li>; ищем пункт про диск и размер в нём.
+            for chunk in re.split(r"<li>|<br\s*/?>", html):
+                text = strip_html(chunk)
+                if not any(lbl in text.lower() for lbl in _DISK_LABELS):
+                    continue
+                m = _SIZE_RE.search(text)
+                if m:
+                    unit = _SIZE_UNITS.get(m.group(2).upper(), m.group(2))
+                    return f"{m.group(1).replace(',', '.')} {unit}"
+    return ""
+
+
+def _extract_demo_app_id(details: Dict[str, Any]) -> str:
+    """appid демоверсии из ответа appdetails (поле demos), '' если демо нет.
+
+    Steam кладёт демо отдельным приложением: demos: [{appid, description}].
+    Берём первую — вторых на практике не бывает."""
+    for d in (details.get("demos") or []):
+        try:
+            aid = str(d.get("appid") or "").strip()
+            if aid:
+                return aid
+        except Exception:
+            continue
+    return ""
+
+
+def steam_extra_info(app_id: str) -> Optional[Dict[str, Any]]:
+    """Лёгкий запрос appdetails за КАТЕГОРИЯМИ и ДЕМОВЕРСИЕЙ сразу
+    (filters=categories,demos — один запрос вместо двух; лимит Steam общий на
+    appdetails, поэтому экономия запросов тут принципиальна).
+
+    Возвращает {'categories': [...], 'demo_app_id': '...'} либо None при отказе
+    Steam. С фоллбеком региона, как steam_appdetails."""
     if not app_id:
         return None
     for cc in (STEAM_CC, STEAM_CC_FALLBACK):
@@ -548,14 +621,28 @@ def steam_categories(app_id: str) -> Optional[List[str]]:
             continue
         url = (f"https://store.steampowered.com/api/appdetails"
                f"?appids={urllib.parse.quote(str(app_id))}&l=russian"
-               f"&cc={urllib.parse.quote(cc)}&filters=categories")
+               f"&cc={urllib.parse.quote(cc)}&filters=categories,demos")
         data = _http_get_json(url, timeout=12.0)
         entry = (data or {}).get(str(app_id)) if isinstance(data, dict) else None
         if entry and entry.get("success"):
-            return _extract_categories(entry.get("data") or {})
+            # При filters= Steam иногда отдаёт data пустым СПИСКОМ вместо dict
+            # (когда ни одного запрошенного поля у игры нет) — не падаем.
+            payload = entry.get("data")
+            if not isinstance(payload, dict):
+                payload = {}
+            return {
+                "categories": _extract_categories(payload),
+                "demo_app_id": _extract_demo_app_id(payload),
+            }
         if STEAM_CC_FALLBACK == STEAM_CC:
             break
     return None
+
+
+def steam_categories(app_id: str) -> Optional[List[str]]:
+    """Только категории игры. None при отказе Steam."""
+    info = steam_extra_info(app_id)
+    return None if info is None else info["categories"]
 
 
 def steam_priority_to_level(priority: int) -> str:
@@ -607,6 +694,10 @@ def build_wishlist_item(app_id: str) -> Optional[WishlistItem]:
     item.genres = ", ".join(g for g in genres if g)
     item.categories = _extract_categories(details)
     item.needs_categories = False
+    # Демоверсия (отдельное приложение Steam). Ответ получен — значит про демо
+    # спросили, даже если его нет: не гоняем игру через фоновую добивку зря.
+    item.demo_app_id = _extract_demo_app_id(details)
+    item.demo_checked = True
     return item
 
 
@@ -622,7 +713,9 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
       контроллер, ачивки…), platforms (list[str]: Windows/Mac/Linux),
       metacritic_score (int|None), metacritic_url,
       price (str: 'Бесплатно' / '999 руб.' / ''),
+      disk_space (str: '20 ГБ' — требуемое место, '' если не указано),
       screenshots (list[url]), trailers (list[{name, thumb, url}]),
+      demo_app_id (str: appid демоверсии или ''), demos (list[{app_id, name}]),
       store_url
     """
     details = steam_appdetails(app_id)
@@ -726,8 +819,18 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
         "metacritic_score": metacritic_score,
         "metacritic_url": metacritic_url,
         "price": price,
+        # Требуемое место на диске из системных требований (в API отдельного
+        # поля с размером игры нет) — нужно разделу «Steam: не стоят».
+        "disk_space": parse_disk_space(details),
         "screenshots": screenshots,
         "trailers": trailers,
+        # Демоверсия — отдельное приложение Steam со своим appid.
+        "demo_app_id": _extract_demo_app_id(details),
+        "demos": [
+            {"app_id": str(dm.get("appid") or ""),
+             "name": (dm.get("description") or "").strip()}
+            for dm in (details.get("demos") or []) if dm.get("appid")
+        ],
         "store_url": f"https://store.steampowered.com/app/{app_id}/",
     }
 
@@ -835,7 +938,9 @@ class WishlistManager:
         """Тихая миграция при успешном сетевом обновлении деталей:
         1) освежает трейлер-поля (записи до перехода на dash_av1 хранят HLS);
         2) чинит карточку-заглушку — заполняет название/обложку/описание, если
-           их не было (кнопка «Обновить» в деталке тем самым лечит карточку)."""
+           их не было (кнопка «Обновить» в деталке тем самым лечит карточку);
+        3) забирает demo_app_id и категории — детали приходят полным ответом
+           appdetails, так что фоновой добивке эта игра уже не нужна."""
         try:
             it = self._items.get(str(app_id))
             if not it:
@@ -855,6 +960,17 @@ class WishlistManager:
                     self.save_sync()
                     logger.info(f"Wishlist: карточка {app_id} восстановлена "
                                 f"из деталей ('{it.title}')")
+            # (3) Демо и категории — «бесплатно» из уже полученного ответа.
+            new_demo = str(data.get("demo_app_id") or "")
+            new_cats = [c for c in (data.get("categories") or []) if c]
+            if (not it.demo_checked or it.demo_app_id != new_demo
+                    or (new_cats and not it.categories)):
+                it.demo_app_id = new_demo
+                it.demo_checked = True
+                if new_cats:
+                    it.categories = new_cats
+                    it.needs_categories = False
+                self.save_sync()
             trailers = data.get("trailers") or []
             if not trailers:
                 return
@@ -942,41 +1058,62 @@ class WishlistManager:
                     logger.warning(f"Skipping malformed wishlist item: {e}")
             logger.info(f"Wishlist loaded: {len(self._items)} items")
             self._requeue_stub_items()
-            self._backfill_categories_from_cache()
+            self._backfill_extras_from_cache()
         except Exception as e:
             logger.error(f"Wishlist load failed: {e}")
 
-    def _backfill_categories_from_cache(self) -> int:
-        """Дешёвая (без сети) добивка категорий: у части игр деталка уже
-        открывалась, её кэш на диске содержит categories. Остальным с готовыми
-        деталями (title есть) ставим needs_categories для фоновой сетевой
-        добивки. Старые записи в JSON поля categories не имеют."""
+    def _backfill_extras_from_cache(self) -> int:
+        """Дешёвая (без сети) добивка КАТЕГОРИЙ и ДЕМО: у части игр деталка уже
+        открывалась, её кэш на диске содержит categories (и demo_app_id, если
+        кэш свежий). Остальным с готовыми деталями (title есть) ставим
+        needs_categories для фоновой сетевой добивки. Старые записи в JSON
+        полей categories/demo_app_id не имеют."""
         from_cache = 0
         for item in self._items.values():
-            if item.categories:
-                continue
-            disk = self._read_details_disk(item.app_id, ignore_ttl=True)
-            if disk and disk.get("categories"):
-                item.categories = [c for c in disk["categories"] if c]
-                item.needs_categories = False
+            disk = None
+            if not item.categories or not item.demo_checked:
+                disk = self._read_details_disk(item.app_id, ignore_ttl=True)
+            if not item.categories:
+                if disk and disk.get("categories"):
+                    item.categories = [c for c in disk["categories"] if c]
+                    item.needs_categories = False
+                    from_cache += 1
+                elif item.title and not item.needs_details:
+                    # Детали есть, а категорий нет → добьём фоном из сети.
+                    item.needs_categories = True
+            if not item.demo_checked and disk is not None and "demo_app_id" in disk:
+                # Кэш деталей записан уже после появления поля demo_app_id —
+                # значение достоверно (в т.ч. пустое = демо нет).
+                item.demo_app_id = str(disk.get("demo_app_id") or "")
+                item.demo_checked = True
                 from_cache += 1
-            elif item.title and not item.needs_details:
-                # Детали есть, а категорий нет → добьём фоном из сети.
-                item.needs_categories = True
         if from_cache:
             self.save_sync()
-            logger.info(f"Wishlist: категории {from_cache} игр взяты из кэша деталей")
+            logger.info(f"Wishlist: доп. данные {from_cache} игр взяты из кэша деталей")
         return from_cache
 
-    def pending_categories_count(self) -> int:
-        return sum(1 for it in self._items.values()
-                   if it.needs_categories and not it.categories)
+    def pending_extras_count(self) -> int:
+        """Сколько игр ждут лёгкой сетевой добивки (категории и/или демо)."""
+        return sum(1 for it in self._items.values() if self._needs_extras(it))
 
-    def fill_missing_categories(self, progress_cb=None, should_stop=None) -> int:
-        """Фоновая добивка категорий лёгким запросом filters=categories.
-        Троттлинг как у деталей (лимит Steam общий на appdetails)."""
-        pending = [it.app_id for it in self._items.values()
-                   if it.needs_categories and not it.categories]
+    @staticmethod
+    def _needs_extras(it: WishlistItem) -> bool:
+        # Заглушки без деталей сюда не берём — их сначала должен добить
+        # fill_missing_details (иначе потратим лимит Steam на несуществующие).
+        if it.needs_details:
+            return False
+        return (it.needs_categories and not it.categories) or not it.demo_checked
+
+    # Обратная совместимость с прежним именем (был отдельный проход только по
+    # категориям). Оставлено, чтобы старые вызовы не падали.
+    def pending_categories_count(self) -> int:
+        return self.pending_extras_count()
+
+    def fill_missing_extras(self, progress_cb=None, should_stop=None) -> int:
+        """Фоновая добивка категорий и демоверсий одним лёгким запросом
+        (filters=categories,demos). Троттлинг как у деталей — лимит Steam
+        общий на appdetails."""
+        pending = [it.app_id for it in self._items.values() if self._needs_extras(it)]
         total = len(pending)
         done = 0
         consecutive_fail = 0
@@ -987,18 +1124,21 @@ class WishlistManager:
             item = self._items.get(app_id)
             if item is None:
                 continue
-            cats = steam_categories(app_id)
-            if cats is None:
+            info = steam_extra_info(app_id)
+            if info is None:
                 consecutive_fail += 1
                 if consecutive_fail >= 3:
                     self.save_sync()
                     time.sleep(self.DETAILS_COOLDOWN)
                     consecutive_fail = 0
-                # категории не критичны — не помечаем «навсегда», попробуем в
-                # следующий раз (needs_categories остаётся True).
+                # Данные не критичны — не помечаем «навсегда», попробуем в
+                # следующий раз (needs_categories / demo_checked не трогаем).
             else:
-                item.categories = cats
+                if info["categories"]:
+                    item.categories = info["categories"]
                 item.needs_categories = False
+                item.demo_app_id = info["demo_app_id"]
+                item.demo_checked = True
                 consecutive_fail = 0
             done += 1
             if done % 10 == 0 or done == total:
@@ -1010,6 +1150,10 @@ class WishlistManager:
                     pass
             time.sleep(self.DETAILS_DELAY)
         return done
+
+    # Прежнее имя прохода (только категории) — делегирует на общий.
+    def fill_missing_categories(self, progress_cb=None, should_stop=None) -> int:
+        return self.fill_missing_extras(progress_cb, should_stop)
 
     def _requeue_stub_items(self) -> int:
         """Возвращает в очередь записи-заглушки «App <appid>».
@@ -1186,6 +1330,13 @@ class WishlistManager:
                 item.release_date = fresh.release_date
                 item.developers = fresh.developers
                 item.genres = fresh.genres
+                # Категории и демо приходят тем же ответом — забираем, чтобы
+                # потом не гонять по ним отдельный проход fill_missing_extras.
+                if fresh.categories:
+                    item.categories = fresh.categories
+                    item.needs_categories = False
+                item.demo_app_id = fresh.demo_app_id
+                item.demo_checked = fresh.demo_checked
                 item.needs_details = False
             done += 1
             # Сохраняем пачками, а не после каждой игры: save_sync делает fsync,
@@ -1407,15 +1558,23 @@ class WishlistManager:
         return sorted(years, reverse=True)
 
     def filter_items(self, items: List[WishlistItem], *, year=None, genre=None,
-                     status=None, collection=None, feature=None) -> List[WishlistItem]:
+                     status=None, collection=None, feature=None,
+                     query=None) -> List[WishlistItem]:
         """Фильтрация списка. status: 'released'|'upcoming'|'undated'.
-        feature: 'local_coop' (по категориям Steam, не жанрам)."""
+        feature: 'local_coop' (по категориям Steam, не жанрам) | 'demo'
+        (есть демоверсия в Steam).
+        query: подстрока — ищем в названии, разработчике и жанрах."""
         today = date.today()
+        q = (query or "").strip().lower()
         out = []
         for it in items:
             if collection and collection not in (it.collections or []):
                 continue
             if feature == "local_coop" and not is_local_coop(it.categories):
+                continue
+            if feature == "demo" and not it.demo_app_id:
+                continue
+            if q and not self._matches_query(it, q):
                 continue
             if genre:
                 gs = [g.strip() for g in (it.genres or "").split(",")]
@@ -1432,6 +1591,18 @@ class WishlistManager:
                 continue
             out.append(it)
         return out
+
+    @staticmethod
+    def _matches_query(it: WishlistItem, q: str) -> bool:
+        """Совпадение поискового запроса. Ищем по названию, разработчику,
+        жанрам и app_id — так находится и «Larian», и «1086940»."""
+        if q in (it.title or "").lower():
+            return True
+        if q in (it.developers or "").lower():
+            return True
+        if q in (it.genres or "").lower():
+            return True
+        return q == (it.app_id or "")
 
     def upcoming_by_month(self, months_ahead: int = 12
                           ) -> Dict[Tuple[int, int], List[WishlistItem]]:

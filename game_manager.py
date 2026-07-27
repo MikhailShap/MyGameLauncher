@@ -1369,6 +1369,12 @@ class GameManager:
         from wishlist_manager import WishlistManager  # avoid circular import at module load
         self.wishlist = WishlistManager(self.data_dir)
 
+        # Купленные в Steam игры, которых нет на диске. SteamScanner видит
+        # только установленное (appmanifest), поэтому полный список аккаунта
+        # приходится спрашивать у Steam по сети и кэшировать.
+        from steam_owned import SteamOwnedManager
+        self.steam_owned = SteamOwnedManager(self.data_dir)
+
         # --- Persistence: atomic save + lock + debounce ---
         # Защищает от параллельной записи library.json и от частичной записи при kill
         self._save_lock: Optional[asyncio.Lock] = None  # ленивый, на первом use
@@ -1452,6 +1458,11 @@ class GameManager:
             self.wishlist.load()
         except Exception as e:
             logger.warning(f"Wishlist load failed: {e}")
+
+        try:
+            self.steam_owned.load()
+        except Exception as e:
+            logger.warning(f"Steam owned load failed: {e}")
 
         if self.library_file.exists():
             try:

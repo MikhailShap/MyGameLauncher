@@ -3,6 +3,7 @@ import asyncio
 import sys
 import json
 import re
+import gc
 import logging
 import threading
 import webbrowser
@@ -10,7 +11,7 @@ import os
 import atexit
 import subprocess
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import Tk, filedialog
 from types import SimpleNamespace
@@ -35,7 +36,7 @@ from game_manager import GameManager, GameModel, Platform, Category, logger as b
 # Версия приложения. Менять только здесь — используется и для заголовка окна
 # (через который FindWindowW находит лаунчер для restore из BigPicture), и
 # для текста "О приложении". Должна совпадать с installer.iss → MyAppVersion.
-APP_VERSION = "1.9.10"
+APP_VERSION = "1.9.12"
 WINDOW_TITLE = f"CyberLauncher v{APP_VERSION}"
 
 # Опциональный видео-плеер (flet-video, на media_kit). Flutter-клиент в
@@ -59,6 +60,16 @@ try:
 except Exception as _e:
     TrailerProxy = None
     HAS_TRAILER_PROXY = False
+
+# Патчи Flet 0.80 (см. flet_patches.py): дешёвый __repr__ контролов вместо
+# рекурсивного обхода дерева на каждый page.update() и защита UI-сессии от
+# разового MemoryError. Применять ПОСЛЕ импорта flet/flet_video — патч
+# проходит по уже созданным классам контролов.
+try:
+    from flet_patches import apply_flet_patches
+    apply_flet_patches()
+except Exception as _e:
+    backend_logger.warning(f"flet_patches недоступны: {_e}")
 
 # Опциональные модули геймпада и BigPicture
 try:
@@ -1262,6 +1273,7 @@ class CyberLauncher:
         self.sidebar_buttons["wishlist"] = SidebarButton(ft.Icons.LOCAL_FIRE_DEPARTMENT_OUTLINED, "Желаемое", on_click=self.on_filter_click, data="wishlist")
         self.sidebar_buttons["calendar"] = SidebarButton(ft.Icons.EVENT_OUTLINED, "Календарь релизов", on_click=self.on_filter_click, data="calendar")
         self.sidebar_buttons["steam"] = SidebarButton(ft.Icons.VIDEOGAME_ASSET_OUTLINED, "Steam", on_click=self.on_filter_click, data="steam")
+        self.sidebar_buttons["steam_not_installed"] = SidebarButton(ft.Icons.CLOUD_DOWNLOAD_OUTLINED, "Steam: не стоят", on_click=self.on_filter_click, data="steam_not_installed")
         self.sidebar_buttons["epic"] = SidebarButton(ft.Icons.TOKEN_OUTLINED, "Epic Games", on_click=self.on_filter_click, data="epic")
         self.sidebar_buttons["system"] = SidebarButton(ft.Icons.COMPUTER_OUTLINED, "Системные", on_click=self.on_filter_click, data="system")
         self.sidebar_buttons["settings"] = SidebarButton(ft.Icons.SETTINGS_OUTLINED, "Настройки", on_click=self.on_filter_click, data="settings")
@@ -1322,6 +1334,7 @@ class CyberLauncher:
                     ft.Text("ПЛАТФОРМЫ", color="#80FFFFFF", size=11, weight=ft.FontWeight.BOLD),
                     ft.Container(height=5),
                     self.sidebar_buttons["steam"],
+                    self.sidebar_buttons["steam_not_installed"],
                     self.sidebar_buttons["epic"],
                     self.sidebar_buttons["system"],
                     ft.Container(height=10),
@@ -1929,8 +1942,10 @@ class CyberLauncher:
             self._wishlist_page = 0
         if not hasattr(self, "_wishlist_filters"):
             self._wishlist_filters = {"year": None, "genre": None, "status": None,
-                                      "collection": None, "feature": None}
+                                      "collection": None, "feature": None,
+                                      "query": ""}
         self._wishlist_filters.setdefault("feature", None)
+        self._wishlist_filters.setdefault("query", "")
 
         # Заголовок + кнопки управления (Добавить, сортировка)
         title_row = ft.Row(
@@ -1984,16 +1999,123 @@ class CyberLauncher:
             ],
         )
 
+        # ПОЛЕ ПОИСКА создаётся ОДИН РАЗ и переиспользуется во всех дальнейших
+        # сборках вью. Если пересоздавать его на каждый rebuild — Flutter
+        # получает новый контрол, и фокус с введённым текстом слетают на каждом
+        # нажатии клавиши. Тот же приём, что у _wishlist_progress_text.
+        if getattr(self, "_wl_search_field", None) is None:
+            self._wl_search_field = ft.TextField(
+                hint_text="Поиск: название, студия, жанр…",
+                prefix_icon=ft.Icons.SEARCH,
+                value=self._wishlist_filters.get("query", ""),
+                on_change=lambda e: self._wl_on_search_changed(),
+                height=36, content_padding=10, text_size=13,
+                border_radius=8, bgcolor="#1E1E1E", border_color="#333333",
+                focused_border_color=ACCENT_BLUE, width=280,
+            )
+            self._wl_search_clear = ft.Container(
+                content=ft.Icon(ft.Icons.CLOSE, size=16, color=TEXT_GREY),
+                width=28, height=28, border_radius=14, ink=True,
+                alignment=ft.Alignment(0, 0), tooltip="Очистить поиск",
+                visible=bool(self._wishlist_filters.get("query")),
+                on_click=lambda e: self._wl_clear_search(),
+            )
+
         # Items grid (с учётом фильтров)
+        items, total_all = self._wl_filtered_items()
+        # Фильтры живут в контейнере-держателе: при поиске/пагинации строка
+        # пересобирается точечно (меняются счётчики), а поле поиска — сосед,
+        # его это не трогает и фокус не теряется.
+        self._wl_filters_holder = ft.Container(
+            content=self._build_wishlist_filters_row(total_all, len(items)))
+
+        self._wl_count_text = ft.Text(self._wl_count_label(items),
+                                      size=13, color=TEXT_GREY)
+        # Сетка/пустой экран — тоже в держателе, чтобы обновлять без полного
+        # пересоздания вью (см. _wl_refresh_body).
+        self._wl_body_holder = ft.Container(expand=True,
+                                            content=self._wl_build_body(items))
+
+        controls_row = ft.Row(
+            controls=[
+                self._wl_count_text,
+                ft.Container(expand=True),
+                self._wl_search_field,
+                self._wl_search_clear,
+                ft.Container(width=10),
+                ft.Icon(ft.Icons.SORT, color=TEXT_GREY, size=16),
+                ft.Text("Сортировка:", size=12, color=TEXT_GREY),
+                sort_button,
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        return ft.Container(
+            expand=True,
+            padding=ft.Padding(left=40, right=40, top=30, bottom=20),
+            content=ft.Column(
+                controls=[
+                    title_row,
+                    ft.Container(height=10),
+                    self._wl_filters_holder,
+                    ft.Container(height=8),
+                    controls_row,
+                    ft.Container(height=10),
+                    self._wl_body_holder,
+                ],
+                expand=True,
+                spacing=0,
+            ),
+        )
+
+    def _wl_filtered_items(self):
+        """(отфильтрованный список, всего игр в желаемом) для текущих
+        сортировки/фильтров/поиска."""
         wl = self.game_manager.wishlist
-        items = wl.get_sorted(self._wishlist_sort)
         f = self._wishlist_filters
+        items = wl.get_sorted(self._wishlist_sort)
         total_all = len(items)
         items = wl.filter_items(
             items, year=f.get("year"), genre=f.get("genre"),
             status=f.get("status"), collection=f.get("collection"),
-            feature=f.get("feature"))
-        filters_row = self._build_wishlist_filters_row(total_all, len(items))
+            feature=f.get("feature"), query=f.get("query"))
+        return items, total_all
+
+    def _wl_count_label(self, items) -> str:
+        shown = min(len(items), (self._wishlist_page + 1) * self._WISHLIST_PAGE_SIZE)
+        return f"{shown} из {len(items)} игр" if shown < len(items) else f"{len(items)} игр"
+
+    def _wl_build_body(self, items) -> ft.Control:
+        """Сетка карточек текущей страницы (или подсказка, если показывать
+        нечего). Возвращает готовый контрол для _wl_body_holder."""
+        wl = self.game_manager.wishlist
+        if not items:
+            # Пусто может быть по двум причинам: список желаемого вообще пуст
+            # или ничего не нашлось под фильтр/поиск — подсказки разные.
+            f = self._wishlist_filters
+            filtered = bool(f.get("query")) or any(
+                f.get(k) is not None for k in ("status", "year", "genre",
+                                               "collection", "feature"))
+            return ft.Container(
+                padding=40,
+                alignment=ft.Alignment(0, 0),
+                content=ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.SEARCH_OFF if filtered
+                                else ft.Icons.LOCAL_FIRE_DEPARTMENT_OUTLINED,
+                                color=TEXT_GREY, size=64),
+                        ft.Text("Ничего не найдено" if filtered
+                                else "В списке желаемого пока пусто",
+                                size=16, color=TEXT_GREY, weight=ft.FontWeight.W_500),
+                        ft.Text("Попробуйте изменить запрос или сбросить фильтры."
+                                if filtered else
+                                'Нажмите "Добавить из Steam" чтобы найти и сохранить игру.',
+                                size=13, color=TEXT_GREY),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=12,
+                ),
+            )
 
         # ПАГИНАЦИЯ. После импорта из Steam в списке могут быть сотни игр, а
         # раньше рисовались ВСЕ разом — 470 карточек, каждая с картинкой из
@@ -2018,8 +2140,7 @@ class CyberLauncher:
             self._wl_card_cache = {}
         cards = []
         for it in visible:
-            key = (it.app_id, it.priority, it.title, bool(it.header_image_url),
-                   bool(it.trailer_url), card_w, tuple(it.collections or ()))
+            key = self._wl_card_key(it, card_w)
             card = self._wl_card_cache.get(key)
             if card is None:
                 card = self._build_wishlist_card(it, card_w)
@@ -2027,12 +2148,9 @@ class CyberLauncher:
             cards.append(card)
         # Кэш не должен расти бесконечно (ключ меняется при каждой правке).
         if len(self._wl_card_cache) > 400:
-            self._wl_card_cache = {
-                k: v for k, v in self._wl_card_cache.items()
-                if k in {(i.app_id, i.priority, i.title, bool(i.header_image_url),
-                          bool(i.trailer_url), card_w, tuple(i.collections or ()))
-                         for i in visible}
-            }
+            live = {self._wl_card_key(i, card_w) for i in visible}
+            self._wl_card_cache = {k: v for k, v in self._wl_card_cache.items()
+                                   if k in live}
 
         grid_controls = [
             ft.Row(controls=cards, wrap=True, spacing=gap, run_spacing=gap),
@@ -2073,57 +2191,77 @@ class CyberLauncher:
             wl.cache_headers_async(visible, limit=self._WISHLIST_PAGE_SIZE * 2)
             if not getattr(self, "_wl_headers_prefetched", False):
                 self._wl_headers_prefetched = True
-                wl.cache_headers_async(items, limit=10000)
+                wl.cache_headers_async(wl.get_items(), limit=10000)
         except Exception as ex:
             backend_logger.debug(f"Header cache scheduling failed: {ex}")
 
-        empty_hint = ft.Container(
-            visible=not items,
-            padding=40,
-            alignment=ft.Alignment(0, 0),
-            content=ft.Column(
-                controls=[
-                    ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT_OUTLINED, color=TEXT_GREY, size=64),
-                    ft.Text("В списке желаемого пока пусто",
-                            size=16, color=TEXT_GREY, weight=ft.FontWeight.W_500),
-                    ft.Text('Нажмите "Добавить из Steam" чтобы найти и сохранить игру.',
-                            size=13, color=TEXT_GREY),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
-            ),
-        )
+        return self._wishlist_grid
 
-        controls_row = ft.Row(
-            controls=[
-                ft.Text(f"{len(visible)} из {len(items)} игр"
-                        if len(visible) < len(items) else f"{len(items)} игр",
-                        size=13, color=TEXT_GREY),
-                ft.Container(expand=True),
-                ft.Icon(ft.Icons.SORT, color=TEXT_GREY, size=16),
-                ft.Text("Сортировка:", size=12, color=TEXT_GREY),
-                sort_button,
-            ],
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
+    @staticmethod
+    def _wl_card_key(it, card_w: int) -> tuple:
+        """Ключ кэша карточки — всё, что влияет на её внешний вид."""
+        return (it.app_id, it.priority, it.title, bool(it.header_image_url),
+                bool(it.trailer_url), bool(getattr(it, "demo_app_id", "")),
+                card_w, tuple(it.collections or ()))
 
-        return ft.Container(
-            expand=True,
-            padding=ft.Padding(left=40, right=40, top=30, bottom=20),
-            content=ft.Column(
-                controls=[
-                    title_row,
-                    ft.Container(height=10),
-                    filters_row,
-                    ft.Container(height=8),
-                    controls_row,
-                    ft.Container(height=10),
-                    empty_hint if not items else self._wishlist_grid,
-                ],
-                expand=True,
-                spacing=0,
-            ),
-        )
+    def _wl_refresh_body(self):
+        """Точечное обновление раздела: сетка + счётчик + строка фильтров.
+        Вью целиком НЕ пересобирается — иначе поле поиска пересоздалось бы и
+        потеряло фокус на каждом введённом символе."""
+        if self.current_filter != "wishlist":
+            return
+        holder = getattr(self, "_wl_body_holder", None)
+        if holder is None:
+            self._refresh_wishlist_view(keep_page=True)
+            return
+        items, total_all = self._wl_filtered_items()
+        holder.content = self._wl_build_body(items)
+        self._wl_count_text.value = self._wl_count_label(items)
+        fh = getattr(self, "_wl_filters_holder", None)
+        if fh is not None:
+            fh.content = self._build_wishlist_filters_row(total_all, len(items))
+        clear_btn = getattr(self, "_wl_search_clear", None)
+        if clear_btn is not None:
+            clear_btn.visible = bool(self._wishlist_filters.get("query"))
+        # Обновляем КОНКРЕТНЫЕ контролы: page.update() для вложенных в
+        # bg_container работает ненадёжно (см. PROJECT_CONTEXT, грабля 3b).
+        for ctrl in (holder, self._wl_count_text, fh, clear_btn):
+            if ctrl is None:
+                continue
+            try:
+                ctrl.update()
+            except Exception as ex:
+                backend_logger.debug(f"Wishlist partial update skipped: {ex}")
+
+    def _wl_on_search_changed(self):
+        """Debounce поиска (250 мс), как в библиотеке: на каждый keystroke
+        пересобирать сотни карточек нельзя."""
+        self._wl_search_token = getattr(self, "_wl_search_token", 0) + 1
+        token = self._wl_search_token
+
+        async def _delayed():
+            await asyncio.sleep(0.25)
+            if token != self._wl_search_token:
+                return          # успели нажать ещё клавишу — этот вызов устарел
+            q = (self._wl_search_field.value or "").strip()
+            if q == self._wishlist_filters.get("query", ""):
+                return
+            self._wishlist_filters["query"] = q
+            self._wishlist_page = 0      # новый запрос — снова с первой страницы
+            self._wl_refresh_body()
+
+        self.page.run_task(_delayed)
+
+    def _wl_clear_search(self):
+        self._wishlist_filters["query"] = ""
+        self._wishlist_page = 0
+        if getattr(self, "_wl_search_field", None) is not None:
+            self._wl_search_field.value = ""
+            try:
+                self._wl_search_field.update()
+            except Exception:
+                pass
+        self._wl_refresh_body()
 
     # Карточек на страницу в «Желаемом». После импорта из Steam список может
     # быть на сотни игр — рисовать все разом нельзя (UI перестаёт отвечать).
@@ -2140,7 +2278,7 @@ class CyberLauncher:
         """Меняет фильтр и перестраивает список с первой страницы."""
         self._wishlist_filters[key] = value
         self._wishlist_page = 0
-        self._refresh_wishlist_view(keep_page=True)
+        self._wl_refresh_body()
 
     def _wl_filter_chip(self, label: str, value_label: str, active: bool,
                         items: list) -> ft.Control:
@@ -2180,12 +2318,14 @@ class CyberLauncher:
             ft.PopupMenuItem(str(y), on_click=lambda _, v=y: self._wl_set_filter("year", v))
             for y in wl.get_years()
         ]
-        # Первый пункт — «Локальный кооп»: это КАТЕГОРИЯ Steam, не жанр, но
-        # пользователь ищет его именно здесь. Выбор фичи сбрасывает жанр и
+        # Первые пункты — не жанры, а ФИЧИ (категория Steam / наличие демо), но
+        # пользователь ищет их именно здесь. Выбор фичи сбрасывает жанр и
         # наоборот (они в одном дропдауне, но взаимоисключающие).
         genre_items = [
             ft.PopupMenuItem("🎮 Локальный кооп",
-                             on_click=lambda _: self._wl_pick_local_coop()),
+                             on_click=lambda _: self._wl_pick_feature("local_coop")),
+            ft.PopupMenuItem("🎁 Есть демоверсия",
+                             on_click=lambda _: self._wl_pick_feature("demo")),
             ft.PopupMenuItem("Все жанры",
                              on_click=lambda _: (self._wishlist_filters.update(feature=None),
                                                  self._wl_set_filter("genre", None))),
@@ -2204,8 +2344,7 @@ class CyberLauncher:
             for c in cols
         ]
 
-        genre_label = ("🎮 Локальный кооп" if f.get("feature") == "local_coop"
-                       else (f.get("genre") or "Все"))
+        genre_label = self._WL_FEATURE_LABELS.get(f.get("feature")) or (f.get("genre") or "Все")
         controls = [
             self._wl_filter_chip("Статус", self._WL_STATUS_LABELS.get(f.get("status"), "Все"),
                                  f.get("status") is not None, status_items),
@@ -2230,8 +2369,9 @@ class CyberLauncher:
                 on_click=lambda e: self._show_wishlist_collections_dialog(),
             ),
         ]
-        if any(f.get(k) is not None for k in ("status", "year", "genre",
-                                              "collection", "feature")):
+        if bool(f.get("query")) or any(
+                f.get(k) is not None for k in ("status", "year", "genre",
+                                               "collection", "feature")):
             controls.append(
                 ft.Container(
                     content=ft.Row(
@@ -2249,52 +2389,76 @@ class CyberLauncher:
         return ft.Row(controls=controls, spacing=10, wrap=True, run_spacing=8,
                       vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
+    # Подписи «фич» (не жанры — категория Steam / наличие демо), которые живут
+    # в том же дропдауне, что и жанры.
+    _WL_FEATURE_LABELS = {
+        "local_coop": "🎮 Локальный кооп",
+        "demo": "🎁 Есть демоверсия",
+    }
+
     def _wl_reset_filters(self):
         self._wishlist_filters = {"year": None, "genre": None, "status": None,
-                                  "collection": None, "feature": None}
+                                  "collection": None, "feature": None, "query": ""}
         self._wishlist_page = 0
-        self._refresh_wishlist_view(keep_page=True)
+        if getattr(self, "_wl_search_field", None) is not None:
+            self._wl_search_field.value = ""
+            try:
+                self._wl_search_field.update()
+            except Exception:
+                pass
+        self._wl_refresh_body()
 
-    def _wl_pick_local_coop(self):
-        """Фильтр «Локальный кооп». Категории собираются лениво: если у многих
-        игр их ещё нет — запускаем фоновую добивку и говорим об этом (иначе
-        фильтр покажет неполный список и это выглядело бы как баг)."""
+    def _wl_pick_feature(self, feature: str):
+        """Фильтры «Локальный кооп» / «Есть демоверсия». И категории, и признак
+        демо собираются лениво (один лёгкий запрос на игру): если у многих игр
+        их ещё нет — запускаем фоновую добивку и говорим об этом, иначе фильтр
+        покажет неполный список и это выглядело бы как баг."""
         self._wishlist_filters["genre"] = None
-        self._wishlist_filters["feature"] = "local_coop"
+        self._wishlist_filters["feature"] = feature
         self._wishlist_page = 0
         wl = self.game_manager.wishlist
-        pending = wl.pending_categories_count()
+        pending = wl.pending_extras_count()
         if pending > 0 and not getattr(self, "_wl_cats_running", False):
+            what = "о кооперативе" if feature == "local_coop" else "о демоверсиях"
             self.show_snackbar(
-                f"Собираю данные о кооперативе ({pending} игр) — список "
+                f"Собираю данные {what} ({pending} игр) — список "
                 f"пополнится по мере загрузки", bgcolor="#E65100", duration=6000)
-            self.page.run_task(self._wishlist_fill_categories_task)
-        self._refresh_wishlist_view(keep_page=True)
+            self.page.run_task(self._wishlist_fill_extras_task)
+        self._wl_refresh_body()
 
-    async def _wishlist_fill_categories_task(self):
-        """Фоновая добивка категорий (для фильтра локального коопа)."""
+    # Прежнее имя (был только фильтр коопа) — на случай оставшихся вызовов.
+    def _wl_pick_local_coop(self):
+        self._wl_pick_feature("local_coop")
+
+    async def _wishlist_fill_extras_task(self):
+        """Фоновая добивка категорий и демоверсий (фильтры «кооп»/«демо» и
+        бейдж «ДЕМО» на карточках)."""
         if getattr(self, "_wl_cats_running", False):
+            return
+        # Не конкурируем с догрузкой деталей: лимит Steam на appdetails общий,
+        # два потока запросов упрутся в троттлинг и оба замедлятся.
+        if getattr(self, "_wishlist_fill_running", False):
             return
         self._wl_cats_running = True
         self._wishlist_fill_stop = False
 
         def _progress(done, total, title):
             try:
-                self._wishlist_progress_text.value = f"Категории: {done}/{total}"
+                self._wishlist_progress_text.value = f"Данные об играх: {done}/{total}"
                 self._wishlist_progress_text.visible = True
                 self._wishlist_progress_text.update()
             except Exception:
                 pass
 
         try:
-            self._wishlist_progress_text.value = "Категории…"
+            self._wishlist_progress_text.value = "Данные об играх…"
             self._wishlist_progress_text.visible = True
             self._safe_page_update()
             await asyncio.to_thread(
-                self.game_manager.wishlist.fill_missing_categories,
+                self.game_manager.wishlist.fill_missing_extras,
                 _progress, lambda: self._wishlist_fill_stop)
         except Exception as ex:
-            backend_logger.warning(f"Wishlist categories fill failed: {ex}")
+            backend_logger.warning(f"Wishlist extras fill failed: {ex}")
         finally:
             self._wl_cats_running = False
             try:
@@ -2302,10 +2466,37 @@ class CyberLauncher:
                 self._wishlist_progress_text.visible = False
             except Exception:
                 pass
-            # Обновить список — категории собрались, фильтр покажет больше.
+            # Обновить список — данные собрались: появились бейджи демо и
+            # фильтр по коопу показывает больше игр.
             if self.current_filter == "wishlist":
                 self._wl_card_cache.clear()
-                self._refresh_wishlist_view(keep_page=True)
+                self._wl_refresh_body()
+
+    # Прежнее имя задачи — делегирует на общий проход.
+    async def _wishlist_fill_categories_task(self):
+        await self._wishlist_fill_extras_task()
+
+    def _wl_maybe_start_extras_fill(self):
+        """Один раз за сессию добираем недостающие данные о демо/категориях.
+
+        Иначе бейдж «ДЕМО» появлялся бы только после того, как пользователь сам
+        ткнёт в фильтр — это выглядит как «не работает». Проход идёт фоном с
+        троттлингом (1.6 с/игра) и сохраняется на диск, поэтому за пару запусков
+        список добивается полностью, а дальше задача сразу выходит."""
+        if getattr(self, "_wl_extras_autostarted", False):
+            return
+        try:
+            wl = self.game_manager.wishlist
+            # Сначала должны догрузиться сами карточки — лимит Steam общий.
+            if wl.pending_details_count() > 0 or self._wishlist_fill_running:
+                return
+            if wl.pending_extras_count() <= 0:
+                return
+            self._wl_extras_autostarted = True
+            backend_logger.info("Wishlist: фоновая добивка демо/категорий запущена")
+            self.page.run_task(self._wishlist_fill_extras_task)
+        except Exception as ex:
+            backend_logger.warning(f"Wishlist extras autostart failed: {ex}")
 
     def _show_wishlist_collections_dialog(self):
         """Создание/удаление коллекций желаемого."""
@@ -2456,7 +2647,9 @@ class CyberLauncher:
 
     def _wishlist_load_more(self, e=None):
         self._wishlist_page += 1
-        self._refresh_wishlist_view()
+        # Точечно: пересобираем только сетку — введённый поиск и его фокус
+        # остаются на месте.
+        self._wl_refresh_body()
 
     def _set_wishlist_sort(self, key: str):
         self._wishlist_page = 0      # смена сортировки — снова с первой страницы
@@ -2538,7 +2731,34 @@ class CyberLauncher:
             ink=True,
             tooltip=prio_tooltip,
         )
-        cover = ft.Stack(controls=[cover_inner, prio_badge])
+        cover_layers = [cover_inner, prio_badge]
+        # Бейдж «ДЕМО» слева сверху — у игры есть бесплатная демоверсия в Steam.
+        # Демо это ОТДЕЛЬНОЕ приложение Steam со своим appid, поэтому клик ведёт
+        # на страницу самой демоверсии, а не игры.
+        demo_id = getattr(item, "demo_app_id", "") or ""
+        if demo_id:
+            cover_layers.append(
+                ft.Container(
+                    left=8, top=8,
+                    padding=ft.Padding(left=8, right=8, top=3, bottom=3),
+                    border_radius=10,
+                    bgcolor="#CC0D3B1E",
+                    border=ft.Border.all(1, "#66E07A"),
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.CARD_GIFTCARD, size=13, color="#8CF0A8"),
+                            ft.Text("ДЕМО", size=10, color="#8CF0A8",
+                                    weight=ft.FontWeight.BOLD),
+                        ],
+                        spacing=4, tight=True,
+                    ),
+                    ink=True,
+                    tooltip="Доступна бесплатная демоверсия — открыть её в Steam",
+                    on_click=lambda e, did=demo_id: webbrowser.open(
+                        f"https://store.steampowered.com/app/{did}/"),
+                )
+            )
+        cover = ft.Stack(controls=cover_layers)
 
         # Steam page button
         steam_btn = ft.ElevatedButton(
@@ -2694,18 +2914,128 @@ class CyberLauncher:
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
 
-    def _copy_to_clipboard(self, text: str):
-        """Копирование в буфер обмена + подтверждение (иначе непонятно,
-        сработало ли). В Flet 0.80 буфер — СЕРВИС с async-методом
-        (page.clipboard.set), а не page.set_clipboard() как в старых версиях."""
-        if not text:
+    def _open_steam_protocol(self, url: str, toast: str = ""):
+        """Открыть steam://-ссылку (установка/удаление/запуск). Через
+        os.startfile, как деинсталляция в game_manager: webbrowser.open для
+        кастомных протоколов на Windows отрабатывает не всегда."""
+        if not url:
             return
         try:
-            self.page.run_task(self.page.clipboard.set, text)
+            os.startfile(url)
+            if toast:
+                self.show_snackbar(toast, bgcolor="#1B5E20", duration=3000)
+        except Exception as ex:
+            backend_logger.warning(f"Steam protocol open failed ({url}): {ex}")
+            try:
+                webbrowser.open(url)
+            except Exception:
+                self.show_snackbar("Не удалось обратиться к Steam — он запущен?",
+                                   bgcolor="#B71C1C")
+
+    @staticmethod
+    def _win_clipboard_set(text: str) -> bool:
+        """Записать текст в буфер обмена Windows напрямую (CF_UNICODETEXT).
+
+        Зачем в обход Flet: его буфер — асинхронный СЕРВИС, значение уезжает в
+        Flutter-клиент через канал сообщений, и результат нельзя проверить —
+        ошибка всплывает уже в done-callback задачи и молча теряется (в логе
+        тишина, а снекбар «Скопировано» при этом показывался). Здесь вызов
+        синхронный: вернул True — текст точно в буфере. Unicode-строка кладётся
+        как есть, кириллица и символы вроде ★ не портятся."""
+        if sys.platform != "win32":
+            return False
+        try:
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0002
+            u32 = ctypes.WinDLL("user32", use_last_error=True)
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            u32.OpenClipboard.argtypes = [wintypes.HWND]
+            u32.OpenClipboard.restype = wintypes.BOOL
+            u32.EmptyClipboard.restype = wintypes.BOOL
+            u32.CloseClipboard.restype = wintypes.BOOL
+            u32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+            u32.SetClipboardData.restype = wintypes.HANDLE
+            k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+            k32.GlobalAlloc.restype = wintypes.HGLOBAL
+            k32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+            k32.GlobalLock.restype = wintypes.LPVOID
+            k32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+            k32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+
+            buf = ctypes.create_unicode_buffer(text)
+            size = ctypes.sizeof(buf)
+
+            # Буфер — общесистемный ресурс: если им сейчас владеет другое
+            # приложение, OpenClipboard откажет. Пробуем несколько раз.
+            opened = False
+            for _ in range(10):
+                if u32.OpenClipboard(None):
+                    opened = True
+                    break
+                time.sleep(0.02)
+            if not opened:
+                backend_logger.warning(
+                    f"Clipboard: OpenClipboard отказал (err={ctypes.get_last_error()})")
+                return False
+            try:
+                u32.EmptyClipboard()
+                handle = k32.GlobalAlloc(GMEM_MOVEABLE, size)
+                if not handle:
+                    return False
+                ptr = k32.GlobalLock(handle)
+                if not ptr:
+                    k32.GlobalFree(handle)
+                    return False
+                ctypes.memmove(ptr, buf, size)
+                k32.GlobalUnlock(handle)
+                if not u32.SetClipboardData(CF_UNICODETEXT, handle):
+                    # Владение памятью система забирает ТОЛЬКО при успехе —
+                    # иначе освобождаем сами, чтобы не течь.
+                    k32.GlobalFree(handle)
+                    backend_logger.warning(
+                        f"Clipboard: SetClipboardData отказал "
+                        f"(err={ctypes.get_last_error()})")
+                    return False
+                return True
+            finally:
+                u32.CloseClipboard()
+        except Exception as ex:
+            backend_logger.warning(f"Clipboard: Win32-запись не удалась: {ex}")
+            return False
+
+    def _copy_to_clipboard(self, text: str):
+        """Копирование в буфер обмена + подтверждение (иначе непонятно,
+        сработало ли). Основной путь — нативный Win32 (см. _win_clipboard_set),
+        сервис Flet остаётся фоллбеком для не-Windows и на случай отказа.
+        Снекбар «Скопировано» показываем ТОЛЬКО когда запись реально прошла."""
+        text = (text or "").strip()
+        if not text:
+            backend_logger.info("Clipboard: копировать нечего (пустой текст)")
+            return
+        # Лог обязателен: по нему видно, дошёл ли вообще клик до обработчика —
+        # иначе «не копируется» неотличимо от «кнопка не нажимается».
+        backend_logger.info(f"Clipboard: копирую '{text[:60]}'")
+        if self._win_clipboard_set(text):
             self.show_snackbar(f"Скопировано: {text[:60]}", bgcolor="#4CAF50",
                                duration=2500)
+            return
+        # Фоллбек через Flet. Результат асинхронный, поэтому снекбар рисуем
+        # внутри самой корутины — по факту успеха, а не «наверное получилось».
+        async def _via_flet():
+            try:
+                await self.page.clipboard.set(text)
+                self.show_snackbar(f"Скопировано: {text[:60]}",
+                                   bgcolor="#4CAF50", duration=2500)
+            except Exception as ex:
+                backend_logger.warning(f"Clipboard copy failed: {ex}")
+                self.show_snackbar("Не удалось скопировать в буфер обмена",
+                                   bgcolor="#B71C1C")
+        try:
+            self.page.run_task(_via_flet)
         except Exception as ex:
-            backend_logger.warning(f"Clipboard copy failed: {ex}")
+            backend_logger.warning(f"Clipboard task failed: {ex}")
+            self.show_snackbar("Не удалось скопировать в буфер обмена",
+                               bgcolor="#B71C1C")
 
     def _wishlist_cycle_priority(self, app_id: str):
         new_val = self.game_manager.wishlist.cycle_priority(app_id)
@@ -2724,11 +3054,16 @@ class CyberLauncher:
     def _wishlist_toggle_priority(self, app_id: str):
         self._wishlist_cycle_priority(app_id)
 
-    def _show_wishlist_detail(self, item):
-        """Полный экран игры по клику на карточку желаемого: трейлер,
-        скриншоты, полное описание, характеристики. Детали тянутся из Steam
-        по требованию (один запрос) — не храним их в wishlist.json."""
-        backend_logger.info(f"Wishlist detail: opening '{item.title}' (app_id={item.app_id})")
+    def _show_wishlist_detail(self, item, mode: str = "wishlist", owned=None):
+        """Полный экран игры по клику на карточку: трейлер, скриншоты, полное
+        описание, характеристики. Детали тянутся из Steam по требованию (один
+        запрос) и кэшируются на 7 дней — не храним их в wishlist.json.
+
+        mode='owned' — тот же экран для раздела «Steam: не стоят»: без цены
+        (игра уже куплена), с местом на диске и наигранным временем, со своей
+        строкой действий. owned — объект OwnedGame для этого режима."""
+        backend_logger.info(
+            f"{mode} detail: opening '{item.title}' (app_id={item.app_id})")
 
         def _close():
             overlay = getattr(self, "_wishlist_detail_overlay", None)
@@ -2787,7 +3122,14 @@ class CyberLauncher:
                 )
             else:
                 content_holder.alignment = None
-                content_holder.content = self._build_wishlist_detail_body(item, details, _close)
+                if mode == "owned":
+                    content_holder.content = self._build_wishlist_detail_body(
+                        item, details, _close, show_price=False,
+                        extra_chips=self._owned_detail_chips(owned),
+                        footer=self._owned_detail_footer(owned, _close))
+                else:
+                    content_holder.content = self._build_wishlist_detail_body(
+                        item, details, _close)
 
         async def _load(force=False):
             details = await asyncio.to_thread(
@@ -2824,7 +3166,9 @@ class CyberLauncher:
 
         header_row = ft.Row(
             controls=[
-                ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35", size=24),
+                ft.Icon(ft.Icons.CLOUD_DOWNLOAD if mode == "owned"
+                        else ft.Icons.LOCAL_FIRE_DEPARTMENT,
+                        color=ACCENT_BLUE if mode == "owned" else "#FF6B35", size=24),
                 ft.Text(item.title or "Без названия",
                         weight=ft.FontWeight.BOLD, size=20, color=TEXT_WHITE,
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
@@ -3233,6 +3577,15 @@ class CyberLauncher:
                 sz = getattr(self, "_trailer_sizing", None)
                 if not sz:
                     return
+                # СНИМАЕМ СТОРОЖ ЗАВИСАНИЯ. Он был заведён под ПРЕЖНИЙ плеер, а
+                # тот сейчас будет остановлен и выброшен. Без этого сторож через
+                # 8с спрашивал позицию у мёртвого плеера, получал 0, считал это
+                # зависанием и насильно переоткрывал трейлер на HLS — поверх
+                # нормально играющего нового. Если в этот момент пользователь
+                # был в полноэкранном режиме, оставался чёрный экран 00:00/00:00
+                # (баг 2026-07-27).
+                self._trailer_watchdog_token = getattr(
+                    self, "_trailer_watchdog_token", 0) + 1
                 old = sz.get("player")
                 pos = None
                 if old is not None:
@@ -3278,30 +3631,81 @@ class CyberLauncher:
         # не срабатывает, откат на H.264 не запускался — висел чёрный кадр.
         # Если за 8с позиция не сдвинулась с нуля — молча уходим на HLS H.264.
         if fallback_url:
-            self.page.run_task(self._trailer_stall_watchdog, player, overlay)
+            self._trailer_watchdog_token = getattr(
+                self, "_trailer_watchdog_token", 0) + 1
+            self.page.run_task(self._trailer_stall_watchdog, overlay,
+                               self._trailer_watchdog_token)
 
-    async def _trailer_stall_watchdog(self, player, overlay):
+    @staticmethod
+    async def _trailer_position_secs(player):
+        """Текущая позиция плеера в секундах. None — спросить не удалось.
+        У разных версий Flet Duration отдаёт разные поля, поэтому оба."""
+        try:
+            pos = await asyncio.wait_for(player.get_current_position(), 3.0)
+        except Exception:
+            return None
+        if pos is None:
+            return None
+        try:
+            return (getattr(pos, "total_seconds", None) and pos.total_seconds()) \
+                or getattr(pos, "seconds", None) or 0
+        except Exception:
+            return None
+
+    async def _trailer_stall_watchdog(self, overlay, token: int):
         """Через 8с проверяет, пошло ли воспроизведение. Если нет — откат на
-        HLS H.264 через тот же путь, что и обработчик ошибок."""
+        HLS H.264 через тот же путь, что и обработчик ошибок.
+
+        token — метка «поколения» плеера: смена качества пересоздаёт плеер и
+        увеличивает счётчик, после чего этот сторож обязан замолчать."""
         try:
             await asyncio.sleep(8.0)
+            if token != getattr(self, "_trailer_watchdog_token", None):
+                return                      # плеер заменили — сторож устарел
             if self._media_overlay is not overlay:
                 return                      # плеер уже закрыли/пересоздали
             fb = getattr(self, "_trailer_fallback", None)
             if not fb or not fb.get("url") or fb.get("used"):
                 return
-            pos = None
-            try:
-                pos = await asyncio.wait_for(player.get_current_position(), 3.0)
-            except Exception:
-                pos = None
-            secs = None
-            if pos is not None:
-                # Duration → секунды (у разных версий Flet разные поля).
-                secs = (getattr(pos, "total_seconds", None) and pos.total_seconds()) \
-                    or getattr(pos, "seconds", None) or 0
-            if secs is not None and secs > 0:
+            # Плеер берём ТЕКУЩИЙ, а не захваченный при запуске: захваченный мог
+            # быть уже остановлен и выброшен, и опрос давал бы ложный «ноль».
+            sz = getattr(self, "_trailer_sizing", None) or {}
+            player = sz.get("player")
+            if player is None:
+                return
+            secs = await self._trailer_position_secs(player)
+            if secs is None:
+                return                      # позиция недоступна — не гадаем
+            if secs > 0:
                 return                      # играет — всё хорошо
+            # Ноль сам по себе ещё не зависание: пользователь мог поставить на
+            # паузу или перемотать в самое начало. Спрашиваем плеер, играет ли
+            # он, и берём вторую пробу позиции — откатываемся только если поток
+            # действительно не двигается.
+            try:
+                playing = await asyncio.wait_for(player.is_playing(), 2.0)
+            except Exception:
+                playing = True              # не смогли спросить — судим по позиции
+            if not playing:
+                backend_logger.info("Trailer: сторож — плеер на паузе, откат не нужен")
+                return
+            await asyncio.sleep(1.5)
+            if (token != getattr(self, "_trailer_watchdog_token", None)
+                    or self._media_overlay is not overlay):
+                return                      # закрыли/сменили за время паузы
+            secs2 = await self._trailer_position_secs(player)
+            if secs2 is None or secs2 > 0:
+                return                      # сдвинулось — всё в порядке
+            # В НАТИВНОМ FULLSCREEN откат не делаем. Откат = закрыть оверлей и
+            # открыть новый плеер, а поверх полноэкранной поверхности media_kit
+            # это оставляет мёртвый чёрный экран (00:00/00:00) вместо картинки.
+            # Пользователь, который смотрит в fullscreen, уж точно не наблюдает
+            # «зависший чёрный кадр» — значит сторож ошибается, а не поток.
+            if getattr(self, "_video_fullscreen", False):
+                backend_logger.warning(
+                    "Trailer: сторож увидел нулевую позицию, но плеер в "
+                    "fullscreen — откат не делаем")
+                return
             backend_logger.warning(
                 "Trailer: за 8с воспроизведение не началось — откат на H.264")
             self._on_trailer_error(SimpleNamespace(data="stall watchdog"))
@@ -3338,9 +3742,10 @@ class CyberLauncher:
         """Ресайз окна: подстроить открытый плеер трейлера и пересобрать сетку
         «Желаемого» (ширина карточек адаптивная — иначе после fullscreen справа
         остаётся пустая полоса)."""
-        if self.current_filter == "wishlist":
+        if self.current_filter in ("wishlist", "steam_not_installed"):
             self._wishlist_resize_token = getattr(self, "_wishlist_resize_token", 0) + 1
             token = self._wishlist_resize_token
+            section = self.current_filter
 
             async def _rebuild_later():
                 # Дебаунс: во время перетаскивания рамки событие сыплется часто,
@@ -3348,8 +3753,13 @@ class CyberLauncher:
                 await asyncio.sleep(0.3)
                 if token != self._wishlist_resize_token:
                     return
-                if self.current_filter == "wishlist":
+                if self.current_filter != section:
+                    return
+                if section == "wishlist":
                     self._refresh_wishlist_view()
+                else:
+                    self._so_card_cache = {}
+                    self._so_refresh_body()
 
             try:
                 self.page.run_task(_rebuild_later)
@@ -3376,13 +3786,19 @@ class CyberLauncher:
             backend_logger.debug(f"Trailer resize skipped: {ex}")
 
     def _build_wishlist_detail_body(self, item, d: dict, close_cb,
-                                    on_add=None) -> ft.Control:
+                                    on_add=None, show_price: bool = True,
+                                    extra_chips=None, footer=None) -> ft.Control:
         """Скроллируемое тело детального экрана из нормализованных Steam-данных
         (dict из wishlist_manager.fetch_game_details).
 
         on_add — если задан, тело работает в режиме ПРЕДПРОСМОТРА (игра ещё не
         в списке): вместо «Удалить из желаемого» показывается «Добавить».
-        item в этом режиме — лёгкая заглушка с app_id/title."""
+        item в этом режиме — лёгкая заглушка с app_id/title.
+
+        show_price=False — скрыть цену (в разделе «Steam: не стоят» игра уже
+        куплена, цена там бессмысленна).
+        extra_chips — список (текст, bgcolor, fgcolor) в мета-строку.
+        footer — готовая строка действий вместо стандартной."""
 
         def chip(text: str, bg="#2E2E2E", fg=TEXT_WHITE):
             return ft.Container(
@@ -3411,12 +3827,27 @@ class CyberLauncher:
         meta_chips = []
         if d.get("release_date"):
             meta_chips.append(chip("📅 " + d["release_date"]))
-        if d.get("price"):
+        if show_price and d.get("price"):
             meta_chips.append(chip("💰 " + d["price"], bg="#1B3A1B", fg="#9CE89C"))
+        # Требуемое место на диске (из системных требований — отдельного поля с
+        # размером игры Steam не отдаёт).
+        if d.get("disk_space"):
+            meta_chips.append(chip("💾 " + d["disk_space"], bg="#1B2C3A", fg="#9CD8F0"))
+        for txt, bg, fg in (extra_chips or []):
+            meta_chips.append(chip(txt, bg=bg, fg=fg))
         ms = d.get("metacritic_score")
         if ms is not None:
             mc_color = "#1B3A1B" if ms >= 75 else ("#3A331B" if ms >= 50 else "#3A1B1B")
             meta_chips.append(chip(f"Metacritic {ms}", bg=mc_color))
+        # Демоверсия — отдельное приложение Steam: чип ведёт на ЕЁ страницу.
+        demo_id = str(d.get("demo_app_id") or "")
+        if demo_id:
+            demo_chip = chip("🎁 Есть демоверсия", bg="#0D3B1E", fg="#8CF0A8")
+            demo_chip.ink = True
+            demo_chip.tooltip = "Открыть страницу демоверсии в Steam"
+            demo_chip.on_click = lambda e, did=demo_id: webbrowser.open(
+                f"https://store.steampowered.com/app/{did}/")
+            meta_chips.append(demo_chip)
         for p in d.get("platforms", []):
             meta_chips.append(chip(p, bg="#23303A"))
         if meta_chips:
@@ -3501,6 +3932,13 @@ class CyberLauncher:
             )
 
         # --- Footer: действия ---
+        # Раздел «Steam: не стоят» передаёт свою строку действий (установить /
+        # убрать из списка) — стандартная про желаемое там не к месту.
+        if footer is not None:
+            col.controls.append(ft.Container(height=4))
+            col.controls.append(footer)
+            return col
+
         # В режиме предпросмотра (игра ещё не в списке) правая кнопка —
         # «Добавить в желаемое», иначе — «Удалить из желаемого».
         if on_add is not None:
@@ -3517,16 +3955,27 @@ class CyberLauncher:
                 ),
                 style=ft.ButtonStyle(color="#FF6B6B"),
             )
-        footer = ft.Row(
-            controls=[
+        footer_controls = [
+            ft.ElevatedButton(
+                "Открыть в Steam", icon=ft.Icons.OPEN_IN_NEW,
+                on_click=lambda e, u=d.get("store_url"): webbrowser.open(u) if u else None,
+                bgcolor="#1B2838", color=TEXT_WHITE,
+            ),
+        ]
+        if demo_id:
+            # steam://install/<appid демо> — Steam сам покажет диалог установки.
+            footer_controls.append(
                 ft.ElevatedButton(
-                    "Открыть в Steam", icon=ft.Icons.OPEN_IN_NEW,
-                    on_click=lambda e, u=d.get("store_url"): webbrowser.open(u) if u else None,
-                    bgcolor="#1B2838", color=TEXT_WHITE,
-                ),
-                ft.Container(expand=True),
-                right_btn,
-            ],
+                    "Установить демо", icon=ft.Icons.DOWNLOAD,
+                    on_click=lambda e, did=demo_id: self._open_steam_protocol(
+                        f"steam://install/{did}", "Открываю установку демоверсии в Steam"),
+                    bgcolor="#1B3A24", color=TEXT_WHITE,
+                )
+            )
+        footer_controls.append(ft.Container(expand=True))
+        footer_controls.append(right_btn)
+        footer = ft.Row(
+            controls=footer_controls,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         col.controls.append(ft.Container(height=4))
@@ -3901,6 +4350,751 @@ class CyberLauncher:
         except Exception as ex:
             backend_logger.warning(f"Wishlist release check failed: {ex}")
 
+    # ====================== Steam: купленные, но не установленные ======================
+    # SteamScanner видит только установленные игры (читает appmanifest_*.acf).
+    # Полный список аккаунта Valve отдаёт лишь по Web API-ключу, поэтому раздел
+    # работает по схеме «один раз настроил → список кэшируется на диск».
+
+    _SO_PAGE_SIZE = 24
+
+    _SO_SORT_LABELS = {
+        "name": "По названию",
+        "playtime_desc": "Больше наиграно",
+        "never_played": "Сначала ни разу не запускавшиеся",
+        "last_played": "По дате последнего запуска",
+    }
+
+    def build_steam_not_installed_view(self):
+        """Раздел «Steam: не стоят» — купленные игры, которых нет на диске."""
+        if not hasattr(self, "_so_sort"):
+            self._so_sort = "name"
+        if not hasattr(self, "_so_page"):
+            self._so_page = 0
+        if not hasattr(self, "_so_query"):
+            self._so_query = ""
+        if not hasattr(self, "_so_show_hidden"):
+            self._so_show_hidden = False
+
+        mgr = self.game_manager.steam_owned
+        # Свежий список установленного: пользователь мог поставить игру, не
+        # выходя из лаунчера, — тогда её здесь быть уже не должно.
+        mgr.invalidate_installed()
+
+        self._so_progress_text = ft.Text("", size=12, color=ACCENT_BLUE, visible=False)
+        title_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.CLOUD_DOWNLOAD, color=ACCENT_BLUE, size=30),
+                ft.Text("Steam: куплено, но не установлено", size=26,
+                        weight=ft.FontWeight.BOLD, color=TEXT_WHITE),
+                ft.Container(expand=True),
+                self._so_progress_text,
+                ft.OutlinedButton(
+                    "Настроить", icon=ft.Icons.KEY,
+                    on_click=lambda e: self.show_steam_owned_setup_dialog(),
+                    style=ft.ButtonStyle(color=TEXT_GREY),
+                ),
+                ft.ElevatedButton(
+                    "Обновить список", icon=ft.Icons.REFRESH,
+                    on_click=lambda e: self._so_refresh_from_steam(),
+                    bgcolor=ACCENT_PURPLE, color=TEXT_WHITE,
+                ),
+            ],
+            spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        # Список ещё ни разу не загружали — вместо пустой сетки объясняем, что
+        # нужно сделать (без Web API-ключа Valve список не отдаёт).
+        if not mgr.all_games():
+            # Сетки нет → держатель сбрасываем, иначе ресайз попытался бы
+            # обновить контрол от предыдущего (уже отсоединённого) построения.
+            self._so_body_holder = None
+            return ft.Container(
+                expand=True,
+                padding=ft.Padding(left=40, right=40, top=30, bottom=20),
+                content=ft.Column(
+                    controls=[title_row, ft.Container(height=30),
+                              self._so_empty_setup_hint()],
+                    expand=True, spacing=0,
+                ),
+            )
+
+        if getattr(self, "_so_search_field", None) is None:
+            self._so_search_field = ft.TextField(
+                hint_text="Поиск по названию…",
+                prefix_icon=ft.Icons.SEARCH,
+                value=self._so_query,
+                on_change=lambda e: self._so_on_search_changed(),
+                height=36, content_padding=10, text_size=13,
+                border_radius=8, bgcolor="#1E1E1E", border_color="#333333",
+                focused_border_color=ACCENT_BLUE, width=280,
+            )
+
+        c = mgr.counts()
+        updated = ""
+        if mgr.updated_at:
+            try:
+                updated = datetime.fromisoformat(mgr.updated_at).strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                updated = ""
+        stats_row = ft.Row(
+            controls=[
+                ft.Text(f"В аккаунте: {c['owned']}", size=13, color=TEXT_GREY),
+                ft.Text("·", size=13, color=TEXT_GREY),
+                ft.Text(f"установлено: {c['installed']}", size=13, color="#8CF0A8"),
+                ft.Text("·", size=13, color=TEXT_GREY),
+                ft.Text(f"не установлено: {c['not_installed']}", size=13, color=ACCENT_BLUE),
+                ft.Container(width=14),
+                ft.Text(f"обновлено {updated}" if updated else "", size=12, color=TEXT_GREY),
+            ],
+            spacing=8, wrap=True, run_spacing=6,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        sort_button = ft.PopupMenuButton(
+            content=ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Text(self._SO_SORT_LABELS[self._so_sort], size=12, color=TEXT_WHITE),
+                        ft.Icon(ft.Icons.ARROW_DROP_DOWN, color=TEXT_WHITE, size=20),
+                    ],
+                    spacing=5, tight=True,
+                ),
+                padding=ft.Padding(left=12, right=8, top=6, bottom=6),
+                border_radius=8, bgcolor="#1E1E1E",
+                border=ft.Border.all(1, "#333333"),
+            ),
+            items=[
+                ft.PopupMenuItem(label, on_click=lambda _, k=key: self._so_set_sort(k))
+                for key, label in self._SO_SORT_LABELS.items()
+            ],
+        )
+
+        hidden_n = c.get("hidden", 0)
+        hidden_btn = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.VISIBILITY_OFF_OUTLINED, size=15,
+                            color=ACCENT_BLUE if self._so_show_hidden else TEXT_GREY),
+                    ft.Text(f"Скрытые ({hidden_n})", size=12,
+                            color=ACCENT_BLUE if self._so_show_hidden else TEXT_GREY),
+                ],
+                spacing=6, tight=True,
+            ),
+            padding=ft.Padding(left=10, right=12, top=7, bottom=7),
+            border_radius=8, bgcolor="#1E1E1E", ink=True,
+            border=ft.Border.all(1, ACCENT_BLUE if self._so_show_hidden else "#333333"),
+            tooltip="Показать/спрятать игры, убранные из списка",
+            visible=bool(hidden_n) or self._so_show_hidden,
+            on_click=lambda e: self._so_toggle_show_hidden(),
+        )
+
+        items = self._so_filtered_items()
+        self._so_count_text = ft.Text(self._so_count_label(items), size=13, color=TEXT_GREY)
+        self._so_body_holder = ft.Container(expand=True, content=self._so_build_body(items))
+
+        controls_row = ft.Row(
+            controls=[
+                self._so_count_text,
+                ft.Container(expand=True),
+                hidden_btn,
+                ft.Container(width=8),
+                self._so_search_field,
+                ft.Container(width=10),
+                ft.Icon(ft.Icons.SORT, color=TEXT_GREY, size=16),
+                sort_button,
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        return ft.Container(
+            expand=True,
+            padding=ft.Padding(left=40, right=40, top=30, bottom=20),
+            content=ft.Column(
+                controls=[
+                    title_row,
+                    ft.Container(height=8),
+                    stats_row,
+                    ft.Container(height=10),
+                    controls_row,
+                    ft.Container(height=10),
+                    self._so_body_holder,
+                ],
+                expand=True, spacing=0,
+            ),
+        )
+
+    def _so_empty_setup_hint(self) -> ft.Control:
+        """Экран «ещё не настроено»: коротко объясняем, зачем нужен ключ."""
+        from steam_owned import API_KEY_URL
+        return ft.Container(
+            alignment=ft.Alignment(0, -1),
+            content=ft.Column(
+                controls=[
+                    ft.Icon(ft.Icons.CLOUD_OFF, color=TEXT_GREY, size=64),
+                    ft.Text("Список купленных игр ещё не загружен",
+                            size=17, color=TEXT_WHITE, weight=ft.FontWeight.W_600),
+                    ft.Container(height=4),
+                    ft.Text(
+                        "Steam не отдаёт список покупок без ключа Web API — он "
+                        "бесплатный и выдаётся мгновенно.\n"
+                        "1. Откройте страницу ключа и получите его (домен можно "
+                        "указать любой, например localhost).\n"
+                        "2. Нажмите «Настроить» и вставьте ключ — SteamID "
+                        "подставится из локального Steam.\n"
+                        "3. В настройках приватности Steam «Игровые подробности» "
+                        "должны быть открыты.",
+                        size=13, color=TEXT_GREY,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    ft.Container(height=16),
+                    ft.Row(
+                        controls=[
+                            ft.OutlinedButton(
+                                "Страница ключа Steam", icon=ft.Icons.OPEN_IN_NEW,
+                                on_click=lambda e: webbrowser.open(API_KEY_URL),
+                                style=ft.ButtonStyle(color=ACCENT_BLUE),
+                            ),
+                            ft.ElevatedButton(
+                                "Настроить и загрузить", icon=ft.Icons.KEY,
+                                on_click=lambda e: self.show_steam_owned_setup_dialog(),
+                                bgcolor=ACCENT_PURPLE, color=TEXT_WHITE,
+                            ),
+                        ],
+                        spacing=12, alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=10,
+            ),
+        )
+
+    def _so_filtered_items(self):
+        mgr = self.game_manager.steam_owned
+        games = mgr.not_installed(include_hidden=self._so_show_hidden)
+        if self._so_show_hidden:
+            # Режим «скрытые» показывает ИМЕННО их, иначе кнопка бесполезна.
+            games = [g for g in games if g.app_id in mgr.hidden]
+        q = self._so_query
+        if q:
+            games = [g for g in games if mgr.matches_query(g, q)]
+        return mgr.sort_games(games, self._so_sort)
+
+    def _so_count_label(self, items) -> str:
+        shown = min(len(items), (self._so_page + 1) * self._SO_PAGE_SIZE)
+        return f"{shown} из {len(items)} игр" if shown < len(items) else f"{len(items)} игр"
+
+    def _so_build_body(self, items) -> ft.Control:
+        mgr = self.game_manager.steam_owned
+        if not items:
+            hint = ("Ничего не найдено — попробуйте изменить запрос."
+                    if self._so_query else
+                    "Скрытых игр нет." if self._so_show_hidden else
+                    "Все купленные игры установлены. 🎉")
+            return ft.Container(
+                padding=40, alignment=ft.Alignment(0, 0),
+                content=ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=TEXT_GREY, size=64),
+                        ft.Text(hint, size=15, color=TEXT_GREY),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12,
+                ),
+            )
+
+        shown_count = (self._so_page + 1) * self._SO_PAGE_SIZE
+        visible = items[:shown_count]
+
+        avail = (self.page.width or 1280) - 240 - 80
+        gap = 15
+        cols = max(1, int((avail + gap) // (300 + gap)))
+        card_w = max(280, int((avail - gap * (cols - 1)) / cols))
+
+        if not hasattr(self, "_so_card_cache"):
+            self._so_card_cache = {}
+        cards = []
+        for g in visible:
+            key = (g.app_id, g.title, g.playtime_min, card_w,
+                   g.app_id in mgr.hidden)
+            card = self._so_card_cache.get(key)
+            if card is None:
+                card = self._so_build_card(g, card_w)
+                self._so_card_cache[key] = card
+            cards.append(card)
+        if len(self._so_card_cache) > 400:
+            self._so_card_cache = {}
+
+        controls = [ft.Row(controls=cards, wrap=True, spacing=gap, run_spacing=gap)]
+        if shown_count < len(items):
+            remaining = len(items) - shown_count
+            controls.append(ft.Container(height=12))
+            controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.EXPAND_MORE, color=ACCENT_BLUE, size=22),
+                            ft.Text(f"Показать ещё ({remaining})", color=TEXT_WHITE, size=13),
+                        ],
+                        spacing=8, tight=True, alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                    alignment=ft.Alignment(0, 0),
+                    padding=ft.Padding(left=20, right=20, top=14, bottom=14),
+                    bgcolor="#1E1E1E", border_radius=12,
+                    border=ft.Border.all(1, "#333333"), ink=True,
+                    on_click=self._so_load_more,
+                )
+            )
+
+        # Обложки кладём на диск фоном — как в «Желаемом»: без кэша Flutter
+        # тянул бы сотни картинок с CDN при каждом открытии раздела.
+        try:
+            mgr.cache_headers_async(visible, limit=self._SO_PAGE_SIZE * 2)
+            if not getattr(self, "_so_headers_prefetched", False):
+                self._so_headers_prefetched = True
+                mgr.cache_headers_async(items, limit=10000)
+        except Exception as ex:
+            backend_logger.debug(f"Steam owned header cache scheduling failed: {ex}")
+
+        return ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, controls=controls)
+
+    @staticmethod
+    def _so_action_button(label: str, icon, bgcolor: str, flex: int,
+                          on_click) -> ft.Control:
+        """Кнопка нижнего ряда карточки. Подпись собираем сами (content), а не
+        через text=/icon=: только так можно поставить no_wrap и гарантировать,
+        что на узкой карточке слово не разорвётся, а ряд ужмётся по флексу.
+        Паддинги подрезаны — на 280px каждый лишний пиксель на счету."""
+        return ft.ElevatedButton(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(icon, size=16, color=TEXT_WHITE),
+                    ft.Text(label, size=13, color=TEXT_WHITE,
+                            no_wrap=True, max_lines=1),
+                ],
+                spacing=6, tight=True,
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            expand=flex,
+            on_click=on_click,
+            bgcolor=bgcolor, color=TEXT_WHITE,
+            style=ft.ButtonStyle(
+                padding=ft.Padding(left=8, right=8, top=8, bottom=8)),
+        )
+
+    def _so_build_card(self, game, card_w: int = 320) -> ft.Container:
+        """Карточка купленной, но не установленной игры."""
+        mgr = self.game_manager.steam_owned
+        is_hidden = game.app_id in mgr.hidden
+        cover_src = mgr.header_src(game)
+        # Здесь ft.Image, а не DecorationImage как в «Желаемом»: у части
+        # приложений аккаунта header.jpg на CDN просто нет (404), и нужен
+        # error_content — иначе на месте обложки зияла бы пустота.
+        cover_inner = ft.Container(
+            height=150, width=card_w,
+            bgcolor="#12161C",
+            border_radius=ft.BorderRadius(8, 8, 0, 0),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            alignment=ft.Alignment(0, 0),
+            content=ft.Image(
+                src=cover_src, fit=ft.BoxFit.COVER,
+                width=card_w, height=150,
+                error_content=ft.Icon(ft.Icons.SPORTS_ESPORTS, size=48,
+                                      color="#33FFFFFF"),
+            ),
+        )
+        # Наигранное время — главный ориентир «ставить или нет».
+        if game.playtime_min > 0:
+            hours = game.playtime_min / 60
+            played = f"{hours:.1f} ч в игре" if hours < 100 else f"{int(hours)} ч в игре"
+            played_color = "#8CF0A8"
+        else:
+            played = "Ни разу не запускалась"
+            played_color = "#FFB74D"
+        badge = ft.Container(
+            left=8, top=8,
+            padding=ft.Padding(left=8, right=8, top=3, bottom=3),
+            border_radius=10, bgcolor="#CC000000",
+            border=ft.Border.all(1, played_color),
+            content=ft.Text(played, size=10, color=played_color,
+                            weight=ft.FontWeight.BOLD),
+        )
+        # «Убрать из списка» — бэйджем на обложке, а не в нижнем ряду: там
+        # «Установить» + «Steam» уже занимают всю ширину узкой карточки, и
+        # третья кнопка вылезала за край (карточка обрезает по clip).
+        hide_badge = ft.Container(
+            right=8, top=8,
+            width=32, height=32, border_radius=16,
+            bgcolor="#CC000000",
+            border=ft.Border.all(1, ACCENT_BLUE if is_hidden else "#66FFFFFF"),
+            alignment=ft.Alignment(0, 0),
+            content=ft.Icon(
+                ft.Icons.VISIBILITY_OUTLINED if is_hidden
+                else ft.Icons.VISIBILITY_OFF_OUTLINED,
+                size=17, color=ACCENT_BLUE if is_hidden else TEXT_WHITE),
+            ink=True,
+            tooltip="Вернуть в список" if is_hidden else "Убрать из списка",
+            on_click=lambda e, aid=game.app_id: self._so_toggle_hidden(aid),
+        )
+        cover = ft.Stack(controls=[cover_inner, badge, hide_badge])
+
+        title_text = ft.Row(
+            controls=[
+                ft.Text(game.title or f"App {game.app_id}", size=15,
+                        color=TEXT_WHITE, weight=ft.FontWeight.W_600, expand=True,
+                        max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                        tooltip=game.title or ""),
+            ],
+            spacing=4, tight=True,
+        )
+        last = ""
+        if game.last_played:
+            try:
+                last = "Последний запуск: " + datetime.fromtimestamp(
+                    game.last_played).strftime("%d.%m.%Y")
+            except Exception:
+                last = ""
+        meta_text = ft.Text(last or f"App ID {game.app_id}", size=11, color=TEXT_GREY,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+
+        # Ряд заполняет строку целиком, но НЕ поровну: «Установить» длиннее
+        # «Steam», и при делении 50/50 подпись переносила последнюю букву.
+        # Флексы 3:2 + запрет переноса у самой подписи.
+        actions = [
+            self._so_action_button(
+                "Установить", ft.Icons.DOWNLOAD, "#1B3A24", 3,
+                lambda e, aid=game.app_id, t=game.title: self._so_install(aid, t)),
+            self._so_action_button(
+                "Steam", ft.Icons.OPEN_IN_NEW, "#1B2838", 2,
+                lambda e, aid=game.app_id: webbrowser.open(
+                    f"https://store.steampowered.com/app/{aid}/")),
+        ]
+
+        return ft.Container(
+            width=card_w, height=300,
+            bgcolor=CARD_BG, border_radius=8,
+            border=ft.Border.all(1.5, "#333"),
+            opacity=0.55 if is_hidden else 1.0,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            # Клик по карточке (вне кнопок) — детальный экран, как в «Желаемом».
+            on_click=lambda e, g=game: self._show_owned_detail(g),
+            ink=True,
+            tooltip="Подробнее об игре",
+            content=ft.Column(
+                controls=[
+                    cover,
+                    ft.Container(
+                        expand=True,
+                        padding=ft.Padding(left=14, right=14, top=10, bottom=10),
+                        content=ft.Column(
+                            controls=[
+                                title_text,
+                                meta_text,
+                                ft.Container(expand=True),
+                                ft.Row(controls=actions, spacing=8,
+                                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            ],
+                            spacing=2, expand=True,
+                        ),
+                    ),
+                ],
+                spacing=0, expand=True,
+            ),
+        )
+
+    @staticmethod
+    def _so_playtime_label(game) -> str:
+        """«12.3 ч в игре» / «Ни разу не запускалась» — главный ориентир
+        «ставить или нет» в этом разделе."""
+        if game.playtime_min <= 0:
+            return "Ни разу не запускалась"
+        hours = game.playtime_min / 60
+        if hours < 1:
+            return f"{game.playtime_min} мин в игре"
+        return f"{hours:.1f} ч в игре" if hours < 100 else f"{int(hours)} ч в игре"
+
+    def _owned_detail_chips(self, game):
+        """Мета-чипы, которых нет у «Желаемого»: наиграно и когда запускали."""
+        chips = [(("🕹 " + self._so_playtime_label(game)),
+                  "#1A2E1B" if game.playtime_min > 0 else "#3A331B",
+                  "#9CE89C" if game.playtime_min > 0 else "#FFD08A")]
+        if game.last_played:
+            try:
+                chips.append((
+                    "🕓 Последний запуск: "
+                    + datetime.fromtimestamp(game.last_played).strftime("%d.%m.%Y"),
+                    "#2E2E2E", TEXT_WHITE))
+            except Exception:
+                pass
+        return chips
+
+    def _owned_detail_footer(self, game, close_cb) -> ft.Control:
+        """Действия детального экрана в разделе «Steam: не стоят»."""
+        mgr = self.game_manager.steam_owned
+        is_hidden = game.app_id in mgr.hidden
+        return ft.Row(
+            controls=[
+                ft.ElevatedButton(
+                    "Установить", icon=ft.Icons.DOWNLOAD,
+                    on_click=lambda e, aid=game.app_id, t=game.title: self._so_install(aid, t),
+                    bgcolor="#1B3A24", color=TEXT_WHITE,
+                ),
+                ft.ElevatedButton(
+                    "Открыть в Steam", icon=ft.Icons.OPEN_IN_NEW,
+                    on_click=lambda e, aid=game.app_id: webbrowser.open(
+                        f"https://store.steampowered.com/app/{aid}/"),
+                    bgcolor="#1B2838", color=TEXT_WHITE,
+                ),
+                ft.Container(expand=True),
+                ft.OutlinedButton(
+                    "Вернуть в список" if is_hidden else "Убрать из списка",
+                    icon=(ft.Icons.VISIBILITY_OUTLINED if is_hidden
+                          else ft.Icons.VISIBILITY_OFF_OUTLINED),
+                    on_click=lambda e, aid=game.app_id: (
+                        close_cb(), self._so_toggle_hidden(aid)),
+                    style=ft.ButtonStyle(color=TEXT_GREY),
+                ),
+            ],
+            # БЕЗ wrap=True: распорка Container(expand=True) — это Expanded, а
+            # Expanded внутри Wrap для Flutter недопустим. В release-сборке
+            # такой сбой раскладки рисуется СЕРЫМ прямоугольником на всю
+            # оставшуюся высоту карточки (ErrorWidget), что и выглядело как
+            # «серый фон уходит далеко вниз». Стандартный футер «Желаемого»
+            # по той же причине без wrap.
+            spacing=10,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def _show_owned_detail(self, game):
+        """Детальный экран купленной игры — тот же оверлей, что у «Желаемого»
+        (общий кэш деталей Steam), в режиме mode='owned'."""
+        item = SimpleNamespace(
+            app_id=game.app_id,
+            title=game.title or f"App {game.app_id}",
+            store_url=f"https://store.steampowered.com/app/{game.app_id}/",
+        )
+        self._show_wishlist_detail(item, mode="owned", owned=game)
+
+    def _so_refresh_body(self):
+        """Точечное обновление сетки/счётчика — без пересборки вью (иначе
+        поле поиска теряет фокус на каждом символе)."""
+        if self.current_filter != "steam_not_installed":
+            return
+        holder = getattr(self, "_so_body_holder", None)
+        if holder is None:
+            return
+        items = self._so_filtered_items()
+        holder.content = self._so_build_body(items)
+        self._so_count_text.value = self._so_count_label(items)
+        for ctrl in (holder, self._so_count_text):
+            try:
+                ctrl.update()
+            except Exception as ex:
+                backend_logger.debug(f"Steam owned partial update skipped: {ex}")
+
+    def _so_rebuild_view(self):
+        """Полная пересборка раздела (сменились данные/счётчики в шапке)."""
+        if self.current_filter != "steam_not_installed":
+            return
+        self.bg_container.content = self.build_steam_not_installed_view()
+        try:
+            self.bg_container.update()
+        except Exception:
+            self.page.update()
+
+    def _so_on_search_changed(self):
+        self._so_search_token = getattr(self, "_so_search_token", 0) + 1
+        token = self._so_search_token
+
+        async def _delayed():
+            await asyncio.sleep(0.25)
+            if token != self._so_search_token:
+                return
+            q = (self._so_search_field.value or "").strip()
+            if q == self._so_query:
+                return
+            self._so_query = q
+            self._so_page = 0
+            self._so_refresh_body()
+
+        self.page.run_task(_delayed)
+
+    def _so_set_sort(self, key: str):
+        self._so_sort = key
+        self._so_page = 0
+        self._so_rebuild_view()
+
+    def _so_load_more(self, e=None):
+        self._so_page += 1
+        self._so_refresh_body()
+
+    def _so_toggle_show_hidden(self):
+        self._so_show_hidden = not self._so_show_hidden
+        self._so_page = 0
+        self._so_rebuild_view()
+
+    def _so_toggle_hidden(self, app_id: str):
+        hidden_now = self.game_manager.steam_owned.toggle_hidden(app_id)
+        self._so_card_cache = {}
+        self._so_rebuild_view()
+        self.show_snackbar("Игра убрана из списка" if hidden_now
+                           else "Игра возвращена в список",
+                           bgcolor="#1E1E1E", duration=2500)
+
+    def _so_install(self, app_id: str, title: str = ""):
+        """steam://install/<appid> — Steam покажет свой диалог установки.
+        После установки игра появится в библиотеке лаунчера при следующем
+        обновлении (кнопка «Обновить библиотеку» в сайдбаре)."""
+        self._open_steam_protocol(
+            f"steam://install/{app_id}",
+            f"Steam открывает установку: {title}" if title else "Открываю установку в Steam")
+
+    def _so_refresh_from_steam(self):
+        """Кнопка «Обновить список». Без ключа сразу отправляем в настройку —
+        иначе пользователь получил бы невнятную ошибку."""
+        sid, key = self._so_credentials()
+        if not (sid and key):
+            self.show_steam_owned_setup_dialog()
+            return
+        self.page.run_task(self._so_refresh_task, sid, key)
+
+    def _so_credentials(self):
+        """(SteamID64, Web API-ключ) из настроек; ID при отсутствии берём из
+        локальной установки Steam."""
+        sid = str(self.settings.get("steam_id64", "") or "").strip()
+        if not sid:
+            try:
+                from wishlist_manager import find_local_steamid64
+                sid = (find_local_steamid64() or {}).get("steamid", "")
+            except Exception as ex:
+                backend_logger.warning(f"find_local_steamid64 failed: {ex}")
+                sid = ""
+        key = str((self.settings.get("api_keys") or {}).get("steam", "") or "").strip()
+        return sid, key
+
+    async def _so_refresh_task(self, steamid: str, api_key: str):
+        """Фоновая загрузка списка купленных игр."""
+        if getattr(self, "_so_refreshing", False):
+            return
+        self._so_refreshing = True
+        try:
+            try:
+                self._so_progress_text.value = "Запрашиваю список у Steam…"
+                self._so_progress_text.visible = True
+                self._so_progress_text.update()
+            except Exception:
+                pass
+            res = await asyncio.to_thread(
+                self.game_manager.steam_owned.refresh, steamid, api_key)
+            self._so_card_cache = {}
+            self._so_headers_prefetched = False
+            self._so_page = 0
+            if res.get("ok"):
+                c = self.game_manager.steam_owned.counts()
+                self.show_snackbar(
+                    f"Загружено {res['count']} игр · не установлено: {c['not_installed']}",
+                    bgcolor="#1B5E20", duration=5000)
+            else:
+                self.show_snackbar(res.get("error") or "Не удалось получить список",
+                                   bgcolor="#B71C1C", duration=10000)
+        except Exception as ex:
+            backend_logger.warning(f"Steam owned refresh failed: {ex}")
+            self.show_snackbar(f"Ошибка обновления: {ex}", bgcolor="#B71C1C")
+        finally:
+            self._so_refreshing = False
+            try:
+                self._so_progress_text.value = ""
+                self._so_progress_text.visible = False
+            except Exception:
+                pass
+            self._so_rebuild_view()
+
+    def show_steam_owned_setup_dialog(self):
+        """SteamID64 + Web API-ключ. Ключ хранится в settings.json рядом с
+        ключами SteamGridDB/RAWG."""
+        from steam_owned import API_KEY_URL
+
+        close_ref = {}
+
+        def _close():
+            if close_ref.get("fn"):
+                close_ref["fn"]()
+
+        sid, key = self._so_credentials()
+        id_field = ft.TextField(
+            hint_text="SteamID64 (17 цифр)", value=sid,
+            prefix_icon=ft.Icons.BADGE,
+            border_radius=8, bgcolor="#1E1E1E", border_color="#333333",
+            focused_border_color=ACCENT_BLUE, text_size=14,
+        )
+        key_field = ft.TextField(
+            hint_text="Steam Web API Key (32 символа)", value=key,
+            prefix_icon=ft.Icons.KEY, password=True, can_reveal_password=True,
+            border_radius=8, bgcolor="#1E1E1E", border_color="#333333",
+            focused_border_color=ACCENT_BLUE, text_size=14,
+        )
+
+        def on_save(e):
+            new_sid = (id_field.value or "").strip()
+            new_key = (key_field.value or "").strip()
+            self.settings["steam_id64"] = new_sid
+            self.settings.setdefault("api_keys", {})["steam"] = new_key
+            self.save_settings()
+            _close()
+            if new_sid and new_key:
+                self.page.run_task(self._so_refresh_task, new_sid, new_key)
+            else:
+                self.show_snackbar("Укажите и SteamID, и API-ключ — без них "
+                                   "Steam не отдаёт список покупок",
+                                   bgcolor="#E65100", duration=6000)
+
+        title_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.KEY, color=ACCENT_BLUE, size=22),
+                ft.Text("Доступ к списку покупок Steam", weight=ft.FontWeight.BOLD,
+                        size=18, color=TEXT_WHITE),
+            ],
+            spacing=10,
+        )
+        body = ft.Column(
+            controls=[
+                ft.Text("Ключ бесплатный и выдаётся сразу: на странице ключа "
+                        "укажите любой домен (например localhost) и скопируйте "
+                        "выданную строку. Ключ хранится только на этом компьютере, "
+                        "в settings.json.",
+                        size=12, color=TEXT_GREY),
+                ft.Container(height=10),
+                id_field,
+                ft.Container(height=8),
+                key_field,
+                ft.Container(height=8),
+                ft.Row(
+                    controls=[
+                        ft.TextButton("Получить ключ", icon=ft.Icons.OPEN_IN_NEW,
+                                      on_click=lambda e: webbrowser.open(API_KEY_URL),
+                                      style=ft.ButtonStyle(color=ACCENT_BLUE)),
+                        ft.TextButton("Настройки приватности", icon=ft.Icons.LOCK_OUTLINE,
+                                      on_click=lambda e: webbrowser.open(
+                                          "https://steamcommunity.com/my/edit/settings"),
+                                      style=ft.ButtonStyle(color=TEXT_GREY)),
+                    ],
+                    spacing=6, wrap=True,
+                ),
+            ],
+            tight=True, spacing=0,
+        )
+        actions = ft.Row(
+            controls=[
+                ft.Container(expand=True),
+                ft.TextButton("Отмена", on_click=lambda e: _close(),
+                              style=ft.ButtonStyle(color=TEXT_GREY)),
+                ft.ElevatedButton("Сохранить и загрузить", icon=ft.Icons.CLOUD_DOWNLOAD,
+                                  on_click=on_save,
+                                  bgcolor=ACCENT_PURPLE, color=TEXT_WHITE),
+            ],
+            spacing=10,
+        )
+        close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=560)
+
     def show_wishlist_import_dialog(self):
         """Импорт списка желаемого из Steam. SteamID определяется автоматически
         из локальной установки Steam; можно ввести чужой вручную."""
@@ -4040,6 +5234,8 @@ class CyberLauncher:
             except Exception:
                 pass
             self._refresh_wishlist_view()
+            # Детали есть — теперь можно добрать лёгкие данные (демо/категории).
+            self._wl_maybe_start_extras_fill()
 
     def show_wishlist_add_dialog(self):
         """Диалог поиска и добавления игры через Steam Store API."""
@@ -5272,6 +6468,14 @@ class CyberLauncher:
         backend_logger.info(f"Game exited (uid={uid}) — restoring launcher")
         # Сбрасываем silence-window заранее — игра не запущена больше
         self._gamepad_silence_until = 0.0
+        # Игра только что освободила (или, если вылетела, выжрала) память —
+        # окно лаунчера сейчас проснётся и Flet начнёт пересчитывать патч по
+        # всему дереву. Отдаём мусор заранее, чтобы не ловить MemoryError на
+        # системе с исчерпанным лимитом выделения (см. flet_patches.py).
+        try:
+            gc.collect()
+        except Exception:
+            pass
         # Финализируем pending-сессию play_time для игр которые watcher
         # game_manager не смог точно отследить (Steam с EAC, runas)
         self._finalize_pending_play_session(uid)
@@ -5642,9 +6846,15 @@ class CyberLauncher:
             self.wishlist_view = self.build_wishlist_view()
             self.bg_container.content = self.wishlist_view
             self.page.update()
+            # Фоном добираем демо/категории для тех игр, у которых их ещё нет.
+            self._wl_maybe_start_extras_fill()
         elif filter_name == "calendar":
             # Календарь релизов желаемого (по месяцам)
             self.bg_container.content = self.build_wishlist_calendar_view()
+            self.page.update()
+        elif filter_name == "steam_not_installed":
+            # Купленные в Steam игры, которых нет на диске
+            self.bg_container.content = self.build_steam_not_installed_view()
             self.page.update()
         else:
             self.bg_container.content = self.games_container

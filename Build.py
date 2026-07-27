@@ -60,7 +60,9 @@ def build():
         f"gamepad_manager.py;.",   # Менеджер геймпада
         f"bigpicture_view.py;.",   # PS-стиль режим
         f"wishlist_manager.py;.",  # Раздел "Желаемое" (Steam wishlist)
+        f"steam_owned.py;.",       # Купленные в Steam, но не установленные игры
         f"trailer_proxy.py;.",     # Локальный HLS-прокси для трейлеров
+        f"flet_patches.py;.",      # Патчи Flet 0.80 (repr + memory-guard)
         f"{icon_file};.",          # Копируем иконку
     ]
 
@@ -88,7 +90,9 @@ def build():
         "gamepad_manager",
         "bigpicture_view",
         "wishlist_manager",
+        "steam_owned",
         "trailer_proxy",
+        "flet_patches",
         "flet_video",
         "send2trash",
         "send2trash.win",

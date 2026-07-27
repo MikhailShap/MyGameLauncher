@@ -37,6 +37,8 @@ cache/
 # Data (user-specific)
 data/library.json
 data/settings.json
+data/wishlist.json
+data/steam_owned.json
 
 # Temporary
 *.tmp

@@ -187,6 +187,13 @@ class WishlistItem:
     # чтобы отличить «демо нет» от «ещё не проверяли»: старые записи в JSON
     # поля demo_app_id не имеют, их добивает фоновая задача fill_missing_extras.
     demo_checked: bool = False
+    # Оценка игроков Steam. В appdetails её НЕТ (там только recommendations.total
+    # — число отзывов без оценки), поэтому берётся отдельным запросом
+    # store/appreviews (см. steam_reviews).
+    review_desc: str = ""                        # «Очень положительные»
+    review_percent: int = -1                     # доля положительных, -1 = нет данных
+    review_total: int = 0                        # всего отзывов
+    reviews_checked: bool = False                # уже спрашивали (даже если отзывов нет)
     # True — об уже состоявшемся релизе этой игры уже уведомляли (чтобы не
     # показывать одно и то же при каждом запуске). См. collect_new_releases.
     release_notified: bool = False
@@ -607,6 +614,41 @@ def _extract_demo_app_id(details: Dict[str, Any]) -> str:
     return ""
 
 
+def reviews_url(app_id: str) -> str:
+    """Страница отзывов игры в Steam (сообщество, а не магазин: там сразу
+    список рецензий с фильтрами, а не якорь в середине карточки товара)."""
+    return f"https://steamcommunity.com/app/{app_id}/reviews/"
+
+
+def steam_reviews(app_id: str) -> Optional[Dict[str, Any]]:
+    """Сводная оценка игроков: {desc, percent, total, score}. None — отказ.
+
+    Отдельный публичный эндпоинт store/appreviews, ключ не нужен.
+    num_per_page=0 — нам нужна только сводка (query_summary), сами тексты
+    рецензий не тянем. l=russian локализует подпись («Очень положительные»).
+    Для игр без отзывов (не вышли) Steam отвечает success=1 и нулями — это
+    валидный ответ «отзывов пока нет», а не ошибка."""
+    if not app_id:
+        return None
+    url = (f"https://store.steampowered.com/appreviews/{urllib.parse.quote(str(app_id))}"
+           f"?json=1&language=all&purchase_type=all&num_per_page=0&l=russian")
+    data = _http_get_json(url, timeout=12.0)
+    if not isinstance(data, dict) or not data.get("success"):
+        return None
+    qs = data.get("query_summary")
+    if not isinstance(qs, dict):
+        return None
+    total = int(qs.get("total_reviews") or 0)
+    positive = int(qs.get("total_positive") or 0)
+    percent = int(round(positive * 100 / total)) if total > 0 else -1
+    return {
+        "desc": (qs.get("review_score_desc") or "").strip(),
+        "percent": percent,
+        "total": total,
+        "score": int(qs.get("review_score") or 0),
+    }
+
+
 def steam_extra_info(app_id: str) -> Optional[Dict[str, Any]]:
     """Лёгкий запрос appdetails за КАТЕГОРИЯМИ и ДЕМОВЕРСИЕЙ сразу
     (filters=categories,demos — один запрос вместо двух; лимит Steam общий на
@@ -698,6 +740,14 @@ def build_wishlist_item(app_id: str) -> Optional[WishlistItem]:
     # спросили, даже если его нет: не гоняем игру через фоновую добивку зря.
     item.demo_app_id = _extract_demo_app_id(details)
     item.demo_checked = True
+    # Оценка игроков — отдельный запрос, но при добавлении игры он один и
+    # карточка сразу получается полной.
+    rev = steam_reviews(app_id)
+    if rev is not None:
+        item.review_desc = rev["desc"]
+        item.review_percent = rev["percent"]
+        item.review_total = rev["total"]
+        item.reviews_checked = True
     return item
 
 
@@ -714,6 +764,8 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
       metacritic_score (int|None), metacritic_url,
       price (str: 'Бесплатно' / '999 руб.' / ''),
       disk_space (str: '20 ГБ' — требуемое место, '' если не указано),
+      reviews (dict: {desc, percent, total, score} — оценка игроков, {} если нет),
+      reviews_url (str: страница отзывов в Steam),
       screenshots (list[url]), trailers (list[{name, thumb, url}]),
       demo_app_id (str: appid демоверсии или ''), demos (list[{app_id, name}]),
       store_url
@@ -831,6 +883,10 @@ def fetch_game_details(app_id: str) -> Optional[Dict[str, Any]]:
              "name": (dm.get("description") or "").strip()}
             for dm in (details.get("demos") or []) if dm.get("appid")
         ],
+        # Оценка игроков (отдельный запрос — в appdetails её нет). Детали
+        # кэшируются на 7 дней, так что это максимум один запрос в неделю на игру.
+        "reviews": steam_reviews(app_id) or {},
+        "reviews_url": reviews_url(app_id),
         "store_url": f"https://store.steampowered.com/app/{app_id}/",
     }
 
@@ -960,6 +1016,15 @@ class WishlistManager:
                     self.save_sync()
                     logger.info(f"Wishlist: карточка {app_id} восстановлена "
                                 f"из деталей ('{it.title}')")
+            # (3a) Оценка игроков: детали тянутся с сетью не чаще раза в 7 дней,
+            # так что это заодно и способ обновить устаревший рейтинг.
+            rev = data.get("reviews") or {}
+            if rev.get("total"):
+                it.review_desc = rev.get("desc", "")
+                it.review_percent = int(rev.get("percent", -1))
+                it.review_total = int(rev.get("total", 0))
+                it.reviews_checked = True
+                self.save_sync()
             # (3) Демо и категории — «бесплатно» из уже полученного ответа.
             new_demo = str(data.get("demo_app_id") or "")
             new_cats = [c for c in (data.get("categories") or []) if c]
@@ -1102,7 +1167,8 @@ class WishlistManager:
         # fill_missing_details (иначе потратим лимит Steam на несуществующие).
         if it.needs_details:
             return False
-        return (it.needs_categories and not it.categories) or not it.demo_checked
+        return ((it.needs_categories and not it.categories)
+                or not it.demo_checked or not it.reviews_checked)
 
     # Обратная совместимость с прежним именем (был отдельный проход только по
     # категориям). Оставлено, чтобы старые вызовы не падали.
@@ -1124,7 +1190,8 @@ class WishlistManager:
             item = self._items.get(app_id)
             if item is None:
                 continue
-            info = steam_extra_info(app_id)
+            info = steam_extra_info(app_id) if (
+                item.needs_categories or not item.demo_checked) else {}
             if info is None:
                 consecutive_fail += 1
                 if consecutive_fail >= 3:
@@ -1134,12 +1201,23 @@ class WishlistManager:
                 # Данные не критичны — не помечаем «навсегда», попробуем в
                 # следующий раз (needs_categories / demo_checked не трогаем).
             else:
-                if info["categories"]:
+                if info.get("categories"):
                     item.categories = info["categories"]
-                item.needs_categories = False
-                item.demo_app_id = info["demo_app_id"]
-                item.demo_checked = True
+                if info:
+                    item.needs_categories = False
+                    item.demo_app_id = info["demo_app_id"]
+                    item.demo_checked = True
                 consecutive_fail = 0
+            # Оценка игроков — ДРУГОЙ эндпоинт (appreviews), под лимит
+            # appdetails не попадает, поэтому спрашиваем в той же итерации:
+            # общий темп прохода задаёт sleep ниже, а не число запросов.
+            if not item.reviews_checked:
+                rev = steam_reviews(app_id)
+                if rev is not None:
+                    item.review_desc = rev["desc"]
+                    item.review_percent = rev["percent"]
+                    item.review_total = rev["total"]
+                    item.reviews_checked = True
             done += 1
             if done % 10 == 0 or done == total:
                 self.save_sync()
@@ -1394,6 +1472,10 @@ class WishlistManager:
 
     def get_items(self) -> List[WishlistItem]:
         return list(self._items.values())
+
+    def get(self, app_id: str) -> Optional[WishlistItem]:
+        """Одна игра по app_id (None — нет в списке)."""
+        return self._items.get(str(app_id))
 
     # ---------- Дисковый кэш обложек карточек ----------
 

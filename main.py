@@ -149,6 +149,46 @@ def release_single_instance_lock():
 TRAY_ICON = None
 TRAY_APP_INSTANCE = None
 
+# Клик по САМОМУ всплывающему уведомлению (не по иконке трея). pystray его не
+# обрабатывает вовсе: её _on_notify реагирует только на WM_LBUTTONUP, то есть на
+# клик по иконке. Windows же присылает клик по тосту отдельным кодом
+# NIN_BALLOONUSERCLICK (WM_USER+5). Без патча нажатие на уведомление молча
+# ничего не делало.
+NIN_BALLOONUSERCLICK = 0x0400 + 5
+# Что делать по клику на уведомление — ставится тем, кто его показывает.
+TRAY_BALLOON_CLICK = {"fn": None}
+# Восстановление окна из трея (замыкание on_show живёт внутри create_tray_icon).
+TRAY_SHOW_WINDOW = {"fn": None}
+
+
+def _patch_pystray_balloon_click() -> bool:
+    """Учит pystray реагировать на клик по всплывающему уведомлению."""
+    try:
+        from pystray._win32 import Icon as _WinIcon
+    except Exception as e:
+        backend_logger.debug(f"pystray balloon patch: недоступно ({e})")
+        return False
+    if getattr(_WinIcon, "_cl_balloon_patched", False):
+        return True
+    original = _WinIcon._on_notify
+
+    def _on_notify(self, wparam, lparam):
+        if lparam == NIN_BALLOONUSERCLICK:
+            cb = TRAY_BALLOON_CLICK.get("fn")
+            if cb is not None:
+                try:
+                    cb()
+                except Exception as ex:
+                    backend_logger.warning(f"Клик по уведомлению: {ex}")
+            return
+        return original(self, wparam, lparam)
+
+    _WinIcon._on_notify = _on_notify
+    _WinIcon._cl_balloon_patched = True
+    backend_logger.info("pystray: клик по уведомлению включён")
+    return True
+
+
 def create_tray_icon():
     """Создает иконку в системном трее"""
     global TRAY_ICON
@@ -254,7 +294,11 @@ def create_tray_icon():
         pystray.MenuItem("Выход", on_exit)
     )
 
+    _patch_pystray_balloon_click()
     TRAY_ICON = pystray.Icon("CyberLauncher", image, "CyberLauncher", menu)
+    # Показать окно по клику на уведомление — той же дорогой, что и пункт
+    # «Показать» в меню трея.
+    TRAY_SHOW_WINDOW["fn"] = lambda: on_show(None, None)
     return TRAY_ICON
 
 def run_tray_icon():
@@ -1006,16 +1050,25 @@ class CyberLauncher:
             self.show_snackbar(f"'{game.title}' исключена из библиотеки", bgcolor="#FF9800")
 
 
-    def show_snackbar(self, message: str, bgcolor: str = "#333333", duration: int = 4000):
+    def show_snackbar(self, message: str, bgcolor: str = "#333333", duration: int = 4000,
+                      action: str = None, on_action=None):
         """Helper to show snackbar compatible with Flet 0.80+.
         Снимает себя с page.overlay после закрытия — иначе каждый вызов
         (загрузка обложки, приоритет, скан…) навсегда оставлял мёртвый контрол
-        в overlay, дерево пухло и page.update() деградировал по ходу сессии."""
+        в overlay, дерево пухло и page.update() деградировал по ходу сессии.
+
+        action/on_action — кнопка в снекбаре (напр. «Открыть» у уведомления о
+        релизе). Само тело снекбара в Flet некликабельно, кнопка — штатный
+        способ дать действию точку входа."""
         snackbar = ft.SnackBar(
             content=ft.Text(message),
             bgcolor=bgcolor,
             duration=duration,
         )
+        if action:
+            snackbar.action = action
+            if on_action is not None:
+                snackbar.on_action = on_action
 
         def _cleanup(e=None):
             try:
@@ -2090,6 +2143,10 @@ class CyberLauncher:
         нечего). Возвращает готовый контрол для _wl_body_holder."""
         wl = self.game_manager.wishlist
         if not items:
+            # Сетки нет → сбрасываем ссылки, иначе «Показать ещё» дописывал бы
+            # карточки в уже отсоединённый ряд от прошлой сборки.
+            self._wl_cards_row = None
+            self._wl_more_holder = None
             # Пусто может быть по двум причинам: список желаемого вообще пуст
             # или ничего не нашлось под фильтр/поиск — подсказки разные.
             f = self._wishlist_filters
@@ -2124,63 +2181,30 @@ class CyberLauncher:
         shown_count = (self._wishlist_page + 1) * self._WISHLIST_PAGE_SIZE
         visible = items[:shown_count]
 
-        # АДАПТИВНАЯ ШИРИНА: раньше карточка была ровно 320px, и на широком
-        # окне справа оставалась неиспользуемая полоса (остаток от деления).
-        # Считаем, сколько колонок влезает, и растягиваем карточки на всю
-        # ширину — пустоты справа больше нет.
-        avail = (self.page.width or 1280) - 240 - 80   # минус сайдбар и паддинги
+        card_w = self._wl_card_width()
         gap = 15
-        cols = max(1, int((avail + gap) // (300 + gap)))
-        card_w = max(280, int((avail - gap * (cols - 1)) / cols))
-        # КЭШ КАРТОЧЕК: без него каждый rebuild (клик приоритета, догрузка
-        # деталей, ресайз) пересоздавал все объекты — Flutter перестраивал
-        # поддерево и заново разрешал картинки, отсюда «подтормаживает».
-        # Ключ включает всё, что влияет на вид карточки.
-        if not hasattr(self, "_wl_card_cache"):
-            self._wl_card_cache = {}
-        cards = []
-        for it in visible:
-            key = self._wl_card_key(it, card_w)
-            card = self._wl_card_cache.get(key)
-            if card is None:
-                card = self._build_wishlist_card(it, card_w)
-                self._wl_card_cache[key] = card
-            cards.append(card)
+        cards = self._wl_cards_for(visible, card_w)
         # Кэш не должен расти бесконечно (ключ меняется при каждой правке).
         if len(self._wl_card_cache) > 400:
             live = {self._wl_card_key(i, card_w) for i in visible}
             self._wl_card_cache = {k: v for k, v in self._wl_card_cache.items()
                                    if k in live}
 
-        grid_controls = [
-            ft.Row(controls=cards, wrap=True, spacing=gap, run_spacing=gap),
-        ]
-        if shown_count < len(items):
-            remaining = len(items) - shown_count
-            grid_controls.append(ft.Container(height=12))
-            grid_controls.append(
-                ft.Container(
-                    content=ft.Row(
-                        controls=[
-                            ft.Icon(ft.Icons.EXPAND_MORE, color=ACCENT_BLUE, size=22),
-                            ft.Text(f"Показать ещё ({remaining})",
-                                    color=TEXT_WHITE, size=13),
-                        ],
-                        spacing=8, tight=True,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    ),
-                    alignment=ft.Alignment(0, 0),
-                    padding=ft.Padding(left=20, right=20, top=14, bottom=14),
-                    bgcolor="#1E1E1E", border_radius=12,
-                    border=ft.Border.all(1, "#333333"),
-                    ink=True,
-                    on_click=self._wishlist_load_more,
-                )
-            )
+        # Ряд карточек и кнопка «Показать ещё» — в ПОСТОЯННЫХ контролах:
+        # «Показать ещё» дописывает карточки прямо в этот ряд и меняет только
+        # содержимое кнопки. Пересоздавать колонку нельзя — новый скроллируемый
+        # контрол начинается с нулевого смещения, и список прыгал в начало.
+        self._wl_cards_row = ft.Row(controls=cards, wrap=True,
+                                    spacing=gap, run_spacing=gap)
+        self._wl_more_holder = ft.Container(
+            content=self._wl_more_button(len(items) - shown_count),
+            alignment=ft.Alignment(0, 0),
+            padding=ft.Padding(left=0, right=0, top=12, bottom=0),
+        )
         self._wishlist_grid = ft.Column(
             expand=True,
             scroll=ft.ScrollMode.AUTO,
-            controls=grid_controls,
+            controls=[self._wl_cards_row, self._wl_more_holder],
         )
 
         # Фоново кладём обложки на диск — со следующего открытия они возьмутся
@@ -2197,11 +2221,58 @@ class CyberLauncher:
 
         return self._wishlist_grid
 
+    def _wl_card_width(self) -> int:
+        """АДАПТИВНАЯ ШИРИНА карточки: раньше она была ровно 320px, и на широком
+        окне справа оставалась неиспользуемая полоса (остаток от деления).
+        Считаем, сколько колонок влезает, и растягиваем карточки на всю ширину."""
+        avail = (self.page.width or 1280) - 240 - 80   # минус сайдбар и паддинги
+        gap = 15
+        cols = max(1, int((avail + gap) // (300 + gap)))
+        return max(280, int((avail - gap * (cols - 1)) / cols))
+
+    def _wl_cards_for(self, items, card_w: int) -> list:
+        """Карточки для списка игр, через кэш. Без кэша каждый rebuild (клик
+        приоритета, догрузка деталей, ресайз) пересоздавал бы все объекты —
+        Flutter перестраивал поддерево и заново разрешал картинки."""
+        if not hasattr(self, "_wl_card_cache"):
+            self._wl_card_cache = {}
+        out = []
+        for it in items:
+            key = self._wl_card_key(it, card_w)
+            card = self._wl_card_cache.get(key)
+            if card is None:
+                card = self._build_wishlist_card(it, card_w)
+                self._wl_card_cache[key] = card
+            out.append(card)
+        return out
+
+    def _wl_more_button(self, remaining: int):
+        """Кнопка «Показать ещё (N)». None — показывать больше нечего."""
+        if remaining <= 0:
+            return None
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.EXPAND_MORE, color=ACCENT_BLUE, size=22),
+                    ft.Text(f"Показать ещё ({remaining})", color=TEXT_WHITE, size=13),
+                ],
+                spacing=8, tight=True,
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            alignment=ft.Alignment(0, 0),
+            padding=ft.Padding(left=20, right=20, top=14, bottom=14),
+            bgcolor="#1E1E1E", border_radius=12,
+            border=ft.Border.all(1, "#333333"),
+            ink=True,
+            on_click=self._wishlist_load_more,
+        )
+
     @staticmethod
     def _wl_card_key(it, card_w: int) -> tuple:
         """Ключ кэша карточки — всё, что влияет на её внешний вид."""
         return (it.app_id, it.priority, it.title, bool(it.header_image_url),
                 bool(it.trailer_url), bool(getattr(it, "demo_app_id", "")),
+                int(getattr(it, "review_percent", -1) or -1),
                 card_w, tuple(it.collections or ()))
 
     def _wl_refresh_body(self):
@@ -2646,10 +2717,36 @@ class CyberLauncher:
             title_row, ft.Container(content=col, height=260), actions, width=460)
 
     def _wishlist_load_more(self, e=None):
+        """Дописывает следующую страницу карточек В КОНЕЦ существующего ряда.
+
+        Пересобирать сетку тут нельзя: новый скроллируемый контрол начинается
+        с нулевого смещения, и список прыгал в самое начало — приходилось
+        каждый раз скроллить обратно вниз."""
         self._wishlist_page += 1
-        # Точечно: пересобираем только сетку — введённый поиск и его фокус
-        # остаются на месте.
-        self._wl_refresh_body()
+        row = getattr(self, "_wl_cards_row", None)
+        holder = getattr(self, "_wl_more_holder", None)
+        if row is None or holder is None:
+            self._wl_refresh_body()          # сетки ещё нет — обычная сборка
+            return
+        items, _total = self._wl_filtered_items()
+        shown_count = (self._wishlist_page + 1) * self._WISHLIST_PAGE_SIZE
+        visible = items[:shown_count]
+        fresh = visible[len(row.controls):]
+        if fresh:
+            card_w = self._wl_card_width()
+            row.controls.extend(self._wl_cards_for(fresh, card_w))
+            try:
+                self.game_manager.wishlist.cache_headers_async(
+                    fresh, limit=self._WISHLIST_PAGE_SIZE * 2)
+            except Exception as ex:
+                backend_logger.debug(f"Header cache scheduling failed: {ex}")
+        holder.content = self._wl_more_button(len(items) - shown_count)
+        self._wl_count_text.value = self._wl_count_label(items)
+        for ctrl in (row, holder, self._wl_count_text):
+            try:
+                ctrl.update()
+            except Exception as ex:
+                backend_logger.debug(f"Wishlist load-more update skipped: {ex}")
 
     def _set_wishlist_sort(self, key: str):
         self._wishlist_page = 0      # смена сортировки — снова с первой страницы
@@ -2683,10 +2780,65 @@ class CyberLauncher:
         "low":    ("#888888", "#1E1E1E"),
     }
     _PRIORITY_TOOLTIPS = {
-        "high":   "Приоритет: ВЫСОКИЙ (играть в ближайшее время). Клик — следующий уровень.",
-        "medium": "Приоритет: средний (поиграть потом). Клик — следующий уровень.",
-        "low":    "Приоритет: низкий (попробовать когда-нибудь). Клик — следующий уровень.",
+        "high":   "Приоритет: ВЫСОКИЙ (играть в ближайшее время).\n"
+                  "Клик — следующий уровень, правый клик — выбрать уровень.",
+        "medium": "Приоритет: средний (поиграть потом).\n"
+                  "Клик — следующий уровень, правый клик — выбрать уровень.",
+        "low":    "Приоритет: низкий (попробовать когда-нибудь).\n"
+                  "Клик — следующий уровень, правый клик — выбрать уровень.",
     }
+    # Подписи уровней для меню выбора (порядок — от важного к неважному).
+    _PRIORITY_MENU = (
+        ("high",   "Высокий",  "играть в ближайшее время"),
+        ("medium", "Средний",  "поиграть потом"),
+        ("low",    "Низкий",   "попробовать когда-нибудь"),
+    )
+
+    @staticmethod
+    def _review_colors(percent: int):
+        """Цвет бейджа оценки по шкале Steam: 80+ «очень положительные»,
+        70+ «в основном положительные», 40+ «смешанные», ниже — отрицательные."""
+        if percent >= 80:
+            return "#8CF0A8", "#66E07A"      # текст, рамка
+        if percent >= 70:
+            return "#C8E6A0", "#8FBF5A"
+        if percent >= 40:
+            return "#FFD08A", "#E0A050"
+        return "#FF9E9E", "#E06060"
+
+    def _wl_review_badge(self, item):
+        """Бейдж оценки игроков для обложки карточки. None — оценки нет
+        (игра ещё не вышла либо данные не собраны)."""
+        percent = int(getattr(item, "review_percent", -1) or -1)
+        total = int(getattr(item, "review_total", 0) or 0)
+        if percent < 0 or total <= 0:
+            return None
+        fg, border = self._review_colors(percent)
+        desc = getattr(item, "review_desc", "") or ""
+        return ft.Container(
+            left=8, bottom=8,
+            padding=ft.Padding(left=8, right=8, top=3, bottom=3),
+            border_radius=10, bgcolor="#CC000000",
+            border=ft.Border.all(1, border),
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.THUMB_UP, size=12, color=fg),
+                    ft.Text(f"{percent}%", size=11, color=fg,
+                            weight=ft.FontWeight.BOLD),
+                ],
+                spacing=4, tight=True,
+            ),
+            ink=True,
+            tooltip=(f"{desc} · отзывов: {total:,}".replace(",", " ")
+                     + "\nОткрыть отзывы в Steam"),
+            on_click=lambda e, aid=item.app_id: self._open_steam_reviews(aid),
+        )
+
+    def _open_steam_reviews(self, app_id: str):
+        from wishlist_manager import reviews_url
+        url = reviews_url(app_id)
+        backend_logger.info(f"Открываю отзывы Steam: {url}")
+        webbrowser.open(url)
 
     def _build_wishlist_card(self, item, card_w: int = 320) -> ft.Container:
         """Карточка одной игры в списке желаемого.
@@ -2720,16 +2872,26 @@ class CyberLauncher:
         # Огонёк-бэйдж в правом верхнем углу cover — единственный
         # индикатор/контрол приоритета (раньше был ещё дубль в action-row).
         # Клик циклит low → medium → high → low.
-        prio_badge = ft.Container(
+        # Левый клик циклит уровень, ПРАВЫЙ — открывает выбор конкретного.
+        # Правый клик у ft.Container не поддерживается (есть только on_long_press),
+        # поэтому бэйдж завёрнут в GestureDetector: он умеет on_secondary_tap и
+        # сам позиционируется в Stack. Левый клик остаётся на Container — так
+        # сохраняется ripple от ink=True (InkWell вторичные тапы не перехватывает,
+        # они уходят наружу к GestureDetector).
+        prio_badge = ft.GestureDetector(
             right=8, top=8,
-            width=32, height=32, border_radius=16,
-            bgcolor="#CC000000",
-            border=ft.Border.all(1, prio_icon_color),
-            alignment=ft.Alignment(0, 0),
-            content=ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, size=20, color=prio_icon_color),
-            on_click=lambda e, aid=item.app_id: self._wishlist_cycle_priority(aid),
-            ink=True,
-            tooltip=prio_tooltip,
+            on_secondary_tap=lambda e, aid=item.app_id: self._show_priority_menu(aid),
+            content=ft.Container(
+                width=32, height=32, border_radius=16,
+                bgcolor="#CC000000",
+                border=ft.Border.all(1, prio_icon_color),
+                alignment=ft.Alignment(0, 0),
+                content=ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, size=20,
+                                color=prio_icon_color),
+                on_click=lambda e, aid=item.app_id: self._wishlist_cycle_priority(aid),
+                ink=True,
+                tooltip=prio_tooltip,
+            ),
         )
         cover_layers = [cover_inner, prio_badge]
         # Бейдж «ДЕМО» слева сверху — у игры есть бесплатная демоверсия в Steam.
@@ -2758,6 +2920,13 @@ class CyberLauncher:
                         f"https://store.steampowered.com/app/{did}/"),
                 )
             )
+        # Оценка игроков Steam — снизу слева на обложке (верхние углы заняты
+        # приоритетом и демо). Клик открывает отзывы: клик по самому рейтингу —
+        # ровно то место, куда человек и целится, отдельная кнопка в ряду
+        # действий там уже не помещается.
+        rev_badge = self._wl_review_badge(item)
+        if rev_badge is not None:
+            cover_layers.append(rev_badge)
         cover = ft.Stack(controls=cover_layers)
 
         # Steam page button
@@ -2901,6 +3070,9 @@ class CyberLauncher:
         return ft.Container(
             width=card_w,
             height=340,
+            # app_id в data — по нему карточка ищется в ряду, когда нужно
+            # заменить ОДНУ (смена приоритета) без пересборки сетки.
+            data=item.app_id,
             bgcolor=CARD_BG,
             border_radius=8,
             border=ft.Border.all(1.5, border_clr),
@@ -3041,13 +3213,119 @@ class CyberLauncher:
         new_val = self.game_manager.wishlist.cycle_priority(app_id)
         if new_val is None:
             return
-        # Полный rebuild нужен ТОЛЬКО при сортировке по приоритету (меняется
-        # порядок). При остальных сортировках порядок тот же — перестраивать
-        # все карточки ради одного огонька расточительно (это и был лаг клика).
+        self._wl_after_priority_change(app_id)
+
+    def _show_priority_menu(self, app_id: str):
+        """Меню выбора конкретного уровня приоритета (правый клик по огоньку).
+
+        Своя модалка, а не PopupMenuButton: тот открывается ЛЕВЫМ кликом, а
+        левый клик здесь занят циклом уровней."""
+        wl = self.game_manager.wishlist
+        item = wl.get(app_id)
+        if item is None:
+            return
+        cur = item.priority if item.priority in self._PRIORITY_COLORS else "low"
+        close_ref = {}
+
+        def pick(level: str):
+            if close_ref.get("fn"):
+                close_ref["fn"]()
+            if level != cur and wl.set_priority(app_id, level) is not None:
+                self._wl_after_priority_change(app_id)
+
+        rows = []
+        for level, label, hint in self._PRIORITY_MENU:
+            color, _bg = self._PRIORITY_COLORS[level]
+            is_cur = level == cur
+            rows.append(
+                ft.Container(
+                    padding=ft.Padding(left=12, right=12, top=10, bottom=10),
+                    border_radius=10,
+                    bgcolor="#2A2A2A" if is_cur else "transparent",
+                    border=ft.Border.all(1, color if is_cur else "#333333"),
+                    ink=True,
+                    on_click=lambda e, lv=level: pick(lv),
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, size=22, color=color),
+                            ft.Column(
+                                controls=[
+                                    ft.Text(label, size=14, color=TEXT_WHITE,
+                                            weight=ft.FontWeight.W_600),
+                                    ft.Text(hint, size=11, color=TEXT_GREY),
+                                ],
+                                spacing=1, tight=True, expand=True,
+                            ),
+                            ft.Icon(ft.Icons.CHECK, size=18, color=color,
+                                    visible=is_cur),
+                        ],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                )
+            )
+
+        title_row = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF6B35", size=22),
+                ft.Text("Приоритет", weight=ft.FontWeight.BOLD, size=18,
+                        color=TEXT_WHITE),
+            ],
+            spacing=10,
+        )
+        body = ft.Column(
+            controls=[
+                ft.Text(item.title or f"App {app_id}", size=13, color=TEXT_GREY,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Container(height=10),
+                *rows,
+            ],
+            tight=True, spacing=8,
+        )
+        actions = ft.Row(
+            controls=[
+                ft.Container(expand=True),
+                ft.TextButton("Отмена",
+                              on_click=lambda e: close_ref["fn"] and close_ref["fn"](),
+                              style=ft.ButtonStyle(color=TEXT_GREY)),
+            ],
+        )
+        close_ref["fn"] = self._open_card_modal(title_row, body, actions, width=420)
+
+    def _wl_after_priority_change(self, app_id: str):
+        """Обновление списка после смены приоритета.
+
+        Полный rebuild нужен ТОЛЬКО при сортировке по приоритету (меняется
+        порядок карточек). При остальных сортировках порядок тот же, поэтому
+        меняем ОДНУ карточку на месте: пересборка сетки создала бы новый
+        скроллируемый контрол и выбросила бы список в начало."""
         if self._wishlist_sort == "priority":
             self._refresh_wishlist_view()
-        else:
-            self._refresh_wishlist_view(keep_page=True)
+            return
+        item = self.game_manager.wishlist.get(app_id)
+        if item is None or not self._wl_replace_card(item):
+            self._wl_refresh_body()
+
+    def _wl_replace_card(self, item) -> bool:
+        """Подменить карточку одной игры прямо в ряду. False — не нашли
+        (список перестроен/игра не на текущей странице)."""
+        row = getattr(self, "_wl_cards_row", None)
+        if row is None:
+            return False
+        idx = next((i for i, c in enumerate(row.controls)
+                    if getattr(c, "data", None) == item.app_id), None)
+        if idx is None:
+            return False
+        card_w = self._wl_card_width()
+        card = self._build_wishlist_card(item, card_w)
+        self._wl_card_cache[self._wl_card_key(item, card_w)] = card
+        row.controls[idx] = card
+        try:
+            row.update()
+        except Exception as ex:
+            backend_logger.debug(f"Wishlist card replace update skipped: {ex}")
+            return False
+        return True
 
     # Старое имя оставлено как shim для безопасности — могли остаться вызовы
     # из других мест. Делегирует на cycle_priority.
@@ -3835,6 +4113,18 @@ class CyberLauncher:
             meta_chips.append(chip("💾 " + d["disk_space"], bg="#1B2C3A", fg="#9CD8F0"))
         for txt, bg, fg in (extra_chips or []):
             meta_chips.append(chip(txt, bg=bg, fg=fg))
+        # Оценка игроков Steam — кликабельна, ведёт на страницу отзывов.
+        rev = d.get("reviews") or {}
+        if rev.get("total"):
+            pct = int(rev.get("percent", -1))
+            fg, _border = self._review_colors(pct)
+            total_txt = f"{int(rev['total']):,}".replace(",", " ")
+            rev_chip = chip(f"👍 {rev.get('desc') or ''} · {pct}% ({total_txt})",
+                            bg="#20303A", fg=fg)
+            rev_chip.ink = True
+            rev_chip.tooltip = "Открыть отзывы игроков в Steam"
+            rev_chip.on_click = lambda e, aid=d.get("app_id", ""): self._open_steam_reviews(aid)
+            meta_chips.append(rev_chip)
         ms = d.get("metacritic_score")
         if ms is not None:
             mc_color = "#1B3A1B" if ms >= 75 else ("#3A331B" if ms >= 50 else "#3A1B1B")
@@ -3960,6 +4250,11 @@ class CyberLauncher:
                 "Открыть в Steam", icon=ft.Icons.OPEN_IN_NEW,
                 on_click=lambda e, u=d.get("store_url"): webbrowser.open(u) if u else None,
                 bgcolor="#1B2838", color=TEXT_WHITE,
+            ),
+            ft.OutlinedButton(
+                "Отзывы", icon=ft.Icons.RATE_REVIEW_OUTLINED,
+                on_click=lambda e, aid=d.get("app_id", ""): self._open_steam_reviews(aid),
+                style=ft.ButtonStyle(color=ACCENT_BLUE),
             ),
         ]
         if demo_id:
@@ -4340,15 +4635,58 @@ class CyberLauncher:
             more = f" и ещё {len(fresh) - 3}" if len(fresh) > 3 else ""
             msg = f"🎉 Вышли игры из желаемого: {names}{more}"
             backend_logger.info(f"Wishlist releases: {len(fresh)} новых — {names}")
-            self.show_snackbar(msg, bgcolor="#4CAF50", duration=12000)
+            app_ids = [g.app_id for g in fresh]
+            self.show_snackbar(msg, bgcolor="#4CAF50", duration=12000,
+                               action="Открыть",
+                               on_action=lambda e, ids=app_ids: self._open_released_games(ids))
             # Дублируем в трей — снекбар можно не заметить.
             try:
                 if HAS_TRAY and TRAY_ICON is not None:
+                    # Клик по уведомлению: поднять окно и открыть игру. Вызов
+                    # прилетит из потока pystray, поэтому работу с UI уводим
+                    # в цикл событий страницы (run_task потокобезопасен).
+                    def _on_balloon(ids=app_ids):
+                        show = TRAY_SHOW_WINDOW.get("fn")
+                        if show is not None:
+                            show()
+
+                        async def _open():
+                            self._open_released_games(ids)
+
+                        self.page.run_task(_open)
+
+                    TRAY_BALLOON_CLICK["fn"] = _on_balloon
                     TRAY_ICON.notify(msg, "CyberLauncher")
-            except Exception:
-                pass
+            except Exception as ex:
+                backend_logger.debug(f"Tray notify failed: {ex}")
         except Exception as ex:
             backend_logger.warning(f"Wishlist release check failed: {ex}")
+
+    def _open_released_games(self, app_ids):
+        """Показать вышедшие игры по клику на уведомление: одна — сразу её
+        карточку, несколько — раздел «Желаемое» с фильтром «Вышедшие»."""
+        wl = self.game_manager.wishlist
+        items = [it for it in (wl.get(a) for a in (app_ids or [])) if it is not None]
+        if not items:
+            backend_logger.info("Клик по уведомлению: игр уже нет в списке")
+            return
+        backend_logger.info(f"Клик по уведомлению: открываю {len(items)} игр(ы)")
+        if self.current_filter != "wishlist":
+            self.on_filter_click("wishlist")
+        if len(items) == 1:
+            self._show_wishlist_detail(items[0])
+            return
+        # Несколько — показываем их списком, а не открываем первую попавшуюся.
+        self._wishlist_filters["status"] = "released"
+        self._wishlist_filters["query"] = ""
+        self._wishlist_page = 0
+        if getattr(self, "_wl_search_field", None) is not None:
+            self._wl_search_field.value = ""
+            try:
+                self._wl_search_field.update()
+            except Exception:
+                pass
+        self._wl_refresh_body()
 
     # ====================== Steam: купленные, но не установленные ======================
     # SteamScanner видит только установленные игры (читает appmanifest_*.acf).
@@ -4587,6 +4925,8 @@ class CyberLauncher:
     def _so_build_body(self, items) -> ft.Control:
         mgr = self.game_manager.steam_owned
         if not items:
+            self._so_cards_row = None
+            self._so_more_holder = None
             hint = ("Ничего не найдено — попробуйте изменить запрос."
                     if self._so_query else
                     "Скрытых игр нет." if self._so_show_hidden else
@@ -4605,45 +4945,22 @@ class CyberLauncher:
         shown_count = (self._so_page + 1) * self._SO_PAGE_SIZE
         visible = items[:shown_count]
 
-        avail = (self.page.width or 1280) - 240 - 80
+        card_w = self._wl_card_width()
         gap = 15
-        cols = max(1, int((avail + gap) // (300 + gap)))
-        card_w = max(280, int((avail - gap * (cols - 1)) / cols))
-
-        if not hasattr(self, "_so_card_cache"):
-            self._so_card_cache = {}
-        cards = []
-        for g in visible:
-            key = (g.app_id, g.title, g.playtime_min, card_w,
-                   g.app_id in mgr.hidden)
-            card = self._so_card_cache.get(key)
-            if card is None:
-                card = self._so_build_card(g, card_w)
-                self._so_card_cache[key] = card
-            cards.append(card)
+        cards = self._so_cards_for(visible, card_w)
         if len(self._so_card_cache) > 400:
             self._so_card_cache = {}
 
-        controls = [ft.Row(controls=cards, wrap=True, spacing=gap, run_spacing=gap)]
-        if shown_count < len(items):
-            remaining = len(items) - shown_count
-            controls.append(ft.Container(height=12))
-            controls.append(
-                ft.Container(
-                    content=ft.Row(
-                        controls=[
-                            ft.Icon(ft.Icons.EXPAND_MORE, color=ACCENT_BLUE, size=22),
-                            ft.Text(f"Показать ещё ({remaining})", color=TEXT_WHITE, size=13),
-                        ],
-                        spacing=8, tight=True, alignment=ft.MainAxisAlignment.CENTER,
-                    ),
-                    alignment=ft.Alignment(0, 0),
-                    padding=ft.Padding(left=20, right=20, top=14, bottom=14),
-                    bgcolor="#1E1E1E", border_radius=12,
-                    border=ft.Border.all(1, "#333333"), ink=True,
-                    on_click=self._so_load_more,
-                )
-            )
+        # Ряд карточек и кнопка — в постоянных контролах, как в «Желаемом»:
+        # «Показать ещё» дописывает в ряд, а не пересобирает колонку (иначе
+        # скролл сбрасывается в начало списка).
+        self._so_cards_row = ft.Row(controls=cards, wrap=True,
+                                    spacing=gap, run_spacing=gap)
+        self._so_more_holder = ft.Container(
+            content=self._so_more_button(len(items) - shown_count),
+            alignment=ft.Alignment(0, 0),
+            padding=ft.Padding(left=0, right=0, top=12, bottom=0),
+        )
 
         # Обложки кладём на диск фоном — как в «Желаемом»: без кэша Flutter
         # тянул бы сотни картинок с CDN при каждом открытии раздела.
@@ -4655,7 +4972,42 @@ class CyberLauncher:
         except Exception as ex:
             backend_logger.debug(f"Steam owned header cache scheduling failed: {ex}")
 
-        return ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, controls=controls)
+        return ft.Column(expand=True, scroll=ft.ScrollMode.AUTO,
+                         controls=[self._so_cards_row, self._so_more_holder])
+
+    def _so_cards_for(self, games, card_w: int) -> list:
+        """Карточки купленных игр через кэш (см. _wl_cards_for)."""
+        mgr = self.game_manager.steam_owned
+        if not hasattr(self, "_so_card_cache"):
+            self._so_card_cache = {}
+        out = []
+        for g in games:
+            key = (g.app_id, g.title, g.playtime_min, card_w,
+                   g.app_id in mgr.hidden)
+            card = self._so_card_cache.get(key)
+            if card is None:
+                card = self._so_build_card(g, card_w)
+                self._so_card_cache[key] = card
+            out.append(card)
+        return out
+
+    def _so_more_button(self, remaining: int):
+        if remaining <= 0:
+            return None
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.EXPAND_MORE, color=ACCENT_BLUE, size=22),
+                    ft.Text(f"Показать ещё ({remaining})", color=TEXT_WHITE, size=13),
+                ],
+                spacing=8, tight=True, alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            alignment=ft.Alignment(0, 0),
+            padding=ft.Padding(left=20, right=20, top=14, bottom=14),
+            bgcolor="#1E1E1E", border_radius=12,
+            border=ft.Border.all(1, "#333333"), ink=True,
+            on_click=self._so_load_more,
+        )
 
     @staticmethod
     def _so_action_button(label: str, icon, bgcolor: str, flex: int,
@@ -4924,8 +5276,32 @@ class CyberLauncher:
         self._so_rebuild_view()
 
     def _so_load_more(self, e=None):
+        """Дописывает страницу в существующий ряд — см. _wishlist_load_more:
+        пересборка сетки сбрасывала бы прокрутку в начало."""
         self._so_page += 1
-        self._so_refresh_body()
+        row = getattr(self, "_so_cards_row", None)
+        holder = getattr(self, "_so_more_holder", None)
+        if row is None or holder is None:
+            self._so_refresh_body()
+            return
+        items = self._so_filtered_items()
+        shown_count = (self._so_page + 1) * self._SO_PAGE_SIZE
+        visible = items[:shown_count]
+        fresh = visible[len(row.controls):]
+        if fresh:
+            row.controls.extend(self._so_cards_for(fresh, self._wl_card_width()))
+            try:
+                self.game_manager.steam_owned.cache_headers_async(
+                    fresh, limit=self._SO_PAGE_SIZE * 2)
+            except Exception as ex:
+                backend_logger.debug(f"Steam owned header cache scheduling failed: {ex}")
+        holder.content = self._so_more_button(len(items) - shown_count)
+        self._so_count_text.value = self._so_count_label(items)
+        for ctrl in (row, holder, self._so_count_text):
+            try:
+                ctrl.update()
+            except Exception as ex:
+                backend_logger.debug(f"Steam owned load-more update skipped: {ex}")
 
     def _so_toggle_show_hidden(self):
         self._so_show_hidden = not self._so_show_hidden

@@ -4965,15 +4965,56 @@ class CyberLauncher:
         # Обложки кладём на диск фоном — как в «Желаемом»: без кэша Flutter
         # тянул бы сотни картинок с CDN при каждом открытии раздела.
         try:
-            mgr.cache_headers_async(visible, limit=self._SO_PAGE_SIZE * 2)
+            mgr.cache_headers_async(visible, limit=self._SO_PAGE_SIZE * 2,
+                                    on_ready=self._so_headers_ready)
             if not getattr(self, "_so_headers_prefetched", False):
                 self._so_headers_prefetched = True
-                mgr.cache_headers_async(items, limit=10000)
+                mgr.cache_headers_async(items, limit=10000,
+                                        on_ready=self._so_headers_ready)
         except Exception as ex:
             backend_logger.debug(f"Steam owned header cache scheduling failed: {ex}")
 
         return ft.Column(expand=True, scroll=ft.ScrollMode.AUTO,
                          controls=[self._so_cards_row, self._so_more_holder])
+
+    def _so_headers_ready(self, app_ids):
+        """Обложки докачались (вызывается из фонового потока). Подменяем ТОЛЬКО
+        эти карточки: пересборка списка сбросила бы прокрутку, а кэш карточек
+        и так вернул бы старые — в его ключе обложки нет."""
+        if self.current_filter != "steam_not_installed" or not app_ids:
+            return
+        try:
+            self.page.run_task(self._so_apply_new_headers, list(app_ids))
+        except Exception as ex:
+            backend_logger.debug(f"Steam owned headers refresh skipped: {ex}")
+
+    async def _so_apply_new_headers(self, app_ids):
+        row = getattr(self, "_so_cards_row", None)
+        if row is None or self.current_filter != "steam_not_installed":
+            return
+        mgr = self.game_manager.steam_owned
+        by_id = {g.app_id: g for g in mgr.all_games()}
+        card_w = self._wl_card_width()
+        changed = 0
+        for aid in app_ids:
+            game = by_id.get(aid)
+            if game is None:
+                continue
+            idx = next((i for i, c in enumerate(row.controls)
+                        if getattr(c, "data", None) == aid), None)
+            if idx is None:
+                continue                 # карточка не на показанных страницах
+            card = self._so_build_card(game, card_w)
+            self._so_card_cache[(game.app_id, game.title, game.playtime_min,
+                                 card_w, game.app_id in mgr.hidden)] = card
+            row.controls[idx] = card
+            changed += 1
+        if changed:
+            try:
+                row.update()
+                backend_logger.info(f"Steam owned: обновлено обложек в списке: {changed}")
+            except Exception as ex:
+                backend_logger.debug(f"Steam owned header row update skipped: {ex}")
 
     def _so_cards_for(self, games, card_w: int) -> list:
         """Карточки купленных игр через кэш (см. _wl_cards_for)."""
@@ -5123,6 +5164,9 @@ class CyberLauncher:
 
         return ft.Container(
             width=card_w, height=300,
+            # app_id в data — по нему карточка ищется в ряду для точечной
+            # подмены (докачалась обложка, сменился признак «скрыта»).
+            data=game.app_id,
             bgcolor=CARD_BG, border_radius=8,
             border=ft.Border.all(1.5, "#333"),
             opacity=0.55 if is_hidden else 1.0,

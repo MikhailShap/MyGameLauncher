@@ -55,6 +55,9 @@ class OwnedGame:
     playtime_min: int = 0          # всего минут в игре (0 — ни разу не играли)
     last_played: int = 0           # unix ts последнего запуска (0 — неизвестно)
     icon_url: str = ""             # мелкая иконка из Web API (может быть пустой)
+    # Настоящий адрес обложки, если предсказуемый (старый) не работает —
+    # см. header_url и resolve_header_url.
+    header_override: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -66,7 +69,15 @@ class OwnedGame:
 
     @property
     def header_url(self) -> str:
-        """Обложка 460×215 — та же схема, что у карточек «Желаемого»."""
+        """Обложка 460×215.
+
+        Старая (предсказуемая) схема `…/steam/apps/<appid>/header.jpg` работает
+        только для приложений, заведённых до перехода Steam на адреса с хэшем
+        (`store_item_assets/steam/apps/<appid>/<hash>/header.jpg`). Хэш угадать
+        нельзя, поэтому для новых игр настоящий адрес спрашивается у appdetails
+        и кладётся в header_override (см. resolve_header_url)."""
+        if self.header_override:
+            return self.header_override
         return (f"https://cdn.cloudflare.steamstatic.com/steam/apps/"
                 f"{self.app_id}/header.jpg")
 
@@ -159,6 +170,31 @@ ERR_NO_KEY = ("Нужен бесплатный Steam Web API-ключ: без н
 ERR_PRIVATE = ("Steam вернул пустой список. В настройках приватности Steam "
                "откройте «Игровые подробности» (Открытый профиль) и повторите.")
 ERR_NETWORK = "Steam не ответил. Проверьте интернет, SteamID и API-ключ."
+
+
+def resolve_header_url(app_id: str) -> str:
+    """Настоящий адрес обложки из appdetails (filters=basic — самый лёгкий
+    вариант запроса). '' если Steam не ответил или обложки нет.
+
+    Нужен для приложений, у которых обложка лежит по адресу с хэшем: старый
+    предсказуемый URL для них отдаёт 404, и карточка оставалась с заглушкой,
+    хотя в детальном экране (он и так ходит в appdetails) картинка была."""
+    url = (f"https://store.steampowered.com/api/appdetails"
+           f"?appids={urllib.parse.quote(str(app_id))}&filters=basic&l=russian")
+    raw = _http_get(url, timeout=12.0, quiet=True)
+    if not raw:
+        return ""
+    try:
+        data = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return ""
+    entry = data.get(str(app_id)) if isinstance(data, dict) else None
+    if not (entry and entry.get("success")):
+        return ""
+    payload = entry.get("data")
+    if not isinstance(payload, dict):
+        return ""
+    return (payload.get("header_image") or "").strip()
 
 
 def fetch_owned_via_api(steamid64: str, api_key: str) -> Optional[List[OwnedGame]]:
@@ -438,7 +474,11 @@ class SteamOwnedManager:
             pass
         return game.header_url
 
-    def cache_headers_async(self, games: List[OwnedGame], limit: int = 40) -> None:
+    def cache_headers_async(self, games: List[OwnedGame], limit: int = 40,
+                            on_ready=None) -> None:
+        """Фоново докачивает обложки. on_ready(list[app_id]) — вызывается по
+        завершении со списком игр, у которых обложка ПОЯВИЛАСЬ (чтобы UI мог
+        подменить именно эти карточки, а не пересобирать весь список)."""
         todo = []
         for g in games[:limit]:
             path = self._header_cache_dir / f"{g.app_id}.jpg"
@@ -454,29 +494,53 @@ class SteamOwnedManager:
             todo.append((g.app_id, g.header_url))
         if not todo:
             return
-        threading.Thread(target=self._download_headers, args=(todo,),
+        threading.Thread(target=self._download_headers, args=(todo, on_ready),
                          daemon=True).start()
 
-    def _download_headers(self, todo: List[Tuple[str, str]]) -> None:
+    def _download_headers(self, todo: List[Tuple[str, str]], on_ready=None) -> None:
         self._header_cache_dir.mkdir(parents=True, exist_ok=True)
-        done = 0
+        fetched: List[str] = []
         missing = 0
+        resolved = 0
         for app_id, url in todo:
             try:
                 # quiet: отсутствие обложки — штатная ситуация, не ошибка.
-                data = _http_get(url, timeout=15.0, quiet=True)
+                data = _http_get(url, timeout=15.0, quiet=True) if url else None
                 if not data:
-                    missing += 1
+                    # Старый предсказуемый адрес не сработал → у приложения
+                    # обложка лежит по пути с хэшем. Спрашиваем настоящий URL
+                    # и запоминаем его, чтобы в следующий раз идти сразу туда.
+                    new_url = resolve_header_url(app_id)
+                    if new_url and new_url != url:
+                        data = _http_get(new_url, timeout=15.0, quiet=True)
+                        if data and len(data) > 512:
+                            game = self._games.get(app_id)
+                            if game is not None:
+                                game.header_override = new_url
+                            resolved += 1
+                    # appdetails лимитирован (~200 запросов / 5 мин) — не частим.
+                    time.sleep(1.0)
                 if data and len(data) > 512:
                     tmp = self._header_cache_dir / f"{app_id}.jpg.tmp"
                     tmp.write_bytes(data)
                     os.replace(tmp, self._header_cache_dir / f"{app_id}.jpg")
-                    done += 1
+                    fetched.append(app_id)
+                else:
+                    missing += 1
             except Exception as e:
                 logger.debug(f"Steam header cache failed for {app_id}: {e}")
             finally:
                 with self._header_lock:
                     self._header_inflight.discard(app_id)
-        if done or missing:
-            logger.info(f"Steam owned: обложек закэшировано: {done}"
-                        + (f", без обложки на CDN: {missing}" if missing else ""))
+        if resolved:
+            self.save_sync()        # сохранить найденные адреса обложек
+        if fetched or missing:
+            logger.info(
+                f"Steam owned: обложек закэшировано: {len(fetched)}"
+                + (f" (адрес найден через appdetails: {resolved})" if resolved else "")
+                + (f", без обложки: {missing}" if missing else ""))
+        if fetched and on_ready is not None:
+            try:
+                on_ready(fetched)
+            except Exception as e:
+                logger.debug(f"Steam owned: on_ready failed: {e}")

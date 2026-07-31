@@ -424,6 +424,24 @@ Content-Type) он должен заработать — хелперы `parse_h
     - **Тело снекбара Flet некликабельно** — действие вешается кнопкой
       (`SnackBar.action` + `on_action`), см. `show_snackbar(action=..., on_action=...)`.
 
+17. **Адрес обложки Steam больше не предсказуем.** Старая схема
+    `cdn.cloudflare.steamstatic.com/steam/apps/<appid>/header.jpg` работает
+    только для приложений, заведённых до перехода на
+    `shared.akamai.steamstatic.com/store_item_assets/steam/apps/<appid>/<hash>/header.jpg`.
+    Хэш угадать нельзя: у новых игр (appid ~3.5M+) старый URL отдаёт 404 по
+    ВСЕМ зеркалам (cloudflare / steamcdn-a / shared, и header, и
+    library_600x900 — проверено 2026-07-31). Симптом: в списке заглушка, а в
+    детальном экране картинка есть — деталка и так ходит в appdetails и берёт
+    настоящий адрес. Лечение в `steam_owned.py`: при неудаче качаем настоящий
+    URL через `resolve_header_url` (appdetails `filters=basic`), кладём его в
+    `OwnedGame.header_override` и сохраняем в json — со следующего раза идём
+    сразу туда. Раздел «Желаемое» не затронут: он хранит `header_image_url`
+    из appdetails с самого добавления игры.
+    - Докачанные обложки подменяют **только свои карточки** (`on_ready` →
+      `_so_apply_new_headers`, поиск по `app_id` в `data`): пересборка списка
+      сбросила бы прокрутку, а кэш карточек всё равно вернул бы старые — в его
+      ключе обложки нет.
+
 16. **Оценки игроков в appdetails НЕТ** — там только `recommendations.total`
     (число отзывов без самой оценки). Сводка берётся отдельным публичным
     эндпоинтом `store.steampowered.com/appreviews/<appid>?json=1&num_per_page=0`
